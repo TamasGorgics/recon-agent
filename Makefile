@@ -16,12 +16,12 @@ help:
 	@printf '  %-16s %s\n' 'lint' 'go vet ./... + golangci-lint v2.15.0'
 	@printf '  %-16s %s\n' 'lint-negative' 'stub until M0-04'
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
-	@printf '  %-16s %s\n' 'test-integration' 'stub until M0-02'
+	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 ./...'
 	@printf '  %-16s %s\n' 'test-fault' 'stub until M4-08'
-	@printf '  %-16s %s\n' 'db-up' 'stub until M0-02'
-	@printf '  %-16s %s\n' 'db-down' 'stub until M0-02'
-	@printf '  %-16s %s\n' 'migrate' 'stub until M0-02'
-	@printf '  %-16s %s\n' 'test-db-clean' 'stub until M0-02'
+	@printf '  %-16s %s\n' 'db-up' 'docker compose up -d --wait postgres'
+	@printf '  %-16s %s\n' 'db-down' 'docker compose down'
+	@printf '  %-16s %s\n' 'migrate' 'go run ./cmd/recon migrate up'
+	@printf '  %-16s %s\n' 'test-db-clean' 'go run ./cmd/recon testdb clean'
 	@printf '  %-16s %s\n' 'verify' 'db-up migrate build lint test test-integration'
 	@printf '  %-16s %s\n' 'fin-coverage' 'stub until M6-07'
 	@printf '  %-16s %s\n' 'must-not' 'stub until M6-04'
@@ -44,28 +44,23 @@ test:
 	go test -race ./...
 
 test-integration:
-	@printf '%s\n' 'target test-integration: not implemented until M0-02' >&2
-	@exit 1
+	go test -race -tags=integration -parallel=4 ./...
 
 test-fault:
 	@printf '%s\n' 'target test-fault: not implemented until M4-08' >&2
 	@exit 1
 
 db-up:
-	@printf '%s\n' 'target db-up: not implemented until M0-02' >&2
-	@exit 1
+	docker compose up -d --wait postgres
 
 db-down:
-	@printf '%s\n' 'target db-down: not implemented until M0-02' >&2
-	@exit 1
+	docker compose down
 
 migrate:
-	@printf '%s\n' 'target migrate: not implemented until M0-02' >&2
-	@exit 1
+	go run ./cmd/recon migrate up
 
 test-db-clean:
-	@printf '%s\n' 'target test-db-clean: not implemented until M0-02' >&2
-	@exit 1
+	go run ./cmd/recon testdb clean
 
 verify: db-up migrate build lint test test-integration
 	@echo "verify: OK"
