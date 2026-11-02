@@ -1,0 +1,7 @@
+database:
+  url: postgres://recon:recon@localhost:5432/recon?sslmode=disable
+  test_url: postgres://recon:recon@localhost:5432/recon_test?sslmode=disable
+log:
+  level: debug
+llm:
+  anthropic_api_key: fake-anthropic-key

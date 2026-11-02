@@ -13,8 +13,8 @@ help:
 	@echo "Targets:"
 	@printf '  %-16s %s\n' 'help' 'list targets'
 	@printf '  %-16s %s\n' 'build' 'go build ./...'
-	@printf '  %-16s %s\n' 'lint' 'go vet ./... + golangci-lint v2.15.0'
-	@printf '  %-16s %s\n' 'lint-negative' 'stub until M0-04'
+	@printf '  %-16s %s\n' 'lint' 'go vet ./... + golangci-lint v2.15.0 + scripts/lint-negative.sh'
+	@printf '  %-16s %s\n' 'lint-negative' 'scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
 	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 ./...'
 	@printf '  %-16s %s\n' 'test-fault' 'stub until M4-08'
@@ -35,10 +35,10 @@ build:
 lint:
 	go vet ./...
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
+	./scripts/lint-negative.sh
 
 lint-negative:
-	@printf '%s\n' 'target lint-negative: not implemented until M0-04' >&2
-	@exit 1
+	./scripts/lint-negative.sh
 
 test:
 	go test -race ./...

@@ -10,6 +10,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/testdb"
 	"github.com/TamasGorgics/recon-agent/migrations"
 )
@@ -22,6 +23,7 @@ Commands:
   testdb clean     drop orphan recon_test_% databases
 
 Environment:
+  CONFIG_FILE        optional YAML config path (defaults < YAML < environment)
   DATABASE_URL       admin DSN used by migrate and testdb clean
   TEST_DATABASE_URL  maintenance DSN used by integration tests (CREATEDB required)
 `
@@ -50,16 +52,27 @@ func run(ctx context.Context, args []string) error {
 	}
 }
 
+func loadConfig() (config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return config.Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
+}
+
 func runMigrate(ctx context.Context, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: recon migrate <up|status>")
 	}
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		return errors.New("DATABASE_URL is required")
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
 	}
-	sqlDB, err := sql.Open("pgx", dsn)
+	sqlDB, err := sql.Open("pgx", cfg.Database.URL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -127,11 +140,11 @@ func runTestDB(ctx context.Context, args []string) error {
 		return errors.New("usage: recon testdb clean")
 	}
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		return errors.New("DATABASE_URL is required for testdb clean")
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
 	}
-	dropped, err := testdb.CleanupOrphans(ctx, dsn)
+	dropped, err := testdb.CleanupOrphans(ctx, cfg.Database.URL)
 	if err != nil {
 		return fmt.Errorf("clean test databases: %w", err)
 	}

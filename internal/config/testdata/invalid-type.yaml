@@ -1,0 +1,3 @@
+database:
+  url: postgres://recon:recon@localhost:5432/recon?sslmode=disable
+log: debug
