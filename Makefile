@@ -4,8 +4,8 @@
 POSTGRES_PORT ?= 5432
 DATABASE_URL ?= postgres://recon:recon@localhost:$(POSTGRES_PORT)/recon?sslmode=disable
 TEST_DATABASE_URL ?= $(DATABASE_URL)
-export DATABASE_URL
-export TEST_DATABASE_URL
+export DATABASE_URL := $(DATABASE_URL)
+export TEST_DATABASE_URL := $(TEST_DATABASE_URL)
 
 .PHONY: help build lint lint-negative test test-integration test-fault db-up db-down migrate test-db-clean verify fin-coverage must-not demo demo-m1 demo-m2
 
