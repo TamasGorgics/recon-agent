@@ -129,7 +129,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M1-02 | Float lint and migration lint | S | M0-03, M1-01 |
 | ☑ | M1-03 | Ledger schema and database-level invariants | M | M0-02 |
 | ☑ | M1-04 | Database roles and grants | S | M1-03 |
-| ☐ | M1-05 | Audit log package with hash chain | M | M1-04 |
+| ☑ | M1-05 | Audit log package with hash chain | M | M1-04 |
 | ☐ | M1-06 | Ledger service: post, reverse, idempotency | L | M1-01, M1-03, M1-05 |
 | ☐ | M1-07 | Ingestion core: batches, control totals, quarantine | L | M1-01, M1-05 |
 | ☐ | M1-08 | PSP and bank file parsers | M | M1-07 |

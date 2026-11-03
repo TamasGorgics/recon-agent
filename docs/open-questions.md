@@ -13,7 +13,7 @@ non-blocking findings that do not change approved scope belong here.
 | Proposed change | Smallest change that would resolve it |
 | Status | OPEN / RESOLVED / QUEUED |
 
-## Queued non-blocking items (Q-01..Q-18)
+## Queued non-blocking items (Q-01..Q-19)
 
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
@@ -35,3 +35,4 @@ non-blocking findings that do not change approved scope belong here.
 | Q-16 | The planning package lives in `.team/`; it is not published under `docs/`. | Follow-up docs task | Optionally copy to `docs/plan-m0.md` after approval. |
 | Q-17 | `deploy/` is in spec §17 but M0 creates no deployment assets. | M5-04 | Create `deploy/` with Grafana/Prometheus at M5-04; record in the layout delta. |
 | Q-18 | Spec §17 will remain stale if DP-12 is deferred. | Spec §17 | Apply DP-12 before M0-01; otherwise carry the delta in the M0 plan. |
+| Q-19 | Spec §3.1 lists only `audit_log`, but a hash chain alone cannot detect a truncated tail (FIN-31): deleting the last row leaves every remaining link valid. **RESOLVED (M1-05):** the migration adds the append-only `audit_chain_head(seq, row_hash)` mirror, written in the same transaction; `Verify` compares it with `audit_log` and reports a truncated tail or head mismatch. | M1-05 / spec §3.1 | Recorded as an M1-05-owned audit object; `recon_audit_ro` gets SELECT on it so verification is read-only. |
