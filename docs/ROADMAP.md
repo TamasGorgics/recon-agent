@@ -138,7 +138,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☐ | M1-11 | Failure modes, part B | M | M1-10 |
 | ☑ | M1-12 | Matcher: scopes, runs, passes 1 and 2 | M | M1-06, M1-07 |
 | ☑ | M1-13 | Matcher: passes 3 to 5 | M | M1-12 |
-| ☐ | M1-14 | Breaks, cases, leasing | M | M1-12 |
+| ☑ | M1-14 | Breaks, cases, leasing | M | M1-12 |
 | ☐ | M1-15 | Balance tie-out | M | M1-07, M1-12 |
 | ☐ | M1-16 | Matcher scoring, demo pipeline, and M1 gate | S | M1-11, M1-13, M1-14, M1-15 |
 | ☐ | M2-01 | Agent schema, views, grants, switches | S | M1-14, M1-04 |
