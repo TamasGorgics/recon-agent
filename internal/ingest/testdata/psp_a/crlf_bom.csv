@@ -1,0 +1,4 @@
+﻿# rows=2 total=35.50 currency=EUR batch=B-2026-06-16-001
+record_id,type,occurred_at,settled_at,gross,fee,net,currency,reference,batch_id,memo
+psp_1001,charge,2026-06-16T08:30:00Z,2026-06-16T08:30:00Z,50.00,2.50,47.50,EUR,EUR-REF-1,B-2026-06-16-001,"memo, with comma"
+psp_1002,refund,2026-06-16T09:00:00Z,,-12.00,0.00,-12.00,EUR,EUR-REF-2,B-2026-06-16-001,crlf and bom

@@ -1,0 +1,5 @@
+# rows=3 total=85.00 currency=USD opening=1000.00 closing=1085.00 as_of=2026-06-15
+record_id,booking_date,value_date,amount,currency,description,bank_reference
+bnk_0001,2026-06-15,2026-06-15,120.00,USD,"payout from psp, batch B-2026-06-15-001",BNK-0001
+bnk_0002,2026-06-15,2026-06-16,-25.00,USD,"wire fee, international",BNK-0002
+bnk_0003,2026-06-15,2026-06-15,-10.00,USD,monthly account fee,BNK-0003

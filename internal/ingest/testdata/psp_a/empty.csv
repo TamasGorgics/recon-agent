@@ -1,0 +1,2 @@
+# rows=0 total=0.00 currency=USD batch=B-EMPTY-001
+record_id,type,occurred_at,settled_at,gross,fee,net,currency,reference,batch_id,memo

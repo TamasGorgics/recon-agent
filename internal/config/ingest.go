@@ -21,6 +21,7 @@ import (
 //	      cutoff: "17:00"
 //	      business_days: [mon, tue, wed, thu, fri]
 //	      holidays: ["2026-01-01", "2026-07-03"]
+//	      untrusted_fields: [memo]
 type IngestConfig struct {
 	Sources map[string]SourceConfig `yaml:"sources"`
 }
@@ -28,12 +29,16 @@ type IngestConfig struct {
 // SourceConfig is one settlement source's business calendar. Timezone and
 // Cutoff are required for every configured source. BusinessDays defaults to
 // Monday through Friday when omitted; Holidays are additional non-business
-// dates in the source timezone.
+// dates in the source timezone. UntrustedFields names the free-text columns
+// the source file carries (for example memo for psp_a, description for
+// bank_x); ingestion keeps them in the record's raw payload and later prompt
+// assembly must label them as untrusted data (spec section 9).
 type SourceConfig struct {
-	Timezone     string   `yaml:"timezone"`
-	Cutoff       string   `yaml:"cutoff"`
-	BusinessDays []string `yaml:"business_days"`
-	Holidays     []string `yaml:"holidays"`
+	Timezone        string   `yaml:"timezone"`
+	Cutoff          string   `yaml:"cutoff"`
+	BusinessDays    []string `yaml:"business_days"`
+	Holidays        []string `yaml:"holidays"`
+	UntrustedFields []string `yaml:"untrusted_fields"`
 }
 
 // DefaultBusinessDayNames is the weekday set used when a source config omits
@@ -80,7 +85,32 @@ func (s SourceConfig) Validate(name string) error {
 	if _, err := s.HolidayKeys(); err != nil {
 		return fmt.Errorf("config: ingest source %q: %w", name, err)
 	}
+	if _, err := s.UntrustedFieldSet(); err != nil {
+		return fmt.Errorf("config: ingest source %q: %w", name, err)
+	}
 	return nil
+}
+
+// UntrustedFieldSet validates and returns the source's declared untrusted
+// free-text columns as a set. Names must be non-empty, have no surrounding
+// whitespace, and not repeat. An empty list is valid: not every source carries
+// free text.
+func (s SourceConfig) UntrustedFieldSet() (map[string]struct{}, error) {
+	fields := make(map[string]struct{}, len(s.UntrustedFields))
+	for _, raw := range s.UntrustedFields {
+		field := strings.TrimSpace(raw)
+		if field == "" {
+			return nil, errors.New("untrusted field name is empty")
+		}
+		if field != raw {
+			return nil, fmt.Errorf("untrusted field %q has surrounding whitespace", raw)
+		}
+		if _, ok := fields[field]; ok {
+			return nil, fmt.Errorf("untrusted field %q is duplicated", field)
+		}
+		fields[field] = struct{}{}
+	}
+	return fields, nil
 }
 
 // Location resolves the source's explicit IANA timezone.

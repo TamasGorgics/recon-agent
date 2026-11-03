@@ -1,0 +1,55 @@
+{
+  "declared": {
+    "total_minor": -15,
+    "row_count": 2,
+    "currency": "JPY"
+  },
+  "records": [
+    {
+      "source_record_id": "bnk_1001",
+      "kind": "fee",
+      "amount_minor": -10,
+      "currency": "JPY",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-16T00:00:00Z",
+      "settled_at": null,
+      "value_date": "2026-06-16",
+      "raw": {
+        "amount": "-10",
+        "bank_reference": "BNK-1001",
+        "booking_date": "2026-06-16",
+        "currency": "JPY",
+        "description": "atm fee",
+        "record_id": "bnk_1001",
+        "value_date": "2026-06-16"
+      }
+    },
+    {
+      "source_record_id": "bnk_1002",
+      "kind": "fee",
+      "amount_minor": -5,
+      "currency": "JPY",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-16T00:00:00Z",
+      "settled_at": null,
+      "value_date": "2026-06-16",
+      "raw": {
+        "amount": "-5",
+        "bank_reference": "BNK-1002",
+        "booking_date": "2026-06-16",
+        "currency": "JPY",
+        "description": "fee, coin",
+        "record_id": "bnk_1002",
+        "value_date": "2026-06-16"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "as_of_date": "2026-06-16",
+      "opening_minor": 100000,
+      "closing_minor": 99985,
+      "currency": "JPY"
+    }
+  ]
+}

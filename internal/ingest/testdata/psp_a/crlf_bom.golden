@@ -1,0 +1,52 @@
+{
+  "declared": {
+    "total_minor": 3550,
+    "row_count": 2,
+    "currency": "EUR"
+  },
+  "records": [
+    {
+      "source_record_id": "psp_1001",
+      "kind": "charge",
+      "amount_minor": 4750,
+      "currency": "EUR",
+      "fee_minor": 250,
+      "occurred_at": "2026-06-16T08:30:00Z",
+      "settled_at": "2026-06-16T08:30:00Z",
+      "raw": {
+        "batch_id": "B-2026-06-16-001",
+        "currency": "EUR",
+        "fee": "2.50",
+        "gross": "50.00",
+        "memo": "memo, with comma",
+        "net": "47.50",
+        "occurred_at": "2026-06-16T08:30:00Z",
+        "record_id": "psp_1001",
+        "reference": "EUR-REF-1",
+        "settled_at": "2026-06-16T08:30:00Z",
+        "type": "charge"
+      }
+    },
+    {
+      "source_record_id": "psp_1002",
+      "kind": "refund",
+      "amount_minor": -1200,
+      "currency": "EUR",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-16T09:00:00Z",
+      "settled_at": null,
+      "raw": {
+        "batch_id": "B-2026-06-16-001",
+        "currency": "EUR",
+        "fee": "0.00",
+        "gross": "-12.00",
+        "memo": "crlf and bom",
+        "net": "-12.00",
+        "occurred_at": "2026-06-16T09:00:00Z",
+        "record_id": "psp_1002",
+        "reference": "EUR-REF-2",
+        "type": "refund"
+      }
+    }
+  ]
+}
