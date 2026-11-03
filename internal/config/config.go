@@ -43,6 +43,7 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	LLM      LLMConfig      `yaml:"llm"`
 	Ledger   LedgerConfig   `yaml:"ledger"`
+	Ingest   IngestConfig   `yaml:"ingest"`
 }
 
 // DatabaseConfig holds the Postgres DSNs.
@@ -92,6 +93,9 @@ func LoadFile(path string) (Config, error) {
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.Database.URL) == "" {
 		return errors.New("config: database.url is required (set DATABASE_URL or database.url in CONFIG_FILE)")
+	}
+	if err := c.Ingest.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

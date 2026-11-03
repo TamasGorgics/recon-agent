@@ -24,7 +24,7 @@ non-blocking findings that do not change approved scope belong here.
 | Q-05 | Spec §15 lists webhook ingestion; roadmap §3.1 says v1 is batch-only and M4-02 omits it. | Spec §15 / M4-02 | Mark webhook ingestion deferred for v1. |
 | Q-06 | Spec §8.1 shows `apply_failed → escalated`; proposal statuses have no `escalated`. | Spec §8.1 / M4-03 | Clarify proposal vs case transition. |
 | Q-07 | `partial_refund` expected resolution is "Adjustment or link". | M1-10 / M3-03 | Pick one canonical truth or allow both in the scorer. |
-| Q-08 | Data-model deltas omit `settlement_batches` columns, `outbox` columns, and `recon_dashboards_ro`. | Roadmap §3.1 | Add them to the delta list. |
+| Q-08 | **PARTIAL (M1-07 recorded):** data-model deltas omit `settlement_batches` columns, `outbox` columns, and `recon_dashboards_ro`. M1-07 adds `external_records.value_date DATE` (FIN-42) and `settlement_batches.status`, `quarantine_reason`, `row_count`, `declared_row_count` (FIN-50). `match_runs`/`matches`/`match_legs` remain M1-12 deltas and `breaks.signature`/`case_breaks` remain M1-14 deltas; mark RESOLVED when all M1 owners have appended. | Roadmap §3.1 | Add them to the delta list. |
 | Q-09 | M4-14 references the M3-09 gate but does not list M3-09 in `Needs`. | M4-14 | Add M3-09 to `Needs`. |
 | Q-10 | M1-15 cites FIN-55, but tie-out is FIN-54; FIN-55 is statement continuity in M1-07. | M1-15 | Cite FIN-54; mention FIN-55 as an input assumption. |
 | Q-11 | Spec §22 presents ticketing/tracing/fee source/batch-only as open; roadmap §3.1 decides them. | Spec §22 | Mark resolved or point to roadmap §3.1. |
