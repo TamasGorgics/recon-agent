@@ -34,8 +34,8 @@ func TestConfigValidation(t *testing.T) {
 		},
 		{
 			name:   "unknown mode",
-			config: modes.Config{Total: 5, Counts: map[string]int{"chargeback": 5}},
-			field:  "counts.chargeback",
+			config: modes.Config{Total: 5, Counts: map[string]int{"not_a_mode": 5}},
+			field:  "counts.not_a_mode",
 		},
 		{
 			name:   "sum mismatch",
@@ -68,7 +68,9 @@ func TestConfigValidation(t *testing.T) {
 
 	for _, valid := range []modes.Config{
 		modes.DefaultConfig(6),
+		modes.DefaultAllConfig(12),
 		singleMode(modes.PartialRefund, 3),
+		singleMode(modes.Ambiguous, 3),
 	} {
 		if err := valid.Validate(); err != nil {
 			t.Errorf("valid config %+v: %v", valid, err)

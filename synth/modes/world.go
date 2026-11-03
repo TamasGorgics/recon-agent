@@ -17,6 +17,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/match"
 	"github.com/TamasGorgics/recon-agent/internal/money"
 	"github.com/TamasGorgics/recon-agent/synth"
+	"github.com/TamasGorgics/recon-agent/synth/injections"
 )
 
 const (
@@ -38,6 +39,19 @@ var pspColumns = []string{
 	"reference",
 	"batch_id",
 	"memo",
+}
+
+// bankColumns is the exact bank_x header from docs/formats.md. Part B's
+// unknown_deposit is a bank statement line with no ledger counterpart, so the
+// modes package parses and re-renders bank_x files too.
+var bankColumns = []string{
+	"record_id",
+	"booking_date",
+	"value_date",
+	"amount",
+	"currency",
+	"description",
+	"bank_reference",
 }
 
 // modeNamespace is a fixed UUIDv5 namespace for logical IDs created by the
@@ -75,6 +89,29 @@ type pspFile struct {
 	Rows        []pspRow
 }
 
+// bankRow is one parsed bank_x line. AmountMinor is signed; positive credits
+// are canonical payouts and negative debits are fees.
+type bankRow struct {
+	RecordID      string
+	BookingDate   time.Time
+	ValueDate     time.Time
+	AmountMinor   int64
+	Currency      string
+	Description   string
+	BankReference string
+}
+
+// bankFile is one parsed bank_x statement. ClosingMinor is updated when a mode
+// adds a row so opening + total = closing still holds.
+type bankFile struct {
+	Path         string
+	Currency     string
+	OpeningMinor int64
+	ClosingMinor int64
+	AsOf         string
+	Rows         []bankRow
+}
+
 // World is the mutable dataset a Mode operates on.
 type World struct {
 	Seed         int64
@@ -90,6 +127,7 @@ type World struct {
 	clean         []synth.Scenario
 	psp           map[string]*pspFile
 	bankFiles     []synth.File
+	injections    []injections.Template
 	manifest      synth.Manifest
 	sources       map[string]config.SourceConfig
 	usedTxns      map[string]struct{}
@@ -309,6 +347,177 @@ func (f *pspFile) at(hour, minute int) time.Time {
 
 func (f *pspFile) compactDate() string {
 	return f.date().Format("20060102")
+}
+
+// parseBankFile parses one bank_x statement into the mutable form part-B modes
+// need. The render below mirrors the generator's bank_x writer, so an untouched
+// file round-trips byte for byte.
+func parseBankFile(file synth.File) (*bankFile, error) {
+	newline := bytes.IndexByte(file.Data, '\n')
+	if newline < 0 {
+		return nil, fmt.Errorf("%w: %s has no metadata line", ErrInvalidWorld, file.Path)
+	}
+	metadataLine := strings.TrimSpace(string(file.Data[:newline]))
+	if !strings.HasPrefix(metadataLine, "# ") {
+		return nil, fmt.Errorf("%w: %s metadata line is malformed", ErrInvalidWorld, file.Path)
+	}
+	metadata := make(map[string]string)
+	for _, token := range strings.Fields(strings.TrimPrefix(metadataLine, "# ")) {
+		key, value, ok := strings.Cut(token, "=")
+		if !ok || key == "" || value == "" {
+			return nil, fmt.Errorf("%w: %s metadata token %q is malformed",
+				ErrInvalidWorld, file.Path, token)
+		}
+		metadata[key] = value
+	}
+	currency, err := money.ParseCurrency(metadata["currency"])
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s currency %q: %v",
+			ErrInvalidWorld, file.Path, metadata["currency"], err)
+	}
+	opening, err := money.ParseDecimal(metadata["opening"], currency)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s opening %q: %v", ErrInvalidWorld, file.Path, metadata["opening"], err)
+	}
+	closing, err := money.ParseDecimal(metadata["closing"], currency)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s closing %q: %v", ErrInvalidWorld, file.Path, metadata["closing"], err)
+	}
+	parsed := &bankFile{
+		Path:         file.Path,
+		Currency:     metadata["currency"],
+		OpeningMinor: opening.AmountMinor(),
+		ClosingMinor: closing.AmountMinor(),
+		AsOf:         metadata["as_of"],
+	}
+
+	reader := csv.NewReader(bytes.NewReader(file.Data[newline+1:]))
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %v", ErrInvalidWorld, file.Path, err)
+	}
+	if len(records) == 0 || strings.Join(records[0], ",") != strings.Join(bankColumns, ",") {
+		return nil, fmt.Errorf("%w: %s header does not match bank_x", ErrInvalidWorld, file.Path)
+	}
+	for index, fields := range records[1:] {
+		if len(fields) != len(bankColumns) {
+			return nil, fmt.Errorf("%w: %s row %d has %d fields",
+				ErrInvalidWorld, file.Path, index+2, len(fields))
+		}
+		row, err := parseBankRow(fields, currency)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s row %d: %v", ErrInvalidWorld, file.Path, index+2, err)
+		}
+		parsed.Rows = append(parsed.Rows, row)
+	}
+	return parsed, nil
+}
+
+func parseBankRow(fields []string, currency money.Currency) (bankRow, error) {
+	booking, err := time.ParseInLocation(dateLayout, fields[1], time.UTC)
+	if err != nil {
+		return bankRow{}, fmt.Errorf("booking_date %q: %v", fields[1], err)
+	}
+	value, err := time.ParseInLocation(dateLayout, fields[2], time.UTC)
+	if err != nil {
+		return bankRow{}, fmt.Errorf("value_date %q: %v", fields[2], err)
+	}
+	amount, err := money.ParseDecimal(fields[3], currency)
+	if err != nil {
+		return bankRow{}, fmt.Errorf("amount %q: %v", fields[3], err)
+	}
+	if fields[4] != currency.Code() {
+		return bankRow{}, fmt.Errorf("row currency %q, file currency %q", fields[4], currency.Code())
+	}
+	return bankRow{
+		RecordID:      fields[0],
+		BookingDate:   booking.UTC(),
+		ValueDate:     value.UTC(),
+		AmountMinor:   amount.AmountMinor(),
+		Currency:      fields[4],
+		Description:   fields[5],
+		BankReference: fields[6],
+	}, nil
+}
+
+// render writes the statement in the canonical bank_x format. Rows are sorted
+// by record_id and rows/total are recomputed, so mutation order cannot leak
+// into the bytes.
+func (f *bankFile) render() ([]byte, error) {
+	rows := append([]bankRow(nil), f.Rows...)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].RecordID < rows[j].RecordID })
+	currency, err := money.ParseCurrency(f.Currency)
+	if err != nil {
+		return nil, fmt.Errorf("%w: bank file %s currency: %v", ErrInvalidWorld, f.Path, err)
+	}
+	var total int64
+	for _, row := range rows {
+		total += row.AmountMinor
+	}
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "# rows=%d total=%s currency=%s opening=%s closing=%s as_of=%s\n",
+		len(rows),
+		money.FromMinor(total, currency).DecimalString(),
+		f.Currency,
+		money.FromMinor(f.OpeningMinor, currency).DecimalString(),
+		money.FromMinor(f.ClosingMinor, currency).DecimalString(),
+		f.AsOf,
+	)
+	if _, err := buf.WriteString(strings.Join(bankColumns, ",") + "\n"); err != nil {
+		return nil, fmt.Errorf("synth/modes: render %s: %w", f.Path, err)
+	}
+	writer := csv.NewWriter(&buf)
+	for _, row := range rows {
+		if err := writer.Write([]string{
+			row.RecordID,
+			row.BookingDate.UTC().Format(dateLayout),
+			row.ValueDate.UTC().Format(dateLayout),
+			money.FromMinor(row.AmountMinor, currency).DecimalString(),
+			row.Currency,
+			row.Description,
+			row.BankReference,
+		}); err != nil {
+			return nil, fmt.Errorf("synth/modes: render %s: %w", f.Path, err)
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, fmt.Errorf("synth/modes: render %s: %w", f.Path, err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (f *bankFile) date() (time.Time, error) {
+	parsed, err := time.ParseInLocation(dateLayout, f.AsOf, time.UTC)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: bank file %s as_of %q: %v", ErrInvalidWorld, f.Path, f.AsOf, err)
+	}
+	return parsed, nil
+}
+
+// addBankRow appends one row to the statement at index and raises closing by
+// the same amount so opening + total = closing still holds.
+func (w *World) addBankRow(index int, row bankRow) error {
+	if index < 0 || index >= len(w.bankFiles) {
+		return fmt.Errorf("%w: bank file index %d is out of range", ErrInvalidWorld, index)
+	}
+	file, err := parseBankFile(w.bankFiles[index])
+	if err != nil {
+		return err
+	}
+	if file.Currency != row.Currency {
+		return fmt.Errorf("%w: bank row currency %q in file %s",
+			ErrInvalidWorld, row.Currency, file.Currency)
+	}
+	file.Rows = append(file.Rows, row)
+	file.ClosingMinor += row.AmountMinor
+	data, err := file.render()
+	if err != nil {
+		return err
+	}
+	w.bankFiles[index] = synth.File{Path: file.Path, Data: data}
+	w.externalCount++
+	return nil
 }
 
 // pspPaths returns the parsed batch paths in ascending order. This is the only
@@ -538,7 +747,7 @@ func (w *World) render(cfg Config) (*Result, error) {
 		return nil, err
 	}
 	modeCounts := map[string]int{CleanMode: 0}
-	for _, name := range PartAModes {
+	for _, name := range AllModes {
 		modeCounts[name] = 0
 	}
 	difficultyCounts := make(map[string]int)

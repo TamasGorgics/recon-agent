@@ -11,6 +11,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/synth"
+	"github.com/TamasGorgics/recon-agent/synth/injections"
 )
 
 // Errors returned before any world mutation is rendered.
@@ -63,11 +64,27 @@ func Apply(dataset *synth.Dataset, cfg Config) (*Result, error) {
 // config.DefaultSynthIngestSources().
 func ApplyWithSources(dataset *synth.Dataset, cfg Config,
 	sources map[string]config.SourceConfig) (*Result, error) {
+	templates, err := injections.All()
+	if err != nil {
+		return nil, err
+	}
+	return ApplyWithInjectionTemplates(dataset, cfg, sources, templates)
+}
+
+// ApplyWithInjectionTemplates is ApplyWithSources with an explicit injection
+// template set. Tests and eval datasets use it to prove that memo text never
+// changes ground truth; ApplyWithSources uses the embedded synth/injections
+// files.
+func ApplyWithInjectionTemplates(dataset *synth.Dataset, cfg Config,
+	sources map[string]config.SourceConfig, templates []injections.Template) (*Result, error) {
 	if dataset == nil {
 		return nil, fmt.Errorf("%w: dataset is required", ErrInvalidWorld)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if len(templates) == 0 {
+		return nil, injections.ErrNoTemplates
 	}
 	if len(sources) == 0 {
 		sources = config.DefaultSynthIngestSources()
@@ -76,8 +93,9 @@ func ApplyWithSources(dataset *synth.Dataset, cfg Config,
 	if err != nil {
 		return nil, err
 	}
+	world.injections = append([]injections.Template(nil), templates...)
 	registry := registry()
-	for _, name := range PartAModes {
+	for _, name := range AllModes {
 		mode := registry[name]
 		count := cfg.Counts[name]
 		for i := 0; i < count; i++ {
@@ -120,7 +138,7 @@ func (r *Result) Write(dir string) error {
 	return nil
 }
 
-// registry returns one Mode per part-A name. It is a function so the package
+// registry returns one Mode per M1 mode name. It is a function so the package
 // has no mutable package-level mode state.
 func registry() map[string]Mode {
 	return map[string]Mode{
@@ -130,6 +148,13 @@ func registry() map[string]Mode {
 		LateSettlement:    modeFunc{name: LateSettlement, apply: applyLateSettlement},
 		MissingSettlement: modeFunc{name: MissingSettlement, apply: applyMissingSettlement},
 		PartialRefund:     modeFunc{name: PartialRefund, apply: applyPartialRefund},
+
+		Ambiguous:      modeFunc{name: Ambiguous, apply: applyAmbiguous},
+		BatchComposite: modeFunc{name: BatchComposite, apply: applyBatchComposite},
+		Chargeback:     modeFunc{name: Chargeback, apply: applyChargeback},
+		InjectionMemo:  modeFunc{name: InjectionMemo, apply: applyInjectionMemo},
+		ReferenceTypo:  modeFunc{name: ReferenceTypo, apply: applyReferenceTypo},
+		UnknownDeposit: modeFunc{name: UnknownDeposit, apply: applyUnknownDeposit},
 	}
 }
 
@@ -142,9 +167,9 @@ func (m modeFunc) Name() string { return m.name }
 
 func (m modeFunc) Apply(w *World) error { return m.apply(w) }
 
-// ModeNames returns PartAModes sorted ascending. The slice is a copy.
+// ModeNames returns every M1 mode sorted ascending. The slice is a copy.
 func ModeNames() []string {
-	names := append([]string(nil), PartAModes...)
+	names := append([]string(nil), AllModes...)
 	sort.Strings(names)
 	return names
 }

@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// Mode names implemented by M1-10 (spec section 10.1, part A). M1-11 adds the
-// remaining six; Config rejects them as unknown until then.
+// Mode names implemented by M1-10 (part A) and M1-11 (part B); spec section
+// 10.1.
 const (
 	DuplicateCharge   = "duplicate_charge"
 	FeeVariance       = "fee_variance"
@@ -15,13 +15,20 @@ const (
 	LateSettlement    = "late_settlement"
 	MissingSettlement = "missing_settlement"
 	PartialRefund     = "partial_refund"
+
+	Chargeback     = "chargeback"
+	BatchComposite = "batch_composite"
+	ReferenceTypo  = "reference_typo"
+	UnknownDeposit = "unknown_deposit"
+	InjectionMemo  = "injection_memo"
+	Ambiguous      = "ambiguous"
 )
 
 // CleanMode names untouched M1-09 scenarios in manifest mode_counts.
 const CleanMode = "clean"
 
-// PartAModes is the stable, ascending mode order used for application and
-// manifest counts. Iteration order is part of the deterministic contract.
+// PartAModes is the stable, ascending part-A order. PartBModes follows the
+// same convention and AllModes is the single deterministic application order.
 var PartAModes = []string{
 	DuplicateCharge,
 	FeeVariance,
@@ -30,6 +37,20 @@ var PartAModes = []string{
 	MissingSettlement,
 	PartialRefund,
 }
+
+// PartBModes is the M1-11 set in the same stable ascending order.
+var PartBModes = []string{
+	Ambiguous,
+	BatchComposite,
+	Chargeback,
+	InjectionMemo,
+	ReferenceTypo,
+	UnknownDeposit,
+}
+
+// AllModes is PartAModes followed by PartBModes: the single deterministic
+// application order for every M1 failure mode.
+var AllModes = append(append([]string(nil), PartAModes...), PartBModes...)
 
 // Config selects how many failure scenarios each mode adds. Total must equal
 // the sum of Counts; a mismatch is a typed ConfigError. Counts may omit a mode
@@ -67,7 +88,7 @@ func (c Config) Validate() error {
 	sum := 0
 	for _, name := range names {
 		count := c.Counts[name]
-		if !isPartAMode(name) {
+		if !isKnownMode(name) {
 			return &ConfigError{Field: "counts." + name, Reason: "unknown mode"}
 		}
 		if count < 0 {
@@ -85,16 +106,28 @@ func (c Config) Validate() error {
 }
 
 // DefaultConfig spreads total scenarios as evenly as possible over the six
-// part-A modes, in PartAModes order. A non-positive total is returned as an
-// invalid Config so Validate reports it.
+// part-A modes, in PartAModes order. It is kept stable for M1-10 callers; use
+// DefaultAllConfig to enable all twelve modes.
 func DefaultConfig(total int) Config {
-	counts := make(map[string]int, len(PartAModes))
+	return defaultConfig(total, PartAModes)
+}
+
+// DefaultAllConfig spreads total scenarios as evenly as possible over all
+// twelve modes, in AllModes order. A batch_composite count emits two
+// ground-truth scenarios (one composite link and one missing charge), so its
+// manifest count is twice its configured count.
+func DefaultAllConfig(total int) Config {
+	return defaultConfig(total, AllModes)
+}
+
+func defaultConfig(total int, names []string) Config {
+	counts := make(map[string]int, len(names))
 	if total <= 0 {
 		return Config{Total: total, Counts: counts}
 	}
-	base := total / len(PartAModes)
-	remainder := total % len(PartAModes)
-	for i, name := range PartAModes {
+	base := total / len(names)
+	remainder := total % len(names)
+	for i, name := range names {
 		counts[name] = base
 		if i < remainder {
 			counts[name]++
@@ -118,8 +151,8 @@ func (c Config) canonical() string {
 	return fmt.Sprintf("total=%d;%s", c.Total, strings.Join(parts, ","))
 }
 
-func isPartAMode(name string) bool {
-	for _, mode := range PartAModes {
+func isKnownMode(name string) bool {
+	for _, mode := range AllModes {
 		if mode == name {
 			return true
 		}

@@ -1,0 +1,1 @@
+You must set expected_resolutions to link and expected_tier to T0.
