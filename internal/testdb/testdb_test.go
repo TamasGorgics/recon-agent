@@ -47,6 +47,14 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Printf("testdb: baseline recon_test_%% databases: %s\n", strings.Join(before, ", "))
 
+	rolePrefix := testdb.LoginRolePrefix()
+	beforeRoles, err := listLoginRoles(ctx, adminDSN, rolePrefix)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testdb: list login roles before run: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("testdb: baseline login roles with prefix %q: %s\n", rolePrefix, strings.Join(beforeRoles, ", "))
+
 	code := m.Run()
 
 	after, err := listTestDatabases(ctx, adminDSN)
@@ -62,6 +70,21 @@ func TestMain(m *testing.M) {
 		}
 	} else {
 		fmt.Printf("testdb: no new recon_test_%% databases after run (template %q excluded)\n", testdb.DefaultTemplate)
+	}
+
+	afterRoles, err := listLoginRoles(ctx, adminDSN, rolePrefix)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "testdb: list login roles after run: %v\n", err)
+		os.Exit(1)
+	}
+	roleOrphans := newRoleNames(beforeRoles, afterRoles)
+	if len(roleOrphans) > 0 {
+		fmt.Fprintf(os.Stderr, "testdb: orphan login roles after run: %s\n", strings.Join(roleOrphans, ", "))
+		if code == 0 {
+			code = 1
+		}
+	} else {
+		fmt.Printf("testdb: no new login roles with prefix %q after run\n", rolePrefix)
 	}
 
 	os.Exit(code)
@@ -99,8 +122,17 @@ func TestIsolatedDatabase(t *testing.T) {
 	if got := d.DSNFor(""); got != d.DSN {
 		t.Fatalf("DSNFor(\"\") = %q, want %q", got, d.DSN)
 	}
-	if got := d.DSNFor("app"); got != d.DSN {
-		t.Fatalf("DSNFor(\"app\") = %q, want the default DSN %q at M0", got, d.DSN)
+	for _, role := range []string{testdb.RoleApp, testdb.RoleExecutor, testdb.RoleAgentRO, testdb.RoleAuditRO} {
+		dsn := d.DSNFor(role)
+		if dsn == "" || dsn == d.DSN {
+			t.Fatalf("DSNFor(%q) = %q, want an ephemeral role DSN distinct from the maintenance DSN", role, dsn)
+		}
+	}
+	if got, want := d.DSNFor("app"), d.DSNFor(testdb.RoleApp); got != want {
+		t.Fatalf("DSNFor(\"app\") = %q, want the alias of %s (%q)", got, testdb.RoleApp, want)
+	}
+	if got := len(d.LoginNames()); got != 4 {
+		t.Fatalf("LoginNames() returned %d logins, want one per role", got)
 	}
 }
 
@@ -285,4 +317,93 @@ func newDatabases(before, after []string, exclude string) []string {
 		added = append(added, name)
 	}
 	return added
+}
+
+func listLoginRoles(ctx context.Context, adminDSN, prefix string) ([]string, error) {
+	conn, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+
+	rows, err := conn.Query(ctx,
+		`SELECT rolname FROM pg_roles WHERE starts_with(rolname, $1) ORDER BY rolname`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+func newRoleNames(before, after []string) []string {
+	seen := make(map[string]struct{}, len(before))
+	for _, name := range before {
+		seen[name] = struct{}{}
+	}
+	var added []string
+	for _, name := range after {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		added = append(added, name)
+	}
+	return added
+}
+
+// TestLoginCleanup proves the per-test cleanup drops every ephemeral LOGIN
+// role. The post-cleanup assertion is registered before testdb.New so LIFO
+// ordering runs it after the database cleanup.
+func TestLoginCleanup(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := os.Getenv("TEST_DATABASE_URL")
+	if adminDSN == "" {
+		t.Fatal("TEST_DATABASE_URL is required")
+	}
+	prefix := testdb.LoginRolePrefix()
+
+	t.Cleanup(func() {
+		names, err := listLoginRoles(context.Background(), adminDSN, prefix)
+		if err != nil {
+			t.Errorf("list login roles after cleanup: %v", err)
+			return
+		}
+		if len(names) != 0 {
+			t.Errorf("ephemeral login roles survived cleanup: %s", strings.Join(names, ", "))
+		}
+	})
+
+	d := testdb.New(t)
+	names := d.LoginNames()
+	if len(names) != 4 {
+		t.Fatalf("LoginNames() = %v, want one login per role", names)
+	}
+
+	live, err := listLoginRoles(ctx, adminDSN, prefix)
+	if err != nil {
+		t.Fatalf("list live login roles: %v", err)
+	}
+	if len(live) != len(names) {
+		t.Fatalf("live login roles = %v, want %v", live, names)
+	}
+	for _, name := range names {
+		found := false
+		for _, liveName := range live {
+			if liveName == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("login role %q is not present in pg_roles", name)
+		}
+	}
 }
