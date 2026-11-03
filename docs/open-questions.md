@@ -30,7 +30,7 @@ non-blocking findings that do not change approved scope belong here.
 | Q-11 | Spec §22 presents ticketing/tracing/fee source/batch-only as open; roadmap §3.1 decides them. | Spec §22 | Mark resolved or point to roadmap §3.1. |
 | Q-12 | README is a one-line stub; M6-09 writes the final README. | M0-01 | Add a minimal README with prerequisites, docs links, and "work in progress" (non-blocking). |
 | Q-13 | AGENTS.md can drift if copied from roadmap §1–2. | M0-01 / ongoing | Keep it a short pointer; update both in the same commit (D-15). |
-| Q-14 | M1-04 adds compose dev login users; M0-02 creates no init hook. | M1-04 | Add an init SQL script or document the compose change. |
+| Q-14 | M1-04 adds compose dev login users; M0-02 creates no init hook. **RESOLVED (M1-04):** `compose/initdb/01-roles.sql` is mounted read-only and creates the four NOLOGIN groups plus four local-only dev logins; see ADR 0005. | M1-04 | Add an init SQL script or document the compose change. |
 | Q-15 | M0-03 placeholder job must be removed/replaced when M1-02/M6-05/M6-07 land. | M0-03 / later | Track cleanup in the owning tasks. |
 | Q-16 | The planning package lives in `.team/`; it is not published under `docs/`. | Follow-up docs task | Optionally copy to `docs/plan-m0.md` after approval. |
 | Q-17 | `deploy/` is in spec §17 but M0 creates no deployment assets. | M5-04 | Create `deploy/` with Grafana/Prometheus at M5-04; record in the layout delta. |

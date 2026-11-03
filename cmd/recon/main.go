@@ -20,7 +20,7 @@ const usage = `usage: recon <command> [arguments]
 Commands:
   migrate up       apply all pending migrations
   migrate status   print the current schema version and pending migrations
-  testdb clean     drop orphan recon_test_% databases
+  testdb clean     drop orphan recon_test_% databases and ephemeral login roles
 
 Environment:
   CONFIG_FILE        optional YAML config path (defaults < YAML < environment)
@@ -148,11 +148,15 @@ func runTestDB(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("clean test databases: %w", err)
 	}
-	if dropped == 0 {
-		fmt.Println("testdb clean: no orphan databases")
+	roles, err := testdb.CleanupOrphanLogins(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("clean ephemeral login roles: %w", err)
+	}
+	if dropped == 0 && roles == 0 {
+		fmt.Println("testdb clean: no orphan databases or ephemeral login roles")
 		return nil
 	}
-	fmt.Printf("testdb clean: dropped %d orphan database(s)\n", dropped)
+	fmt.Printf("testdb clean: dropped %d orphan database(s) and %d ephemeral login role(s)\n", dropped, roles)
 	return nil
 }
 
