@@ -21,6 +21,9 @@ Commands:
   migrate up       apply all pending migrations
   migrate status   print the current schema version and pending migrations
   testdb clean     drop orphan recon_test_% databases and ephemeral login roles
+  tieout           independent balance tie-out for a scope and statement date
+                   usage: recon tieout --scope <uuid> --date YYYY-MM-DD [--json]
+                   exit: 0 tied, 2 unexplained difference, 1 error
 
 Environment:
   CONFIG_FILE        optional YAML config path (defaults < YAML < environment)
@@ -31,7 +34,7 @@ Environment:
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "recon: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -49,6 +52,8 @@ func run(ctx context.Context, args []string) error {
 		return runTestDB(ctx, args[1:])
 	case "synth":
 		return runSynth(ctx, args[1:])
+	case "tieout":
+		return runTieout(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try: recon help)", args[0])
 	}
