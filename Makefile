@@ -13,7 +13,7 @@ help:
 	@echo "Targets:"
 	@printf '  %-16s %s\n' 'help' 'list targets'
 	@printf '  %-16s %s\n' 'build' 'go build ./...'
-	@printf '  %-16s %s\n' 'lint' 'go vet ./... + golangci-lint v2.15.0 + scripts/lint-negative.sh'
+	@printf '  %-16s %s\n' 'lint' 'go vet + floatlint + migrationlint + golangci-lint v2.15.0 + scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'lint-negative' 'scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
 	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 ./...'
@@ -34,6 +34,8 @@ build:
 
 lint:
 	go vet ./...
+	go run ./tools/floatlint ./...
+	go run ./tools/migrationlint ./migrations
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
 	./scripts/lint-negative.sh
 

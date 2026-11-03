@@ -126,7 +126,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M0-03 | CI pipeline | S | M0-02 |
 | ☑ | M0-04 | Clock, config, logging, domain lint | S | M0-01 |
 | ☑ | M1-01 | Money, currency, rounding, FX | L | M0-01 |
-| ☐ | M1-02 | Float lint and migration lint | S | M0-03, M1-01 |
+| ☑ | M1-02 | Float lint and migration lint | S | M0-03, M1-01 |
 | ☑ | M1-03 | Ledger schema and database-level invariants | M | M0-02 |
 | ☐ | M1-04 | Database roles and grants | S | M1-03 |
 | ☐ | M1-05 | Audit log package with hash chain | M | M1-04 |
