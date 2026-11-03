@@ -42,6 +42,7 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Log      LogConfig      `yaml:"log"`
 	LLM      LLMConfig      `yaml:"llm"`
+	Ledger   LedgerConfig   `yaml:"ledger"`
 }
 
 // DatabaseConfig holds the Postgres DSNs.
@@ -97,7 +98,8 @@ func (c Config) Validate() error {
 
 func defaults() Config {
 	return Config{
-		Log: LogConfig{Level: DefaultLogLevel},
+		Log:    LogConfig{Level: DefaultLogLevel},
+		Ledger: DefaultLedgerConfig(),
 	}
 }
 
