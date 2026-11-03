@@ -134,7 +134,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M1-07 | Ingestion core: batches, control totals, quarantine | L | M1-01, M1-05 |
 | ☑ | M1-08 | PSP and bank file parsers | M | M1-07 |
 | ☑ | M1-09 | Synthetic generator core | M | M1-06, M1-08 |
-| ☐ | M1-10 | Failure modes, part A | M | M1-09 |
+| ☑ | M1-10 | Failure modes, part A | M | M1-09 |
 | ☐ | M1-11 | Failure modes, part B | M | M1-10 |
 | ☑ | M1-12 | Matcher: scopes, runs, passes 1 and 2 | M | M1-06, M1-07 |
 | ☑ | M1-13 | Matcher: passes 3 to 5 | M | M1-12 |
