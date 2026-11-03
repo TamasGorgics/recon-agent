@@ -47,6 +47,8 @@ func run(ctx context.Context, args []string) error {
 		return runMigrate(ctx, args[1:])
 	case "testdb":
 		return runTestDB(ctx, args[1:])
+	case "synth":
+		return runSynth(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try: recon help)", args[0])
 	}

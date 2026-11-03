@@ -45,6 +45,7 @@ type Config struct {
 	Ledger   LedgerConfig   `yaml:"ledger"`
 	Ingest   IngestConfig   `yaml:"ingest"`
 	Match    MatchConfig    `yaml:"match"`
+	Synth    SynthConfig    `yaml:"synth"`
 }
 
 // DatabaseConfig holds the Postgres DSNs.
@@ -101,6 +102,9 @@ func (c Config) Validate() error {
 	if err := c.Match.Validate(); err != nil {
 		return err
 	}
+	if err := c.Synth.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -109,6 +113,7 @@ func defaults() Config {
 		Log:    LogConfig{Level: DefaultLogLevel},
 		Ledger: DefaultLedgerConfig(),
 		Match:  DefaultMatchConfig(),
+		Synth:  DefaultSynthConfig(),
 	}
 }
 
