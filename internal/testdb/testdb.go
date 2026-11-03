@@ -143,9 +143,10 @@ func (d *DB) DSNFor(role string) string {
 	return dsn
 }
 
-// EnsureTemplate creates and migrates the template database when it is absent
-// and reuses it when it is present. The returned bool reports whether this call
-// created it.
+// EnsureTemplate creates and migrates the template database when it is absent,
+// reuses it when it is at the current migration version, and drops/recreates it
+// when its goose version is older, newer, or missing relative to migrations.FS.
+// The returned bool reports whether this call created (or recreated) it.
 //
 // Call it from TestMain before recording the database baseline: the ADV-01
 // lifecycle requires the template to exist before m.Run so the orphan
@@ -154,6 +155,11 @@ func EnsureTemplate(ctx context.Context, opts Options) (bool, error) {
 	opts = opts.withDefaults()
 	if opts.AdminDSN == "" {
 		return false, errors.New("testdb: TEST_DATABASE_URL is required for integration tests")
+	}
+
+	currentVersion, err := currentMigrationVersion()
+	if err != nil {
+		return false, fmt.Errorf("testdb: determine current migration version: %w", err)
 	}
 
 	admin, err := pgx.Connect(ctx, opts.AdminDSN)
@@ -176,7 +182,17 @@ func EnsureTemplate(ctx context.Context, opts Options) (bool, error) {
 		return false, fmt.Errorf("testdb: check template %q: %w", opts.Template, err)
 	}
 	if exists {
-		return false, nil
+		templateVersion, hasVersionTable, err := templateMigrationVersion(ctx, opts.AdminDSN, opts.Template)
+		if err != nil {
+			return false, fmt.Errorf("testdb: read template %q migration version: %w", opts.Template, err)
+		}
+		if hasVersionTable && templateVersion == currentVersion {
+			return false, nil
+		}
+		if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(opts.Template)+" WITH (FORCE)"); err != nil {
+			return false, fmt.Errorf("testdb: drop stale template %q (version table=%t, version=%d, want %d): %w",
+				opts.Template, hasVersionTable, templateVersion, currentVersion, err)
+		}
 	}
 
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+quoteIdent(opts.Template)); err != nil {
@@ -236,6 +252,50 @@ func CleanupOrphans(ctx context.Context, adminDSN string) (int, error) {
 		dropped++
 	}
 	return dropped, nil
+}
+
+// currentMigrationVersion returns the highest migration version embedded in
+// migrations.FS. It mirrors the version goose records in goose_db_version.
+func currentMigrationVersion() (int64, error) {
+	goose.SetBaseFS(migrations.FS)
+	found, err := goose.CollectMigrations(".", 0, goose.MaxVersion)
+	if err != nil {
+		return 0, fmt.Errorf("collect migrations: %w", err)
+	}
+	var maxVersion int64
+	for _, migration := range found {
+		if migration.Version > maxVersion {
+			maxVersion = migration.Version
+		}
+	}
+	if maxVersion == 0 {
+		return 0, errors.New("no migrations embedded in migrations.FS")
+	}
+	return maxVersion, nil
+}
+
+// templateMigrationVersion reads the template's applied goose version. A
+// missing goose_db_version table means the template predates the migration
+// system (or was created by hand), so it must be rebuilt.
+func templateMigrationVersion(ctx context.Context, adminDSN, template string) (version int64, hasTable bool, err error) {
+	dsn, err := dsnForDatabase(adminDSN, template)
+	if err != nil {
+		return 0, false, err
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return 0, false, fmt.Errorf("connect template database: %w", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+
+	if err := conn.QueryRow(ctx, "SELECT COALESCE(max(version_id), 0) FROM goose_db_version").Scan(&version); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("query goose_db_version: %w", err)
+	}
+	return version, true, nil
 }
 
 // templateLockKey is an arbitrary advisory-lock key for template setup.

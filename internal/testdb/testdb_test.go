@@ -5,13 +5,17 @@ package testdb_test
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pressly/goose/v3"
 
 	"github.com/TamasGorgics/recon-agent/internal/testdb"
+	"github.com/TamasGorgics/recon-agent/migrations"
 )
 
 // TestMain enforces the ADV-01 lifecycle: the template exists before the
@@ -88,8 +92,8 @@ func TestIsolatedDatabase(t *testing.T) {
 	if err := d.Pool.QueryRow(context.Background(), "SELECT max(version_id) FROM goose_db_version").Scan(&version); err != nil {
 		t.Fatalf("template migration missing from clone: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("migration version = %d, want 1", version)
+	if want := currentMigrationVersion(t); version != want {
+		t.Fatalf("migration version = %d, want %d", version, want)
 	}
 
 	if got := d.DSNFor(""); got != d.DSN {
@@ -98,6 +102,146 @@ func TestIsolatedDatabase(t *testing.T) {
 	if got := d.DSNFor("app"); got != d.DSN {
 		t.Fatalf("DSNFor(\"app\") = %q, want the default DSN %q at M0", got, d.DSN)
 	}
+}
+
+// TestEnsureTemplateRecreatesOnVersionMismatch proves D-3: a template whose
+// goose version is older, newer, or missing relative to migrations.FS is
+// dropped (WITH FORCE) and rebuilt from the current migration set.
+func TestEnsureTemplateRecreatesOnVersionMismatch(t *testing.T) {
+	ctx := context.Background()
+	adminDSN := os.Getenv("TEST_DATABASE_URL")
+	if adminDSN == "" {
+		t.Fatal("TEST_DATABASE_URL is required")
+	}
+
+	// Deliberately avoid the recon_test_% namespace: another package's TestMain
+	// may run concurrently and would treat a new recon_test_% database as an
+	// orphan. This template is dropped by cleanup below.
+	template := fmt.Sprintf("recon_tmpl_version_check_%d_%d", os.Getpid(), time.Now().UnixNano())
+	t.Cleanup(func() {
+		conn, err := pgx.Connect(context.Background(), adminDSN)
+		if err != nil {
+			t.Errorf("connect to drop template %q: %v", template, err)
+			return
+		}
+		defer func() { _ = conn.Close(context.Background()) }()
+		if _, err := conn.Exec(context.Background(), `DROP DATABASE IF EXISTS "`+template+`" WITH (FORCE)`); err != nil {
+			t.Errorf("drop template %q: %v", template, err)
+		}
+	})
+
+	created, err := testdb.EnsureTemplate(ctx, testdb.Options{AdminDSN: adminDSN, Template: template})
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	if !created {
+		t.Fatal("first EnsureTemplate call did not create the template")
+	}
+
+	tamperCases := []struct {
+		name string
+		sql  string
+	}{
+		{"older migration version", `DELETE FROM goose_db_version WHERE version_id <> 0`},
+		{"newer migration version", `INSERT INTO goose_db_version (version_id, is_applied) VALUES (99999999999999, true)`},
+		{"missing goose version table", `DROP TABLE goose_db_version`},
+	}
+
+	for _, tc := range tamperCases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := connectTemplate(t, adminDSN, template)
+			if _, err := conn.Exec(ctx, `CREATE TABLE stale_marker (id INT)`); err != nil {
+				_ = conn.Close(ctx)
+				t.Fatalf("create stale marker: %v", err)
+			}
+			if _, err := conn.Exec(ctx, tc.sql); err != nil {
+				_ = conn.Close(ctx)
+				t.Fatalf("tamper template: %v", err)
+			}
+			if err := conn.Close(ctx); err != nil {
+				t.Fatalf("close template connection before drop: %v", err)
+			}
+
+			created, err := testdb.EnsureTemplate(ctx, testdb.Options{AdminDSN: adminDSN, Template: template})
+			if err != nil {
+				t.Fatalf("recreate stale template: %v", err)
+			}
+			if !created {
+				t.Fatal("stale template was reused instead of recreated")
+			}
+
+			conn = connectTemplate(t, adminDSN, template)
+			defer func() { _ = conn.Close(context.Background()) }()
+
+			var version int64
+			if err := conn.QueryRow(ctx, `SELECT max(version_id) FROM goose_db_version`).Scan(&version); err != nil {
+				t.Fatalf("read recreated template version: %v", err)
+			}
+			if want := currentMigrationVersion(t); version != want {
+				t.Fatalf("recreated template version = %d, want %d", version, want)
+			}
+
+			var marker, currencies string
+			if err := conn.QueryRow(ctx,
+				`SELECT COALESCE(to_regclass('public.stale_marker')::text, ''), COALESCE(to_regclass('public.currencies')::text, '')`).
+				Scan(&marker, &currencies); err != nil {
+				t.Fatalf("inspect recreated template: %v", err)
+			}
+			if marker != "" {
+				t.Fatalf("stale marker %q survived template recreation", marker)
+			}
+			if currencies == "" {
+				t.Fatal("currencies table missing after recreation")
+			}
+		})
+	}
+
+	created, err = testdb.EnsureTemplate(ctx, testdb.Options{AdminDSN: adminDSN, Template: template})
+	if err != nil {
+		t.Fatalf("reuse current template: %v", err)
+	}
+	if created {
+		t.Fatal("template at the current migration version was recreated instead of reused")
+	}
+}
+
+// currentMigrationVersion returns the highest migration version embedded in
+// migrations.FS, matching what testdb.EnsureTemplate compares against.
+func currentMigrationVersion(t *testing.T) int64 {
+	t.Helper()
+	goose.SetBaseFS(migrations.FS)
+	found, err := goose.CollectMigrations(".", 0, goose.MaxVersion)
+	if err != nil {
+		t.Fatalf("collect migrations: %v", err)
+	}
+	var maxVersion int64
+	for _, migration := range found {
+		if migration.Version > maxVersion {
+			maxVersion = migration.Version
+		}
+	}
+	if maxVersion == 0 {
+		t.Fatal("no migrations embedded in migrations.FS")
+	}
+	return maxVersion
+}
+
+func connectTemplate(t *testing.T, adminDSN, template string) *pgx.Conn {
+	t.Helper()
+	u, err := url.Parse(adminDSN)
+	if err != nil {
+		t.Fatalf("parse admin DSN: %v", err)
+	}
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		t.Fatalf("admin DSN must be a postgres:// URL, got scheme %q", u.Scheme)
+	}
+	u.Path = "/" + template
+	u.RawPath = ""
+	conn, err := pgx.Connect(context.Background(), u.String())
+	if err != nil {
+		t.Fatalf("connect to template %q: %v", template, err)
+	}
+	return conn
 }
 
 func listTestDatabases(ctx context.Context, adminDSN string) ([]string, error) {

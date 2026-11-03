@@ -24,8 +24,8 @@ Commands:
 
 Environment:
   CONFIG_FILE        optional YAML config path (defaults < YAML < environment)
-  DATABASE_URL       admin DSN used by migrate and testdb clean
-  TEST_DATABASE_URL  maintenance DSN used by integration tests (CREATEDB required)
+  DATABASE_URL       admin DSN used by migrate; fallback for testdb clean
+  TEST_DATABASE_URL  maintenance DSN used by integration tests and preferred by testdb clean
 `
 
 func main() {
@@ -140,11 +140,11 @@ func runTestDB(ctx context.Context, args []string) error {
 		return errors.New("usage: recon testdb clean")
 	}
 
-	cfg, err := loadConfig()
+	dsn, err := testdbCleanDSN()
 	if err != nil {
 		return err
 	}
-	dropped, err := testdb.CleanupOrphans(ctx, cfg.Database.URL)
+	dropped, err := testdb.CleanupOrphans(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("clean test databases: %w", err)
 	}
@@ -154,4 +154,21 @@ func runTestDB(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("testdb clean: dropped %d orphan database(s)\n", dropped)
 	return nil
+}
+
+// testdbCleanDSN selects the maintenance DSN for `testdb clean`. Test databases
+// live on the TEST_DATABASE_URL server, so that DSN wins; DATABASE_URL is only a
+// fallback when TEST_DATABASE_URL is unset (D-3, F-09).
+func testdbCleanDSN() (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	if cfg.Database.TestURL != "" {
+		return cfg.Database.TestURL, nil
+	}
+	if cfg.Database.URL != "" {
+		return cfg.Database.URL, nil
+	}
+	return "", errors.New("config: TEST_DATABASE_URL or DATABASE_URL is required for testdb clean")
 }
