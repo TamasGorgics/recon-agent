@@ -26,7 +26,7 @@ help:
 	@printf '  %-16s %s\n' 'fin-coverage' 'stub until M6-07'
 	@printf '  %-16s %s\n' 'must-not' 'stub until M6-04'
 	@printf '  %-16s %s\n' 'demo' 'stub until M5-12'
-	@printf '  %-16s %s\n' 'demo-m1' 'stub until M1-16'
+	@printf '  %-16s %s\n' 'demo-m1' 'M1 end-to-end demo: seed 1, realistic, 14 days'
 	@printf '  %-16s %s\n' 'demo-m2' 'stub until M2-11'
 
 build:
@@ -80,8 +80,7 @@ demo:
 	@exit 1
 
 demo-m1:
-	@printf '%s\n' 'target demo-m1: not implemented until M1-16' >&2
-	@exit 1
+	go run ./cmd/recon demo seed --seed 1 --days 14 --difficulty realistic --reset
 
 demo-m2:
 	@printf '%s\n' 'target demo-m2: not implemented until M2-11' >&2

@@ -61,6 +61,9 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make migrate test-integration
+      # M1-16 gate: TestMilestone1Gate runs under test-integration above; this
+      # also exercises the documented CLI demo path against the same Postgres.
+      - run: make demo-m1
 
   future-gates:
     if: ${{ false }}

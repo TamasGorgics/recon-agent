@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -18,8 +19,14 @@ import (
 const usage = `usage: recon <command> [arguments]
 
 Commands:
+  demo seed        generate, ingest, match and tie out a deterministic dataset
+                   usage: recon demo seed [--seed N] [--days N]
+                          [--difficulty easy|realistic|adversarial] [--reset]
+                   --reset drops and recreates the public schema (dev only)
   migrate up       apply all pending migrations
   migrate status   print the current schema version and pending migrations
+  synth generate   write a deterministic synthetic dataset to a directory
+  synth load       load a generated dataset into the database
   testdb clean     drop orphan recon_test_% databases and ephemeral login roles
   tieout           independent balance tie-out for a scope and statement date
                    usage: recon tieout --scope <uuid> --date YYYY-MM-DD [--json]
@@ -39,13 +46,20 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
+	return runTo(ctx, args, os.Stdout)
+}
+
+// runTo is run with an explicit writer so help output can be tested without
+// capturing the process stdout. Only the top-level help uses out; commands
+// write their own results.
+func runTo(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("missing command (try: recon help)")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
-		fmt.Print(usage)
-		return nil
+		_, err := fmt.Fprint(out, usage)
+		return err
 	case "migrate":
 		return runMigrate(ctx, args[1:])
 	case "testdb":
@@ -54,6 +68,8 @@ func run(ctx context.Context, args []string) error {
 		return runSynth(ctx, args[1:])
 	case "tieout":
 		return runTieout(ctx, args[1:])
+	case "demo":
+		return runDemo(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try: recon help)", args[0])
 	}

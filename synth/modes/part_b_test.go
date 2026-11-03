@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -631,4 +632,50 @@ func txnCurrencyOf(txn synth.Transaction) string {
 		return ""
 	}
 	return txn.Lines[0].Currency
+}
+
+// TestPartBUnknownDepositPreservesStatementContinuity is the M1-16 integration
+// regression: an unknown deposit inserted into a bank statement must also shift
+// that currency's later opening/closing balances. Otherwise M1-07 quarantines
+// every later statement as a continuity gap and the dataset's ground-truth
+// links can never be matched.
+func TestPartBUnknownDepositPreservesStatementContinuity(t *testing.T) {
+	result := generate(t, 1177, modeTestDays, synth.DifficultyRealistic,
+		singleMode(modes.UnknownDeposit, 2))
+	type statement struct {
+		path     string
+		asOf     string
+		currency string
+		opening  int64
+		closing  int64
+	}
+	byCurrency := make(map[string][]statement)
+	parser := ingest.NewBankParser()
+	for _, file := range result.Files {
+		if !strings.HasPrefix(file.Path, synth.SourceBank+"/") {
+			continue
+		}
+		parsed, err := parser.Parse(bytes.NewReader(file.Data))
+		if err != nil {
+			t.Fatalf("parse %s: %v", file.Path, err)
+		}
+		if len(parsed.Statements) != 1 {
+			t.Fatalf("%s has %d statements, want 1", file.Path, len(parsed.Statements))
+		}
+		s := parsed.Statements[0]
+		byCurrency[s.Currency] = append(byCurrency[s.Currency], statement{
+			path: file.Path, asOf: s.AsOfDate.Format("2006-01-02"),
+			currency: s.Currency, opening: s.OpeningMinor, closing: s.ClosingMinor,
+		})
+	}
+	for currency, statements := range byCurrency {
+		sort.Slice(statements, func(i, j int) bool { return statements[i].path < statements[j].path })
+		for i := 1; i < len(statements); i++ {
+			if statements[i].opening != statements[i-1].closing {
+				t.Errorf("%s %s opens at %d but %s closes at %d",
+					currency, statements[i].asOf, statements[i].opening,
+					statements[i-1].asOf, statements[i-1].closing)
+			}
+		}
+	}
 }

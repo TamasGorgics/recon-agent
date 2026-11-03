@@ -496,7 +496,11 @@ func (f *bankFile) date() (time.Time, error) {
 }
 
 // addBankRow appends one row to the statement at index and raises closing by
-// the same amount so opening + total = closing still holds.
+// the same amount so opening + total = closing still holds. Every later
+// statement of the same currency carries the new closing as its opening, so
+// their opening and closing are shifted by the same amount and re-rendered.
+// Without that shift the injected row breaks statement continuity and M1-07
+// quarantines every later statement, hiding the dataset's ground truth links.
 func (w *World) addBankRow(index int, row bankRow) error {
 	if index < 0 || index >= len(w.bankFiles) {
 		return fmt.Errorf("%w: bank file index %d is out of range", ErrInvalidWorld, index)
@@ -509,6 +513,10 @@ func (w *World) addBankRow(index int, row bankRow) error {
 		return fmt.Errorf("%w: bank row currency %q in file %s",
 			ErrInvalidWorld, row.Currency, file.Currency)
 	}
+	targetDate, err := file.date()
+	if err != nil {
+		return err
+	}
 	file.Rows = append(file.Rows, row)
 	file.ClosingMinor += row.AmountMinor
 	data, err := file.render()
@@ -516,6 +524,32 @@ func (w *World) addBankRow(index int, row bankRow) error {
 		return err
 	}
 	w.bankFiles[index] = synth.File{Path: file.Path, Data: data}
+	for i := range w.bankFiles {
+		if i == index {
+			continue
+		}
+		later, err := parseBankFile(w.bankFiles[i])
+		if err != nil {
+			return err
+		}
+		if later.Currency != file.Currency {
+			continue
+		}
+		laterDate, err := later.date()
+		if err != nil {
+			return err
+		}
+		if !laterDate.After(targetDate) {
+			continue
+		}
+		later.OpeningMinor += row.AmountMinor
+		later.ClosingMinor += row.AmountMinor
+		shifted, err := later.render()
+		if err != nil {
+			return err
+		}
+		w.bankFiles[i] = synth.File{Path: later.Path, Data: shifted}
+	}
 	w.externalCount++
 	return nil
 }
