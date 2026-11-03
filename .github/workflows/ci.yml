@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make build lint
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make test
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15
+        env:
+          POSTGRES_USER: recon
+          POSTGRES_PASSWORD: recon
+          POSTGRES_DB: recon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recon -d recon"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://recon:recon@localhost:5432/recon?sslmode=disable
+      TEST_DATABASE_URL: postgres://recon:recon@localhost:5432/recon?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make migrate test-integration
+
+  future-gates:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "TODO: floatlint (M1-02), fin-coverage (M6-07), eval gate (M6-05)"'

@@ -1,0 +1,21 @@
+# Local Postgres for development and integration tests.
+# The image tag is pinned (HD-IMP-03) and mirrored by .github/workflows/ci.yml.
+services:
+  postgres:
+    image: postgres:16.15
+    environment:
+      POSTGRES_USER: recon
+      POSTGRES_PASSWORD: recon
+      POSTGRES_DB: recon
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - recon-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recon -d recon"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  recon-pgdata:

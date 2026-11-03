@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^time\.Now$'
+          msg: use clock.Clock instead of time.Now in domain packages
+        - pattern: '^time\.Since$'
+          msg: use clock.Clock instead of time.Since in domain packages
+  exclusions:
+    rules:
+      # Keep the wall-clock ban scoped to the domain packages. forbidigo cannot
+      # scope by caller path itself, so exclude its findings everywhere else.
+      - linters:
+          - forbidigo
+        path-except: '^internal/(ledger|match|cases|policy|approval|executor|audit|agent)/'
+      # Explicit exclusions required by the M0 contract.
+      - linters:
+          - forbidigo
+        path: '^internal/clock/'
+      - linters:
+          - forbidigo
+        path: '^cmd/'
