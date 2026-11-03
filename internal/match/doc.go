@@ -22,12 +22,32 @@
 // Passes implement Pass and run in the order given to Engine. M1-12 supplies
 // pass 1 (exact: same reference, amount, and currency) and pass 2 (same
 // reference and currency with the absolute amount delta inside the configured
-// per-currency fee tolerance). Evaluate claims accepted candidates between
-// passes, so pass 2 can never re-match a record or transaction claimed by pass
-// 1. A proposal group is accepted only when exactly one unmatched external
-// record and one unmatched ledger transaction share its key; otherwise it is
-// ambiguous and left for a later pass or for breaks. This rule, plus sorting the
-// snapshot by ID, makes the result independent of input order.
+// per-currency fee tolerance). M1-13 adds pass 3 (composite), pass 4 (fuzzy),
+// and pass 5 (duplicates); docs/matching.md documents the rules, thresholds,
+// caps, and complexity. Evaluate claims accepted candidates between passes, so
+// pass 2 can never re-match a record or transaction claimed by pass 1. A
+// proposal group is accepted only when exactly one unmatched external record and
+// one unmatched ledger transaction share its key; otherwise it is ambiguous and
+// left for a later pass or for breaks. This rule, plus sorting the snapshot by
+// ID, makes the result independent of input order.
+//
+// Pass 3 links one payout to N ledger transactions whose signed sum equals the
+// payout exactly. Declared settlement batch membership is preferred; otherwise
+// a bounded subset-sum runs. Two valid subsets are ambiguous (no match), and
+// exceeding a leg, pool, or node cap yields a break rather than a partial match.
+// Pass 4 scores amount, value-date distance, and counterparty hint in integer
+// basis points; a score below the configured threshold or a tie between two top
+// candidates means no match. Pass 5 reports repeated external ids and
+// same-amount/same-time charges as duplicate break candidates and never links
+// them.
+//
+// # Break candidates
+//
+// Passes that refuse a record implement BreakPass and return BreakCandidate
+// values (unmatched payouts and duplicate groups). Engine.Run returns them in
+// RunResult.Breaks without writing a breaks table: M1-14 owns persistence.
+// They are de-duplicated by Signature and sorted, so the break set is
+// deterministic and reruns produce identical signatures.
 //
 // # References and amounts
 //

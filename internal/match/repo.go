@@ -47,6 +47,7 @@ func loadExternalCandidates(ctx context.Context, tx pgx.Tx, scope Scope, window 
 	rows, err := tx.Query(ctx,
 		`SELECT er.id::text, er.source, er.source_record_id, er.kind,
 		        er.amount_minor, er.fee_minor, er.currency, er.value_date,
+		        er.occurred_at, er.batch_id::text,
 		        COALESCE(NULLIF(er.raw->>'reference', ''),
 		                 NULLIF(er.raw->>'bank_reference', ''),
 		                 er.source_record_id)
@@ -70,7 +71,7 @@ func loadExternalCandidates(ctx context.Context, tx pgx.Tx, scope Scope, window 
 		var record ExternalRecord
 		if err := rows.Scan(&record.ID, &record.Source, &record.SourceRecordID, &record.Kind,
 			&record.AmountMinor, &record.FeeMinor, &record.Currency, &record.ValueDate,
-			&record.Reference); err != nil {
+			&record.OccurredAt, &record.Batch, &record.Reference); err != nil {
 			return nil, fmt.Errorf("match: scan external candidate: %w", err)
 		}
 		records = append(records, record)

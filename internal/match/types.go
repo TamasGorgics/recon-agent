@@ -7,13 +7,22 @@ import (
 )
 
 // Rule names stored in matches.rule. M1-12 owns the first two; M1-13 adds the
-// composite, fuzzy, and duplicate values.
+// composite and fuzzy values. Duplicates never produce a match rule: they only
+// produce BreakCandidate rows with SideDuplicate.
 const (
 	// RuleExact is pass 1: same reference, amount, and currency.
 	RuleExact = "exact"
 	// RuleReferenceTolerance is pass 2: same reference and currency, with the
 	// absolute amount delta within the configured fee tolerance.
 	RuleReferenceTolerance = "reference_tolerance"
+	// RuleCompositeBatch is pass 3 with declared settlement batch membership.
+	RuleCompositeBatch = "composite_batch"
+	// RuleCompositeSubset is pass 3's bounded subset-sum fallback.
+	RuleCompositeSubset = "composite"
+	// RuleFuzzy is pass 4: amount + value-date window + counterparty hint.
+	RuleFuzzy = "fuzzy"
+	// RuleDuplicate names pass 5 in run stats. It never links.
+	RuleDuplicate = "duplicate"
 )
 
 // ConfidenceBPS returns the confidence as basis points (10000 = 1.0). The
@@ -25,6 +34,7 @@ type ConfidenceBPS int
 const (
 	ConfidenceExact     ConfidenceBPS = 10_000
 	ConfidenceTolerance ConfidenceBPS = 9_900
+	ConfidenceComposite ConfidenceBPS = 9_800
 	ConfidenceMax       ConfidenceBPS = 10_000
 )
 
@@ -60,6 +70,11 @@ func (w Window) Contains(valueDate time.Time) bool {
 // ExternalRecord is one unmatched source record loaded for a run. Reference is
 // the source's matching reference: raw->>'reference' for psp_a,
 // raw->>'bank_reference' for bank_x, and source_record_id as the fallback.
+//
+// Batch is the source's declared settlement batch (external_records.batch_id).
+// M1-13 pass 3 prefers declared batch membership before subset-sum.
+// OccurredAt is the source event time; duplicate detection uses it for
+// same-amount/same-time charges.
 type ExternalRecord struct {
 	ID             string
 	Source         string
@@ -69,7 +84,9 @@ type ExternalRecord struct {
 	FeeMinor       int64
 	Currency       string
 	ValueDate      time.Time
+	OccurredAt     time.Time
 	Reference      string
+	Batch          string
 }
 
 // LedgerTxn is one unmatched ledger transaction loaded for a run. AmountMinor

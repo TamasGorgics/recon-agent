@@ -42,9 +42,11 @@ func (p ReferenceTolerancePass) Candidates(_ context.Context, rc *RunContext) ([
 		if len(records) != 1 || len(ledgerByRef[reference]) != 1 {
 			continue
 		}
-		delta := records[0].AmountMinor - ledgerByRef[reference][0].AmountMinor
-		if delta < 0 {
-			delta = -delta
+		delta, ok := absDelta(records[0].AmountMinor, ledgerByRef[reference][0].AmountMinor)
+		if !ok {
+			// The true delta does not fit int64, so it can never be within a
+			// configured tolerance: leave the pair unmatched.
+			continue
 		}
 		if delta <= p.tolerance(rc.Scope().Currency) {
 			references = append(references, reference)

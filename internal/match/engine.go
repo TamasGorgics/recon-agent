@@ -58,22 +58,27 @@ type RunRequest struct {
 }
 
 // RunStats is stored in match_runs.stats and in the per-run audit summary.
-// Counts are rows considered or matched, never money.
+// Counts are rows considered or matched, never money. Breaks are break
+// candidates (M1-14 persists them); M1-13 itself writes no breaks table rows.
 type RunStats struct {
 	ExternalCandidates int            `json:"external_candidates"`
 	LedgerCandidates   int            `json:"ledger_candidates"`
 	Matched            int            `json:"matched"`
 	UnmatchedExternal  int            `json:"unmatched_external"`
 	UnmatchedLedger    int            `json:"unmatched_ledger"`
+	Breaks             int            `json:"breaks"`
+	BreaksBySide       map[string]int `json:"breaks_by_side"`
 	ByPass             map[string]int `json:"by_pass"`
 }
 
-// RunResult describes a completed run.
+// RunResult describes a completed run. Breaks are the deterministic break
+// candidates proposed by passes 3 and 5; the caller (M1-14) inserts them.
 type RunResult struct {
 	RunID      string
 	ScopeID    string
 	ConfigHash string
 	Stats      RunStats
+	Breaks     []BreakCandidate
 }
 
 // Engine runs the ordered matching passes for one scope at a time. Runs are
@@ -99,9 +104,7 @@ func New(opts Options) (*Engine, error) {
 		return nil, fmt.Errorf("%w: audit actor is not valid", ErrInvalidRequest)
 	}
 	cfg := opts.Config
-	if cfg.FeeToleranceMinor == nil {
-		cfg = config.DefaultMatchConfig()
-	}
+	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
@@ -159,7 +162,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 
 		runContext := NewRunContext(scope, req.Window, now, external, ledger)
-		candidates, counts, err := Evaluate(ctx, runContext, e.passes)
+		candidates, breaks, counts, err := EvaluateWithBreaks(ctx, runContext, e.passes)
 		if err != nil {
 			return err
 		}
@@ -169,12 +172,18 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			}
 		}
 
+		breaksBySide := make(map[string]int)
+		for _, candidate := range breaks {
+			breaksBySide[string(candidate.Side)]++
+		}
 		stats := RunStats{
 			ExternalCandidates: len(external),
 			LedgerCandidates:   len(ledger),
 			Matched:            len(candidates),
 			UnmatchedExternal:  len(external) - len(candidates),
 			UnmatchedLedger:    len(ledger) - runContext.usedLedgerCount(),
+			Breaks:             len(breaks),
+			BreaksBySide:       breaksBySide,
 			ByPass:             counts,
 		}
 		if err := finishRun(ctx, tx, runID, now, stats); err != nil {
@@ -201,6 +210,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			ScopeID:    scope.ID,
 			ConfigHash: e.configHash,
 			Stats:      stats,
+			Breaks:     breaks,
 		}
 		return nil
 	})
@@ -213,9 +223,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 // ConfigHash returns the stable SHA-256 hex digest of the matcher config. It
 // records which tolerance table produced a run's matches.
 func ConfigHash(cfg config.MatchConfig) string {
-	if cfg.FeeToleranceMinor == nil {
-		cfg = config.DefaultMatchConfig()
-	}
+	cfg = cfg.WithDefaults()
 	sum := sha256.Sum256([]byte(cfg.Canonical()))
 	return hex.EncodeToString(sum[:])
 }
