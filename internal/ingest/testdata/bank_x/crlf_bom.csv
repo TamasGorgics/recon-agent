@@ -1,0 +1,4 @@
+﻿# rows=2 total=-15 currency=JPY opening=100000 closing=99985 as_of=2026-06-16
+record_id,booking_date,value_date,amount,currency,description,bank_reference
+bnk_1001,2026-06-16,2026-06-16,-10,JPY,atm fee,BNK-1001
+bnk_1002,2026-06-16,2026-06-16,-5,JPY,"fee, coin",BNK-1002

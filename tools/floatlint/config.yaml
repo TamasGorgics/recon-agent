@@ -1,0 +1,14 @@
+# Packages where floating-point values are forbidden for monetary amounts
+# (FIN-01). Entries may be full import paths or module-relative paths; a
+# package matches when its import path is equal to an entry or ends with
+# "/<entry>", so "internal/money" covers this module only.
+packages:
+  - internal/money
+  - internal/ledger
+  - internal/match
+  - internal/cases
+  - internal/policy
+  - internal/approval
+  - internal/executor
+  - internal/audit
+  - internal/agent

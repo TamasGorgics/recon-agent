@@ -1,0 +1,16 @@
+{
+  "declared": {
+    "total_minor": 0,
+    "row_count": 0,
+    "currency": "USD"
+  },
+  "records": [],
+  "statements": [
+    {
+      "as_of_date": "2026-06-17",
+      "opening_minor": 50000,
+      "closing_minor": 50000,
+      "currency": "USD"
+    }
+  ]
+}

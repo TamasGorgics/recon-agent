@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -18,35 +19,57 @@ import (
 const usage = `usage: recon <command> [arguments]
 
 Commands:
+  demo seed        generate, ingest, match and tie out a deterministic dataset
+                   usage: recon demo seed [--seed N] [--days N]
+                          [--difficulty easy|realistic|adversarial] [--reset]
+                   --reset drops and recreates the public schema (dev only)
   migrate up       apply all pending migrations
   migrate status   print the current schema version and pending migrations
-  testdb clean     drop orphan recon_test_% databases
+  synth generate   write a deterministic synthetic dataset to a directory
+  synth load       load a generated dataset into the database
+  testdb clean     drop orphan recon_test_% databases and ephemeral login roles
+  tieout           independent balance tie-out for a scope and statement date
+                   usage: recon tieout --scope <uuid> --date YYYY-MM-DD [--json]
+                   exit: 0 tied, 2 unexplained difference, 1 error
 
 Environment:
   CONFIG_FILE        optional YAML config path (defaults < YAML < environment)
-  DATABASE_URL       admin DSN used by migrate and testdb clean
-  TEST_DATABASE_URL  maintenance DSN used by integration tests (CREATEDB required)
+  DATABASE_URL       admin DSN used by migrate; fallback for testdb clean
+  TEST_DATABASE_URL  maintenance DSN used by integration tests and preferred by testdb clean
 `
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "recon: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
 func run(ctx context.Context, args []string) error {
+	return runTo(ctx, args, os.Stdout)
+}
+
+// runTo is run with an explicit writer so help output can be tested without
+// capturing the process stdout. Only the top-level help uses out; commands
+// write their own results.
+func runTo(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("missing command (try: recon help)")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
-		fmt.Print(usage)
-		return nil
+		_, err := fmt.Fprint(out, usage)
+		return err
 	case "migrate":
 		return runMigrate(ctx, args[1:])
 	case "testdb":
 		return runTestDB(ctx, args[1:])
+	case "synth":
+		return runSynth(ctx, args[1:])
+	case "tieout":
+		return runTieout(ctx, args[1:])
+	case "demo":
+		return runDemo(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown command %q (try: recon help)", args[0])
 	}
@@ -140,18 +163,39 @@ func runTestDB(ctx context.Context, args []string) error {
 		return errors.New("usage: recon testdb clean")
 	}
 
-	cfg, err := loadConfig()
+	dsn, err := testdbCleanDSN()
 	if err != nil {
 		return err
 	}
-	dropped, err := testdb.CleanupOrphans(ctx, cfg.Database.URL)
+	dropped, err := testdb.CleanupOrphans(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("clean test databases: %w", err)
 	}
-	if dropped == 0 {
-		fmt.Println("testdb clean: no orphan databases")
+	roles, err := testdb.CleanupOrphanLogins(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("clean ephemeral login roles: %w", err)
+	}
+	if dropped == 0 && roles == 0 {
+		fmt.Println("testdb clean: no orphan databases or ephemeral login roles")
 		return nil
 	}
-	fmt.Printf("testdb clean: dropped %d orphan database(s)\n", dropped)
+	fmt.Printf("testdb clean: dropped %d orphan database(s) and %d ephemeral login role(s)\n", dropped, roles)
 	return nil
+}
+
+// testdbCleanDSN selects the maintenance DSN for `testdb clean`. Test databases
+// live on the TEST_DATABASE_URL server, so that DSN wins; DATABASE_URL is only a
+// fallback when TEST_DATABASE_URL is unset (D-3, F-09).
+func testdbCleanDSN() (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	if cfg.Database.TestURL != "" {
+		return cfg.Database.TestURL, nil
+	}
+	if cfg.Database.URL != "" {
+		return cfg.Database.URL, nil
+	}
+	return "", errors.New("config: TEST_DATABASE_URL or DATABASE_URL is required for testdb clean")
 }

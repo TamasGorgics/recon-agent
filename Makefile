@@ -13,7 +13,7 @@ help:
 	@echo "Targets:"
 	@printf '  %-16s %s\n' 'help' 'list targets'
 	@printf '  %-16s %s\n' 'build' 'go build ./...'
-	@printf '  %-16s %s\n' 'lint' 'go vet ./... + golangci-lint v2.15.0 + scripts/lint-negative.sh'
+	@printf '  %-16s %s\n' 'lint' 'go vet + floatlint + migrationlint + golangci-lint v2.15.0 + scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'lint-negative' 'scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
 	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 ./...'
@@ -26,7 +26,7 @@ help:
 	@printf '  %-16s %s\n' 'fin-coverage' 'stub until M6-07'
 	@printf '  %-16s %s\n' 'must-not' 'stub until M6-04'
 	@printf '  %-16s %s\n' 'demo' 'stub until M5-12'
-	@printf '  %-16s %s\n' 'demo-m1' 'stub until M1-16'
+	@printf '  %-16s %s\n' 'demo-m1' 'M1 end-to-end demo: seed 1, realistic, 14 days'
 	@printf '  %-16s %s\n' 'demo-m2' 'stub until M2-11'
 
 build:
@@ -34,6 +34,8 @@ build:
 
 lint:
 	go vet ./...
+	go run ./tools/floatlint ./...
+	go run ./tools/migrationlint ./migrations
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
 	./scripts/lint-negative.sh
 
@@ -78,8 +80,7 @@ demo:
 	@exit 1
 
 demo-m1:
-	@printf '%s\n' 'target demo-m1: not implemented until M1-16' >&2
-	@exit 1
+	go run ./cmd/recon demo seed --seed 1 --days 14 --difficulty realistic --reset
 
 demo-m2:
 	@printf '%s\n' 'target demo-m2: not implemented until M2-11' >&2

@@ -42,6 +42,10 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Log      LogConfig      `yaml:"log"`
 	LLM      LLMConfig      `yaml:"llm"`
+	Ledger   LedgerConfig   `yaml:"ledger"`
+	Ingest   IngestConfig   `yaml:"ingest"`
+	Match    MatchConfig    `yaml:"match"`
+	Synth    SynthConfig    `yaml:"synth"`
 }
 
 // DatabaseConfig holds the Postgres DSNs.
@@ -92,12 +96,24 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Database.URL) == "" {
 		return errors.New("config: database.url is required (set DATABASE_URL or database.url in CONFIG_FILE)")
 	}
+	if err := c.Ingest.Validate(); err != nil {
+		return err
+	}
+	if err := c.Match.Validate(); err != nil {
+		return err
+	}
+	if err := c.Synth.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func defaults() Config {
 	return Config{
-		Log: LogConfig{Level: DefaultLogLevel},
+		Log:    LogConfig{Level: DefaultLogLevel},
+		Ledger: DefaultLedgerConfig(),
+		Match:  DefaultMatchConfig(),
+		Synth:  DefaultSynthConfig(),
 	}
 }
 

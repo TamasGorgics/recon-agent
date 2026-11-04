@@ -1,0 +1,74 @@
+{
+  "declared": {
+    "total_minor": 8500,
+    "row_count": 3,
+    "currency": "USD"
+  },
+  "records": [
+    {
+      "source_record_id": "bnk_0001",
+      "kind": "payout",
+      "amount_minor": 12000,
+      "currency": "USD",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-15T00:00:00Z",
+      "settled_at": null,
+      "value_date": "2026-06-15",
+      "raw": {
+        "amount": "120.00",
+        "bank_reference": "BNK-0001",
+        "booking_date": "2026-06-15",
+        "currency": "USD",
+        "description": "payout from psp, batch B-2026-06-15-001",
+        "record_id": "bnk_0001",
+        "value_date": "2026-06-15"
+      }
+    },
+    {
+      "source_record_id": "bnk_0002",
+      "kind": "fee",
+      "amount_minor": -2500,
+      "currency": "USD",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-15T00:00:00Z",
+      "settled_at": null,
+      "value_date": "2026-06-16",
+      "raw": {
+        "amount": "-25.00",
+        "bank_reference": "BNK-0002",
+        "booking_date": "2026-06-15",
+        "currency": "USD",
+        "description": "wire fee, international",
+        "record_id": "bnk_0002",
+        "value_date": "2026-06-16"
+      }
+    },
+    {
+      "source_record_id": "bnk_0003",
+      "kind": "fee",
+      "amount_minor": -1000,
+      "currency": "USD",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-15T00:00:00Z",
+      "settled_at": null,
+      "value_date": "2026-06-15",
+      "raw": {
+        "amount": "-10.00",
+        "bank_reference": "BNK-0003",
+        "booking_date": "2026-06-15",
+        "currency": "USD",
+        "description": "monthly account fee",
+        "record_id": "bnk_0003",
+        "value_date": "2026-06-15"
+      }
+    }
+  ],
+  "statements": [
+    {
+      "as_of_date": "2026-06-15",
+      "opening_minor": 100000,
+      "closing_minor": 108500,
+      "currency": "USD"
+    }
+  ]
+}

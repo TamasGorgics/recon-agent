@@ -1,0 +1,118 @@
+{
+  "declared": {
+    "total_minor": -14020,
+    "row_count": 5,
+    "currency": "USD"
+  },
+  "records": [
+    {
+      "source_record_id": "psp_0001",
+      "kind": "charge",
+      "amount_minor": 9710,
+      "currency": "USD",
+      "fee_minor": 290,
+      "occurred_at": "2026-06-15T10:00:00Z",
+      "settled_at": "2026-06-15T10:00:00Z",
+      "raw": {
+        "batch_id": "B-2026-06-15-001",
+        "currency": "USD",
+        "fee": "2.90",
+        "gross": "100.00",
+        "memo": "widget, blue",
+        "net": "97.10",
+        "occurred_at": "2026-06-15T10:00:00Z",
+        "record_id": "psp_0001",
+        "reference": "REF-0001",
+        "settled_at": "2026-06-15T10:00:00Z",
+        "type": "charge"
+      }
+    },
+    {
+      "source_record_id": "psp_0002",
+      "kind": "refund",
+      "amount_minor": -3000,
+      "currency": "USD",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-15T11:00:00Z",
+      "settled_at": null,
+      "raw": {
+        "batch_id": "B-2026-06-15-001",
+        "currency": "USD",
+        "fee": "0.00",
+        "gross": "-30.00",
+        "memo": "customer said \"too big\"",
+        "net": "-30.00",
+        "occurred_at": "2026-06-15T11:00:00Z",
+        "record_id": "psp_0002",
+        "reference": "REF-0002",
+        "type": "refund"
+      }
+    },
+    {
+      "source_record_id": "psp_0003",
+      "kind": "fee",
+      "amount_minor": -125,
+      "currency": "USD",
+      "fee_minor": 125,
+      "occurred_at": "2026-06-15T12:00:00Z",
+      "settled_at": null,
+      "raw": {
+        "batch_id": "B-2026-06-15-001",
+        "currency": "USD",
+        "fee": "1.25",
+        "gross": "0.00",
+        "memo": "monthly fee",
+        "net": "-1.25",
+        "occurred_at": "2026-06-15T12:00:00Z",
+        "record_id": "psp_0003",
+        "reference": "",
+        "type": "fee"
+      }
+    },
+    {
+      "source_record_id": "psp_0004",
+      "kind": "payout",
+      "amount_minor": -20000,
+      "currency": "USD",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-15T13:00:00Z",
+      "settled_at": "2026-06-16T09:00:00Z",
+      "raw": {
+        "batch_id": "B-2026-06-15-001",
+        "currency": "USD",
+        "fee": "0.00",
+        "gross": "-200.00",
+        "memo": "",
+        "net": "-200.00",
+        "occurred_at": "2026-06-15T13:00:00Z",
+        "record_id": "psp_0004",
+        "reference": "REF-PAYOUT-1",
+        "settled_at": "2026-06-16T09:00:00Z",
+        "type": "payout"
+      }
+    },
+    {
+      "source_record_id": "psp_0005",
+      "kind": "chargeback",
+      "amount_minor": -605,
+      "currency": "USD",
+      "fee_minor": 0,
+      "occurred_at": "2026-06-15T14:00:00Z",
+      "settled_at": null,
+      "raw": {
+        "batch_id": "B-2026-06-15-001",
+        "currency": "USD",
+        "fee": "0.00",
+        "gross": "-6.05",
+        "memo": "chargeback on REF-0002",
+        "net": "-6.05",
+        "occurred_at": "2026-06-15T14:00:00Z",
+        "record_id": "psp_0005",
+        "reference": "REF-0002",
+        "type": "chargeback"
+      }
+    }
+  ],
+  "period_start": "2026-06-15",
+  "period_end": "2026-06-15"
+}

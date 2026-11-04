@@ -1,0 +1,7 @@
+# rows=5 total=-140.20 currency=USD batch=B-2026-06-15-001 period_start=2026-06-15 period_end=2026-06-15
+record_id,type,occurred_at,settled_at,gross,fee,net,currency,reference,batch_id,memo
+psp_0001,charge,2026-06-15T10:00:00Z,2026-06-15T10:00:00Z,100.00,2.90,97.10,USD,REF-0001,B-2026-06-15-001,"widget, blue"
+psp_0002,refund,2026-06-15T11:00:00Z,,-30.00,0.00,-30.00,USD,REF-0002,B-2026-06-15-001,"customer said ""too big"""
+psp_0003,fee,2026-06-15T12:00:00Z,,0.00,1.25,-1.25,USD,,B-2026-06-15-001,monthly fee
+psp_0004,payout,2026-06-15T13:00:00Z,2026-06-16T09:00:00Z,-200.00,0.00,-200.00,USD,REF-PAYOUT-1,B-2026-06-15-001,
+psp_0005,chargeback,2026-06-15T14:00:00Z,,-6.05,0.00,-6.05,USD,REF-0002,B-2026-06-15-001,chargeback on REF-0002

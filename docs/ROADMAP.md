@@ -121,26 +121,26 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 
 | ☐ | ID | Task | Size | Needs |
 |---|---|---|---|---|
-| ☐ | M0-01 | Repo skeleton and agent instructions | S | — |
-| ☐ | M0-02 | Postgres, migrations, transaction helper, test database | S | M0-01 |
-| ☐ | M0-03 | CI pipeline | S | M0-02 |
-| ☐ | M0-04 | Clock, config, logging, domain lint | S | M0-01 |
-| ☐ | M1-01 | Money, currency, rounding, FX | L | M0-01 |
-| ☐ | M1-02 | Float lint and migration lint | S | M0-03, M1-01 |
-| ☐ | M1-03 | Ledger schema and database-level invariants | M | M0-02 |
-| ☐ | M1-04 | Database roles and grants | S | M1-03 |
-| ☐ | M1-05 | Audit log package with hash chain | M | M1-04 |
-| ☐ | M1-06 | Ledger service: post, reverse, idempotency | L | M1-01, M1-03, M1-05 |
-| ☐ | M1-07 | Ingestion core: batches, control totals, quarantine | L | M1-01, M1-05 |
-| ☐ | M1-08 | PSP and bank file parsers | M | M1-07 |
-| ☐ | M1-09 | Synthetic generator core | M | M1-06, M1-08 |
-| ☐ | M1-10 | Failure modes, part A | M | M1-09 |
-| ☐ | M1-11 | Failure modes, part B | M | M1-10 |
-| ☐ | M1-12 | Matcher: scopes, runs, passes 1 and 2 | M | M1-06, M1-07 |
-| ☐ | M1-13 | Matcher: passes 3 to 5 | M | M1-12 |
-| ☐ | M1-14 | Breaks, cases, leasing | M | M1-12 |
-| ☐ | M1-15 | Balance tie-out | M | M1-07, M1-12 |
-| ☐ | M1-16 | Matcher scoring, demo pipeline, and M1 gate | S | M1-11, M1-13, M1-14, M1-15 |
+| ☑ | M0-01 | Repo skeleton and agent instructions | S | — |
+| ☑ | M0-02 | Postgres, migrations, transaction helper, test database | S | M0-01 |
+| ☑ | M0-03 | CI pipeline | S | M0-02 |
+| ☑ | M0-04 | Clock, config, logging, domain lint | S | M0-01 |
+| ☑ | M1-01 | Money, currency, rounding, FX | L | M0-01 |
+| ☑ | M1-02 | Float lint and migration lint | S | M0-03, M1-01 |
+| ☑ | M1-03 | Ledger schema and database-level invariants | M | M0-02 |
+| ☑ | M1-04 | Database roles and grants | S | M1-03 |
+| ☑ | M1-05 | Audit log package with hash chain | M | M1-04 |
+| ☑ | M1-06 | Ledger service: post, reverse, idempotency | L | M1-01, M1-03, M1-05 |
+| ☑ | M1-07 | Ingestion core: batches, control totals, quarantine | L | M1-01, M1-05 |
+| ☑ | M1-08 | PSP and bank file parsers | M | M1-07 |
+| ☑ | M1-09 | Synthetic generator core | M | M1-06, M1-08 |
+| ☑ | M1-10 | Failure modes, part A | M | M1-09 |
+| ☑ | M1-11 | Failure modes, part B | M | M1-10 |
+| ☑ | M1-12 | Matcher: scopes, runs, passes 1 and 2 | M | M1-06, M1-07 |
+| ☑ | M1-13 | Matcher: passes 3 to 5 | M | M1-12 |
+| ☑ | M1-14 | Breaks, cases, leasing | M | M1-12 |
+| ☑ | M1-15 | Balance tie-out | M | M1-07, M1-12 |
+| ☑ | M1-16 | Matcher scoring, demo pipeline, and M1 gate | S | M1-11, M1-13, M1-14, M1-15 |
 | ☐ | M2-01 | Agent schema, views, grants, switches | S | M1-14, M1-04 |
 | ☐ | M2-02 | LLM client, Anthropic adapter, cassettes | M | M0-04 |
 | ☐ | M2-03 | Provider resilience | S | M2-02 |

@@ -21,6 +21,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # make lint runs go vet, floatlint, migrationlint, golangci-lint, and the
+      # forbidigo negative checks (M1-02).
       - run: make build lint
 
   unit:
@@ -59,9 +61,12 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: make migrate test-integration
+      # M1-16 gate: TestMilestone1Gate runs under test-integration above; this
+      # also exercises the documented CLI demo path against the same Postgres.
+      - run: make demo-m1
 
   future-gates:
     if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
-      - run: 'echo "TODO: floatlint (M1-02), fin-coverage (M6-07), eval gate (M6-05)"'
+      - run: 'echo "TODO: fin-coverage (M6-07), eval gate (M6-05)"'

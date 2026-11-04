@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -38,13 +39,11 @@ const adminTimeout = 30 * time.Second
 // Options configures a test database.
 type Options struct {
 	// AdminDSN is the maintenance DSN. It defaults to TEST_DATABASE_URL and its
-	// role must have CREATEDB (the compose default user is a superuser).
+	// role must have CREATEDB and CREATEROLE (the compose default user is a
+	// superuser) so it can clone databases and provision ephemeral role logins.
 	AdminDSN string
 	// Template is the template database name; it defaults to DefaultTemplate.
 	Template string
-	// RoleDSNs maps a role name to that role's maintenance DSN. It is reserved
-	// for the M1-04 role design; M0 uses the default DSN only.
-	RoleDSNs map[string]string
 	// MaxConns caps the per-test pool; it defaults to DefaultMaxConns.
 	MaxConns int32
 }
@@ -69,10 +68,18 @@ type DB struct {
 	Pool *pgxpool.Pool
 
 	adminDSN string
-	roleDSNs map[string]string
+	logins   map[string]loginUser
 }
 
 var dbCounter atomic.Uint64
+
+// DatabasePrefix returns the database-name prefix used for clones created by
+// this process. The process id lets a package distinguish its own clones from
+// clones created concurrently by other package test binaries, which share the
+// recon_test_ namespace.
+func DatabasePrefix() string {
+	return fmt.Sprintf("recon_test_%d_", os.Getpid())
+}
 
 // New creates an isolated database from the default template using
 // TEST_DATABASE_URL.
@@ -114,8 +121,15 @@ func NewWithOptions(t *testing.T, opts Options) *DB {
 		t.Fatalf("testdb: build DSN for %q: %v", name, err)
 	}
 
-	d := &DB{Name: name, DSN: dsn, adminDSN: opts.AdminDSN, roleDSNs: opts.RoleDSNs}
+	d := &DB{Name: name, DSN: dsn, adminDSN: opts.AdminDSN, logins: make(map[string]loginUser)}
 	t.Cleanup(func() { d.cleanup(t) })
+
+	// Provision one ephemeral LOGIN per application role before returning. A
+	// failure leaves the cleanup above to drop the clone and any logins created
+	// so far.
+	if err := d.provisionLogins(ctx); err != nil {
+		t.Fatalf("testdb: provision ephemeral role logins for %q: %v", name, err)
+	}
 
 	pool, err := newPool(ctx, dsn, opts.MaxConns)
 	if err != nil {
@@ -125,27 +139,39 @@ func NewWithOptions(t *testing.T, opts Options) *DB {
 	return d
 }
 
-// DSNFor returns the DSN for role pointed at this test database. M0 configures
-// no roles, so every role resolves to the default DSN; M1-04 supplies
-// Options.RoleDSNs and this rewrites the role's maintenance DSN to the clone.
+// DSNFor returns the ephemeral DSN for role pointed at this test database.
+// The empty role returns the maintenance DSN. An unknown role panics: falling
+// back to the maintenance DSN would silently escalate the caller's privileges.
 func (d *DB) DSNFor(role string) string {
 	if role == "" {
 		return d.DSN
 	}
-	base, ok := d.roleDSNs[role]
+	canonical, ok := canonicalRole(role)
 	if !ok {
-		return d.DSN
+		panic(fmt.Sprintf("testdb: DSNFor(%q): unknown role; use one of %s", role, strings.Join(RoleNames(), ", ")))
 	}
-	dsn, err := dsnForDatabase(base, d.Name)
-	if err != nil {
-		return d.DSN
+	login, ok := d.logins[canonical]
+	if !ok {
+		panic(fmt.Sprintf("testdb: DSNFor(%q): no ephemeral login provisioned", role))
 	}
-	return dsn
+	return login.dsn
 }
 
-// EnsureTemplate creates and migrates the template database when it is absent
-// and reuses it when it is present. The returned bool reports whether this call
-// created it.
+// LoginNames returns the ephemeral LOGIN role names provisioned for this test
+// database, sorted. It is used by cleanup assertions in tests.
+func (d *DB) LoginNames() []string {
+	names := make([]string, 0, len(d.logins))
+	for _, login := range d.logins {
+		names = append(names, login.Username)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// EnsureTemplate creates and migrates the template database when it is absent,
+// reuses it when it is at the current migration version, and drops/recreates it
+// when its goose version is older, newer, or missing relative to migrations.FS.
+// The returned bool reports whether this call created (or recreated) it.
 //
 // Call it from TestMain before recording the database baseline: the ADV-01
 // lifecycle requires the template to exist before m.Run so the orphan
@@ -154,6 +180,11 @@ func EnsureTemplate(ctx context.Context, opts Options) (bool, error) {
 	opts = opts.withDefaults()
 	if opts.AdminDSN == "" {
 		return false, errors.New("testdb: TEST_DATABASE_URL is required for integration tests")
+	}
+
+	currentVersion, err := currentMigrationVersion()
+	if err != nil {
+		return false, fmt.Errorf("testdb: determine current migration version: %w", err)
 	}
 
 	admin, err := pgx.Connect(ctx, opts.AdminDSN)
@@ -176,7 +207,17 @@ func EnsureTemplate(ctx context.Context, opts Options) (bool, error) {
 		return false, fmt.Errorf("testdb: check template %q: %w", opts.Template, err)
 	}
 	if exists {
-		return false, nil
+		templateVersion, hasVersionTable, err := templateMigrationVersion(ctx, opts.AdminDSN, opts.Template)
+		if err != nil {
+			return false, fmt.Errorf("testdb: read template %q migration version: %w", opts.Template, err)
+		}
+		if hasVersionTable && templateVersion == currentVersion {
+			return false, nil
+		}
+		if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(opts.Template)+" WITH (FORCE)"); err != nil {
+			return false, fmt.Errorf("testdb: drop stale template %q (version table=%t, version=%d, want %d): %w",
+				opts.Template, hasVersionTable, templateVersion, currentVersion, err)
+		}
 	}
 
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+quoteIdent(opts.Template)); err != nil {
@@ -238,12 +279,56 @@ func CleanupOrphans(ctx context.Context, adminDSN string) (int, error) {
 	return dropped, nil
 }
 
+// currentMigrationVersion returns the highest migration version embedded in
+// migrations.FS. It mirrors the version goose records in goose_db_version.
+func currentMigrationVersion() (int64, error) {
+	goose.SetBaseFS(migrations.FS)
+	found, err := goose.CollectMigrations(".", 0, goose.MaxVersion)
+	if err != nil {
+		return 0, fmt.Errorf("collect migrations: %w", err)
+	}
+	var maxVersion int64
+	for _, migration := range found {
+		if migration.Version > maxVersion {
+			maxVersion = migration.Version
+		}
+	}
+	if maxVersion == 0 {
+		return 0, errors.New("no migrations embedded in migrations.FS")
+	}
+	return maxVersion, nil
+}
+
+// templateMigrationVersion reads the template's applied goose version. A
+// missing goose_db_version table means the template predates the migration
+// system (or was created by hand), so it must be rebuilt.
+func templateMigrationVersion(ctx context.Context, adminDSN, template string) (version int64, hasTable bool, err error) {
+	dsn, err := dsnForDatabase(adminDSN, template)
+	if err != nil {
+		return 0, false, err
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return 0, false, fmt.Errorf("connect template database: %w", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+
+	if err := conn.QueryRow(ctx, "SELECT COALESCE(max(version_id), 0) FROM goose_db_version").Scan(&version); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" { // undefined_table
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("query goose_db_version: %w", err)
+	}
+	return version, true, nil
+}
+
 // templateLockKey is an arbitrary advisory-lock key for template setup.
 const templateLockKey int64 = 0x7265636f6e // "recon"
 
 func nextName() string {
-	return fmt.Sprintf("recon_test_%d_%d_%s",
-		os.Getpid(), dbCounter.Add(1), strconv.FormatUint(uint64(rand.Uint32()), 36))
+	return fmt.Sprintf("%s%d_%s",
+		DatabasePrefix(), dbCounter.Add(1), strconv.FormatUint(uint64(rand.Uint32()), 36))
 }
 
 func newPool(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, error) {
@@ -274,6 +359,11 @@ func (d *DB) cleanup(t *testing.T) {
 	defer cancel()
 	if err := dropDatabase(ctx, d.adminDSN, d.Name); err != nil {
 		t.Errorf("testdb: drop database %q: %v", d.Name, err)
+	}
+	for _, login := range d.logins {
+		if err := dropLogin(ctx, d.adminDSN, login.Username); err != nil {
+			t.Errorf("testdb: drop ephemeral login %q: %v", login.Username, err)
+		}
 	}
 }
 
