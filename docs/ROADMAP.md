@@ -141,12 +141,12 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M1-14 | Breaks, cases, leasing | M | M1-12 |
 | ☑ | M1-15 | Balance tie-out | M | M1-07, M1-12 |
 | ☑ | M1-16 | Matcher scoring, demo pipeline, and M1 gate | S | M1-11, M1-13, M1-14, M1-15 |
-| ☐ | M2-01 | Agent schema, views, grants, switches | S | M1-14, M1-04 |
+| ☑ | M2-01 | Agent schema, views, grants, switches | S | M1-14, M1-04 |
 | ☐ | M2-02 | LLM client, Anthropic adapter, cassettes | M | M0-04 |
 | ☐ | M2-03 | Provider resilience | S | M2-02 |
-| ☐ | M2-04 | Tool framework | M | M2-01, M1-01 |
-| ☐ | M2-05 | Read tools, part 1 | M | M2-04 |
-| ☐ | M2-06 | Read tools, part 2 | S | M2-04 |
+| ☑ | M2-04 | Tool framework | M | M2-01, M1-01 |
+| ☑ | M2-05 | Read tools, part 1 | M | M2-04 |
+| ☑ | M2-06 | Read tools, part 2 | S | M2-04 |
 | ☐ | M2-07 | Untrusted data handling | M | M2-04, M1-11 |
 | ☐ | M2-08 | Proposal tools and server-side validation | L | M2-04, M2-05 |
 | ☐ | M2-09 | Agent loop and prompts | L | M2-02, M2-03, M2-05, M2-06, M2-07, M2-08 |
