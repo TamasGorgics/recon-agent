@@ -261,10 +261,13 @@ func TestM2AgentProposalGrants(t *testing.T) {
 		t.Fatalf("idempotency key rows after duplicate = %d, want 1", keyCount)
 	}
 
-	// A second active proposal uses a different idempotency key, so the
-	// partial unique index is not the conflict arbiter and 23505 must reach the
-	// agent even with ON CONFLICT (idempotency_key) DO NOTHING.
-	_, err = agent.Exec(ctx, insertOnConflict, caseID, runID, "agent-second-active")
+	// A second active proposal uses a different run and a different
+	// idempotency key, so the partial unique index is the only conflict: 23505
+	// must reach the agent even with ON CONFLICT (idempotency_key) DO NOTHING.
+	// Reusing runID would also violate the M2-08 one-proposal-per-run index
+	// (Q-32) and make the reported constraint implementation-dependent.
+	secondRunID := m2CreateAgentRun(t, d, caseID)
+	_, err = agent.Exec(ctx, insertOnConflict, caseID, secondRunID, "agent-second-active")
 	pgErr := requirePgError(t, err, "23505")
 	if pgErr.ConstraintName != "proposals_one_active_per_case" {
 		t.Fatalf("constraint = %q, want proposals_one_active_per_case", pgErr.ConstraintName)
@@ -559,13 +562,17 @@ func TestM2ProposalActiveIndex(t *testing.T) {
 	runID := m2CreateAgentRun(t, d, caseID)
 	firstID := m2InsertProposal(t, d.Pool, caseID, runID, "active-key-1", "proposed")
 
+	// A second active proposal from a different run isolates the case-level
+	// index: reusing runID would also violate the M2-08 one-proposal-per-run
+	// index (Q-32) and make the reported constraint implementation-dependent.
+	secondRunID := m2CreateAgentRun(t, d, caseID)
 	_, err := d.Pool.Exec(ctx,
 		`INSERT INTO proposals
 		     (case_id, agent_run_id, type, payload, rationale, confidence,
 		      status, state_hash, idempotency_key, created_at)
 		 VALUES ($1::uuid, $2::uuid, 'link', '{}'::jsonb, 'second', 0.5000,
 		         'proposed', 'state-hash-2', 'active-key-2', now())`,
-		caseID, runID)
+		caseID, secondRunID)
 	pgErr := requirePgError(t, err, "23505")
 	if pgErr.ConstraintName != "proposals_one_active_per_case" {
 		t.Fatalf("constraint = %q, want proposals_one_active_per_case", pgErr.ConstraintName)
@@ -575,7 +582,10 @@ func TestM2ProposalActiveIndex(t *testing.T) {
 		`UPDATE proposals SET status = 'superseded' WHERE id = $1::uuid`, firstID); err != nil {
 		t.Fatalf("supersede first proposal: %v", err)
 	}
-	m2InsertProposal(t, d.Pool, caseID, runID, "active-key-3", "pending_approval")
+	// The replacement comes from a different run: the M2-08 one-proposal-per-run
+	// index (Q-32) forbids reusing this run even after its proposal is terminal.
+	replacementRunID := m2CreateAgentRun(t, d, caseID)
+	m2InsertProposal(t, d.Pool, caseID, replacementRunID, "active-key-3", "pending_approval")
 
 	// A duplicate idempotency key in a different case conflicts only on the
 	// idempotency_key unique constraint. ON CONFLICT DO NOTHING must report
