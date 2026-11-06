@@ -65,22 +65,22 @@ func (r *Runner) Call(ctx context.Context, run *RunContext, seq int, name string
 	entry, known := r.registry.lookup(name)
 	if !known {
 		envelope := marshalErrorEnvelope(CodeUnknownTool, defaultMessage(CodeUnknownTool))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeUnknownTool, startedAt, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeUnknownTool, startedAt, nil, nil)
 	}
 	if !validJSON {
 		envelope := marshalErrorEnvelope(CodeInvalidArguments, defaultMessage(CodeInvalidArguments))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil, nil)
 	}
 	if err := validateArguments(entry.schema, body); err != nil {
 		envelope := marshalErrorEnvelope(CodeInvalidArguments, defaultMessage(CodeInvalidArguments))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil, nil)
 	}
 
 	result, handlerErr := callHandler(ctx, entry.tool, run, body)
 	if handlerErr != nil {
 		code, message := errorPayload(handlerErr)
 		envelope := marshalErrorEnvelope(code, message)
-		return r.finish(ctx, run, seq, recordedName, body, envelope, code, startedAt, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, code, startedAt, nil, nil)
 	}
 
 	envelope, refs, err := buildSuccessEnvelope(result, r.maxResultBytes())
@@ -88,9 +88,12 @@ func (r *Runner) Call(ctx context.Context, run *RunContext, seq int, name string
 		// The handler returned data that cannot be serialized or a ref that is
 		// not canonical. Do not leak the underlying error to the model.
 		envelope = marshalErrorEnvelope(CodeInternalError, defaultMessage(CodeInternalError))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInternalError, startedAt, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInternalError, startedAt, nil, nil)
 	}
-	return r.finish(ctx, run, seq, recordedName, body, envelope, "", startedAt, refs)
+	// Detection runs after the final envelope exists and before the call is
+	// recorded. It never changes the model-visible envelope.
+	flags := detectEnvelopeFlags(envelope)
+	return r.finish(ctx, run, seq, recordedName, body, envelope, "", startedAt, refs, flags)
 }
 
 func (r *Runner) finish(
@@ -103,11 +106,13 @@ func (r *Runner) finish(
 	errorCode string,
 	startedAt time.Time,
 	refs []string,
+	flags []string,
 ) (json.RawMessage, error) {
-	if err := r.record(ctx, run, seq, name, args, envelope, errorCode, startedAt); err != nil {
+	if err := r.record(ctx, run, seq, name, args, envelope, errorCode, startedAt, flags); err != nil {
 		return nil, err
 	}
 	if errorCode == "" {
+		run.State().AddFlags(flags...)
 		run.addRefs(refs)
 	}
 	return json.RawMessage(envelope), nil
@@ -122,6 +127,7 @@ func (r *Runner) record(
 	envelope []byte,
 	errorCode string,
 	startedAt time.Time,
+	flags []string,
 ) error {
 	if r.recorder == nil {
 		return fmt.Errorf("%w: no recorder configured", ErrRecordFailed)
@@ -143,6 +149,7 @@ func (r *Runner) record(
 		Result:     envelope,
 		ResultHash: hashResult(envelope),
 		ErrorCode:  errorCode,
+		Flags:      normalizeFlagCodes(flags),
 		StartedAt:  startedAt,
 		DurationMS: int(durationMS),
 	}
@@ -208,13 +215,20 @@ func (r *DBRecorder) RecordToolCall(ctx context.Context, call ToolCall) error {
 	if call.ErrorCode != "" {
 		errorCode = call.ErrorCode
 	}
+	flags, err := json.Marshal(normalizeFlagCodes(call.Flags))
+	if err != nil {
+		// normalizeFlagCodes returns a []string, so json.Marshal cannot fail.
+		return fmt.Errorf("tools: encode injection flags: %w", err)
+	}
 
-	_, err := r.execer.Exec(ctx,
+	_, err = r.execer.Exec(ctx,
 		`INSERT INTO tool_calls
-		     (agent_run_id, seq, tool_name, args, result, result_hash, error, started_at, duration_ms)
-		 VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9)`,
+		     (agent_run_id, seq, tool_name, args, result, result_hash, error,
+		      injection_flags, started_at, duration_ms)
+		 VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8::jsonb,
+		         $9, $10)`,
 		call.RunID, call.Seq, call.ToolName, string(args), string(result),
-		call.ResultHash, errorCode, call.StartedAt, call.DurationMS)
+		call.ResultHash, errorCode, string(flags), call.StartedAt, call.DurationMS)
 	if err != nil {
 		return fmt.Errorf("tools: insert tool call: %w", err)
 	}

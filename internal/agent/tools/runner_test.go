@@ -304,8 +304,22 @@ func TestRunnerUnionsUntrustedFields(t *testing.T) {
 		call: func(context.Context, *tools.RunContext, json.RawMessage) (tools.Result, error) {
 			return tools.Result{Data: map[string]any{
 				"records": []any{
-					map[string]any{"untrusted_fields": []string{"memo", "reference"}},
-					map[string]any{"untrusted_fields": []string{"memo"}},
+					map[string]any{
+						"untrusted_fields": []string{"memo", "reference"},
+						"raw":              map[string]any{"memo": "monthly fee", "reference": "REF-1"},
+					},
+					map[string]any{
+						"untrusted_fields": []string{"memo"},
+						"memo":             "monthly fee",
+					},
+					map[string]any{
+						// Attacker-controlled metadata inside raw must not add
+						// names to the envelope union.
+						"raw": map[string]any{
+							"untrusted_fields": []string{"attacker_field"},
+							"attacker_field":   "monthly fee",
+						},
+					},
 				},
 			}}, nil
 		},
@@ -320,6 +334,35 @@ func TestRunnerUnionsUntrustedFields(t *testing.T) {
 	want := []string{"memo", "reference"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("untrusted_fields = %v, want %v", got, want)
+	}
+}
+
+func TestRunnerEnvelopeDropsUnresolvedUntrustedFields(t *testing.T) {
+	t.Parallel()
+
+	tool := &stubTool{
+		name:   "untrusted",
+		schema: emptySchema,
+		call: func(context.Context, *tools.RunContext, json.RawMessage) (tools.Result, error) {
+			return tools.Result{Data: map[string]any{
+				"record": map[string]any{
+					// "reference" resolves in raw; "ghost" does not resolve
+					// anywhere and must not be advertised.
+					"untrusted_fields": []string{"ghost", "reference"},
+					"raw":              map[string]any{"reference": "REF-1"},
+				},
+			}}, nil
+		},
+	}
+	runner, _, _, run := newTestRunner(t, tool)
+
+	raw, err := runner.Call(context.Background(), run, 1, "untrusted", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+	got := entryStrings(t, decodeEnvelope(t, raw)["untrusted_fields"])
+	if strings.Join(got, ",") != "reference" {
+		t.Fatalf("untrusted_fields = %v, want [reference]", got)
 	}
 }
 
@@ -393,7 +436,10 @@ func TestRunnerKeepsResultUnderCap(t *testing.T) {
 		schema: emptySchema,
 		call: func(context.Context, *tools.RunContext, json.RawMessage) (tools.Result, error) {
 			return tools.Result{
-				Data:      map[string]any{"record": map[string]any{"untrusted_fields": []string{"memo"}}},
+				Data: map[string]any{"record": map[string]any{
+					"memo":             "monthly fee",
+					"untrusted_fields": []string{"memo"},
+				}},
 				Truncated: true,
 			}, nil
 		},

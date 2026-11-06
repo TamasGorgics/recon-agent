@@ -12,6 +12,19 @@ const (
 	CodeNotFound         = "not_found"
 	CodeToolError        = "tool_error"
 	CodeInternalError    = "internal_error"
+	// CodeInjectionFlagged means the run has untrusted-data injection flags,
+	// so proposal tools are disabled; escalate remains allowed (M2-07).
+	CodeInjectionFlagged = "injection_flagged"
+
+	// Proposal-tool codes (M2-08). Every code is returned to the model instead
+	// of collapsing to internal_error.
+	CodeCaseMismatch          = "case_mismatch"
+	CodeCaseNotOpen           = "case_not_open"
+	CodeEvidenceNotRetrieved  = "evidence_not_retrieved"
+	CodeBusinessRuleViolation = "business_rule_violation"
+	CodeProposalAlreadyExists = "proposal_already_exists"
+	CodeActiveProposalExists  = "active_proposal_exists"
+	CodeInvalidEvidence       = "invalid_evidence"
 )
 
 // Sentinel errors. Handlers may wrap these with %w to select an error code;
@@ -89,7 +102,10 @@ func Failure(message string) error {
 
 func validErrorCode(code string) bool {
 	switch code {
-	case CodeInvalidArguments, CodeUnknownTool, CodeNotFound, CodeToolError, CodeInternalError:
+	case CodeInvalidArguments, CodeUnknownTool, CodeNotFound, CodeToolError,
+		CodeInternalError, CodeInjectionFlagged, CodeCaseMismatch,
+		CodeCaseNotOpen, CodeEvidenceNotRetrieved, CodeBusinessRuleViolation,
+		CodeProposalAlreadyExists, CodeActiveProposalExists, CodeInvalidEvidence:
 		return true
 	default:
 		return false
@@ -108,6 +124,22 @@ func defaultMessage(code string) string {
 		return "tool call failed"
 	case CodeInternalError:
 		return "internal error"
+	case CodeInjectionFlagged:
+		return "run has injection flags; only escalate is allowed"
+	case CodeCaseMismatch:
+		return "case_id does not match the run"
+	case CodeCaseNotOpen:
+		return "case state cannot accept a proposal"
+	case CodeEvidenceNotRetrieved:
+		return "evidence was not returned by a successful call in this run"
+	case CodeBusinessRuleViolation:
+		return "business rule violation"
+	case CodeProposalAlreadyExists:
+		return "run already recorded a different proposal"
+	case CodeActiveProposalExists:
+		return "case already has an active proposal"
+	case CodeInvalidEvidence:
+		return "evidence contains an invalid reference"
 	default:
 		return "internal error"
 	}

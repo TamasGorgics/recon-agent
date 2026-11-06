@@ -60,7 +60,9 @@ type Recorder interface {
 
 // ToolCall is the persisted form of one attempted tool call. ErrorCode is the
 // structured envelope code and is empty on success. Args and Result are the
-// canonical JSON values stored in JSONB columns.
+// canonical JSON values stored in JSONB columns. Flags are the sorted unique
+// injection-flag codes detected in this call's untrusted fields; an empty list
+// is stored as [].
 type ToolCall struct {
 	RunID      string
 	Seq        int
@@ -69,24 +71,29 @@ type ToolCall struct {
 	Result     json.RawMessage
 	ResultHash string
 	ErrorCode  string
+	Flags      []string
 	StartedAt  time.Time
 	DurationMS int
 }
 
 // RunContext is the per-run state shared by tool calls. Agent is the read-only
 // queryer; Clock is the injected time source. The ref collector is private so
-// only the runner can add refs from data that was actually returned.
+// only the runner can add refs from data that was actually returned. State
+// carries the injection flags, the one-proposal slot and the terminal
+// escalation signal; State() is never nil for a constructed context.
 type RunContext struct {
 	RunID  string
 	CaseID string
 	Agent  Queryer
 	Clock  clock.Clock
 
-	mu   sync.Mutex
-	refs map[string]struct{}
+	mu    sync.Mutex
+	refs  map[string]struct{}
+	state *RunState
 }
 
-// NewRunContext creates a per-run context with an empty evidence-ref collector.
+// NewRunContext creates a per-run context with an empty evidence-ref collector
+// and an empty run state.
 func NewRunContext(runID, caseID string, agent Queryer, clk clock.Clock) *RunContext {
 	return &RunContext{
 		RunID:  runID,
@@ -94,7 +101,22 @@ func NewRunContext(runID, caseID string, agent Queryer, clk clock.Clock) *RunCon
 		Agent:  agent,
 		Clock:  clk,
 		refs:   make(map[string]struct{}),
+		state:  newRunState(),
 	}
+}
+
+// State returns the run's shared state. It is never nil for a context built by
+// NewRunContext; a zero-value context is initialized on first use.
+func (r *RunContext) State() *RunState {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state == nil {
+		r.state = newRunState()
+	}
+	return r.state
 }
 
 // RetrievedRefs returns a sorted, unique copy of every evidence reference
