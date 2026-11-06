@@ -156,3 +156,16 @@ func (c Config) ValidateAgentRuntime() error {
 	}
 	return nil
 }
+
+// ValidateWorkerRuntime requires the two role DSNs the worker opens: the app
+// pool (agent_runs, tool_calls, llm_calls, cases) and the agent read pool. There
+// is no superuser fallback; role pools are opened through db.OpenRole.
+func (c Config) ValidateWorkerRuntime() error {
+	if err := c.ValidateAgentRuntime(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.Database.AppURL) == "" {
+		return errors.New("config: database.app_url is required for the worker (set DATABASE_APP_URL or database.app_url in CONFIG_FILE)")
+	}
+	return nil
+}

@@ -54,6 +54,7 @@ const (
 	ActionCaseRenew      = "case.renew"
 	ActionCaseRelease    = "case.release"
 	ActionCaseReclaim    = "case.reclaim"
+	ActionCaseAttempt    = "case.attempt"
 	ActionCaseTransition = "case.transition"
 )
 

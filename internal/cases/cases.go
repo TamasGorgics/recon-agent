@@ -14,16 +14,37 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/db"
 )
 
+// DefaultMaxAttempts is the spec section 6.5 default poison-case cap.
+const DefaultMaxAttempts = 3
+
 // Service creates breaks and cases and owns the case lease state machine. All
 // timestamps come from the injected clock; every write joins one transaction.
 type Service struct {
-	db    db.Beginner
-	clock clock.Clock
-	actor audit.Actor
+	db          db.Beginner
+	clock       clock.Clock
+	actor       audit.Actor
+	maxAttempts int
+}
+
+// ServiceOption configures a case service at construction.
+type ServiceOption func(*Service) error
+
+// WithMaxAttempts sets the attempt cap used when an expired lease is reclaimed
+// (including the inline reclaim in Lease). Reclaim increments attempts once and
+// escalates the case agent_failed when the new count reaches the cap. The
+// default is DefaultMaxAttempts.
+func WithMaxAttempts(maxAttempts int) ServiceOption {
+	return func(s *Service) error {
+		if maxAttempts < 1 {
+			return fmt.Errorf("%w: max attempts must be positive", ErrInvalidRequest)
+		}
+		s.maxAttempts = maxAttempts
+		return nil
+	}
 }
 
 // NewService validates its dependencies and returns a case service.
-func NewService(pool db.Beginner, clk clock.Clock, actor audit.Actor) (*Service, error) {
+func NewService(pool db.Beginner, clk clock.Clock, actor audit.Actor, opts ...ServiceOption) (*Service, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("%w: nil database", ErrInvalidRequest)
 	}
@@ -33,7 +54,16 @@ func NewService(pool db.Beginner, clk clock.Clock, actor audit.Actor) (*Service,
 	if !actor.Valid() {
 		return nil, fmt.Errorf("%w: invalid audit actor", ErrInvalidRequest)
 	}
-	return &Service{db: pool, clock: clk, actor: actor}, nil
+	s := &Service{db: pool, clock: clk, actor: actor, maxAttempts: DefaultMaxAttempts}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(s); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
 
 // TransitionRequest is an optimistic-concurrency case status change. The caller

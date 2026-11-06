@@ -203,9 +203,108 @@ func (s *Service) Release(ctx context.Context, caseID, workerID string) (Case, e
 	return result, err
 }
 
+// RecordFailedAttempt atomically returns a failed run's lease to the queue and
+// increments attempts. It is the counted path for budget_exhausted and
+// invalid_output outcomes; Release remains the no-attempt path. When the new
+// attempt count reaches maxAttempts the case is escalated with reason
+// agent_failed instead of returning to open.
+//
+// The case row is locked and both status='in_agent' and leased_by=workerID are
+// re-checked inside the transaction, so a worker whose lease was reclaimed
+// cannot double-increment or overwrite another worker's case. A lost lease
+// returns ErrNotLeaseOwner/ErrNotLeased/ErrStale and changes nothing.
+func (s *Service) RecordFailedAttempt(ctx context.Context, caseID, workerID string, maxAttempts int) (Case, error) {
+	if caseID == "" || strings.TrimSpace(workerID) == "" {
+		return Case{}, fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+	}
+	if maxAttempts < 1 {
+		return Case{}, fmt.Errorf("%w: max attempts must be positive", ErrInvalidRequest)
+	}
+	now := s.clock.Now().UTC().Truncate(time.Microsecond)
+
+	var result Case
+	err := db.WithTx(ctx, s.db, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
+		state, err := s.lockLease(ctx, tx, caseID)
+		if err != nil {
+			return err
+		}
+		if err := state.checkOwner(workerID); err != nil {
+			return err
+		}
+
+		attempts := state.attempts + 1
+		status := StatusOpen
+		var reason *string
+		if attempts >= maxAttempts {
+			status = StatusEscalated
+			escalation := "agent_failed"
+			reason = &escalation
+		}
+
+		var (
+			version     int
+			newAttempts int
+		)
+		err = tx.QueryRow(ctx,
+			`UPDATE cases
+			    SET status = $3,
+			        attempts = attempts + 1,
+			        version = version + 1,
+			        leased_by = NULL,
+			        lease_expires_at = NULL,
+			        escalation_reason = COALESCE($4::text, escalation_reason)
+			  WHERE id = $1::uuid AND status = 'in_agent' AND leased_by = $2
+			    AND version = $5
+			  RETURNING version, attempts`,
+			caseID, workerID, string(status), reason, state.version).Scan(&version, &newAttempts)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrStale
+		}
+		if err != nil {
+			return fmt.Errorf("cases: record failed attempt: %w", err)
+		}
+
+		after := map[string]any{
+			"status":    string(status),
+			"version":   version,
+			"attempts":  newAttempts,
+			"worker_id": workerID,
+		}
+		if reason != nil {
+			after["escalation_reason"] = *reason
+		}
+		if _, err := audit.Append(ctx, tx, audit.Entry{
+			Actor:      s.actor,
+			Action:     ActionCaseAttempt,
+			EntityType: EntityCase,
+			EntityID:   caseID,
+			Before: map[string]any{
+				"status":    string(state.status),
+				"version":   state.version,
+				"attempts":  state.attempts,
+				"worker_id": workerID,
+			},
+			After:     after,
+			Timestamp: now,
+		}); err != nil {
+			return err
+		}
+		updated, err := s.getCaseTx(ctx, tx, caseID)
+		if err != nil {
+			return err
+		}
+		result = updated
+		return nil
+	})
+	return result, err
+}
+
 // ReclaimExpired returns every expired lease to the open pool, increments
-// attempts once per reclaimed lease, and audits each reclaim. Lease calls the
-// same path inline, so callers can also run it on a schedule.
+// attempts once per reclaimed lease, and audits each reclaim. When the new
+// attempt count reaches the service attempt cap the case is escalated with
+// reason agent_failed instead of returning to open, so it cannot be leased
+// again. Lease calls the same path inline, so callers can also run it on a
+// schedule.
 func (s *Service) ReclaimExpired(ctx context.Context) (int, error) {
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 	var count int
@@ -303,21 +402,40 @@ func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time
 	rows.Close()
 
 	for _, e := range expired {
+		attempts := e.attempts + 1
+		status := StatusOpen
+		var reason *string
+		if attempts >= s.maxAttempts {
+			status = StatusEscalated
+			escalation := "agent_failed"
+			reason = &escalation
+		}
+
 		var (
-			version  int
-			attempts int
+			version     int
+			newAttempts int
 		)
 		err := tx.QueryRow(ctx,
 			`UPDATE cases
-			    SET status = 'open', leased_by = NULL, lease_expires_at = NULL,
-			        attempts = attempts + 1, version = version + 1
+			    SET status = $3, leased_by = NULL, lease_expires_at = NULL,
+			        attempts = attempts + 1, version = version + 1,
+			        escalation_reason = COALESCE($4::text, escalation_reason)
 			  WHERE id = $1::uuid AND version = $2
-			  RETURNING version, attempts`, e.id, e.version).Scan(&version, &attempts)
+			  RETURNING version, attempts`, e.id, e.version, string(status), reason).
+			Scan(&version, &newAttempts)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, fmt.Errorf("%w: reclaim %s", ErrStale, e.id)
 		}
 		if err != nil {
 			return 0, fmt.Errorf("cases: reclaim lease %s: %w", e.id, err)
+		}
+		after := map[string]any{
+			"status":   string(status),
+			"version":  version,
+			"attempts": newAttempts,
+		}
+		if reason != nil {
+			after["escalation_reason"] = *reason
 		}
 		if _, err := audit.Append(ctx, tx, audit.Entry{
 			Actor:      s.actor,
@@ -331,11 +449,7 @@ func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time
 				"leased_by":        e.leasedBy,
 				"lease_expires_at": e.expires,
 			},
-			After: map[string]any{
-				"status":   string(StatusOpen),
-				"version":  version,
-				"attempts": attempts,
-			},
+			After:     after,
 			Timestamp: now,
 		}); err != nil {
 			return 0, err

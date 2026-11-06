@@ -51,6 +51,7 @@ type Config struct {
 	Log      LogConfig      `yaml:"log"`
 	LLM      LLMConfig      `yaml:"llm"`
 	Agent    AgentConfig    `yaml:"agent"`
+	Worker   WorkerConfig   `yaml:"worker"`
 	Ledger   LedgerConfig   `yaml:"ledger"`
 	Ingest   IngestConfig   `yaml:"ingest"`
 	Match    MatchConfig    `yaml:"match"`
@@ -96,6 +97,7 @@ func LoadFile(path string) (Config, error) {
 	applyEnv(&cfg)
 	cfg.LLM = normalizeLLMConfig(cfg.LLM)
 	cfg.Agent = normalizeAgentConfig(cfg.Agent, cfg.LLM.Model)
+	cfg.Worker = normalizeWorkerConfig(cfg.Worker)
 	return cfg, nil
 }
 
@@ -120,6 +122,9 @@ func (c Config) Validate() error {
 	if err := c.Agent.Validate(); err != nil {
 		return err
 	}
+	if err := c.Worker.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -128,6 +133,7 @@ func defaults() Config {
 		Log:    LogConfig{Level: DefaultLogLevel},
 		LLM:    DefaultLLMConfig(),
 		Agent:  DefaultAgentConfig(),
+		Worker: DefaultWorkerConfig(),
 		Ledger: DefaultLedgerConfig(),
 		Match:  DefaultMatchConfig(),
 		Synth:  DefaultSynthConfig(),
