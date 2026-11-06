@@ -7,7 +7,7 @@ TEST_DATABASE_URL ?= $(DATABASE_URL)
 export DATABASE_URL := $(DATABASE_URL)
 export TEST_DATABASE_URL := $(TEST_DATABASE_URL)
 
-.PHONY: help build lint lint-negative test test-integration test-fault db-up db-down migrate test-db-clean verify fin-coverage must-not demo demo-m1 demo-m2
+.PHONY: help build lint lint-negative test test-integration test-live test-fault db-up db-down migrate test-db-clean verify fin-coverage must-not demo demo-m1 demo-m2
 
 help:
 	@echo "Targets:"
@@ -17,6 +17,7 @@ help:
 	@printf '  %-16s %s\n' 'lint-negative' 'scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
 	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 ./...'
+	@printf '  %-16s %s\n' 'test-live' 'manual live LLM test; requires OPENCODE_API_KEY'
 	@printf '  %-16s %s\n' 'test-fault' 'stub until M4-08'
 	@printf '  %-16s %s\n' 'db-up' 'docker compose up -d --wait postgres'
 	@printf '  %-16s %s\n' 'db-down' 'docker compose down'
@@ -47,6 +48,9 @@ test:
 
 test-integration:
 	go test -race -tags=integration -parallel=4 ./...
+
+test-live:
+	go test -tags=live -run TestLive -v -count=1 ./internal/llm
 
 test-fault:
 	@printf '%s\n' 'target test-fault: not implemented until M4-08' >&2

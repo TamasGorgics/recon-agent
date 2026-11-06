@@ -4,4 +4,9 @@ database:
 log:
   level: debug
 llm:
-  anthropic_api_key: fake-anthropic-key
+  provider: opencode
+  base_url: https://opencode.ai/inference/go/openai/v1
+  model: deepseek-v4.1-flash
+  fallback_models: []
+  timeout: 90s
+  max_attempts: 3

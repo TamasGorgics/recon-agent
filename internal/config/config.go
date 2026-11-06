@@ -17,7 +17,9 @@ const (
 	EnvDatabaseURL     = "DATABASE_URL"
 	EnvDatabaseTestURL = "TEST_DATABASE_URL"
 	EnvLogLevel        = "LOG_LEVEL"
-	EnvAnthropicAPIKey = "ANTHROPIC_API_KEY"
+	EnvOpenCodeAPIKey  = "OPENCODE_API_KEY"
+	EnvOpenCodeBaseURL = "OPENCODE_BASE_URL"
+	EnvOpenCodeModel   = "OPENCODE_MODEL"
 )
 
 type envBinding struct {
@@ -31,7 +33,9 @@ var envBindings = []envBinding{
 	{EnvDatabaseURL, func(c *Config, v string) { c.Database.URL = v }},
 	{EnvDatabaseTestURL, func(c *Config, v string) { c.Database.TestURL = v }},
 	{EnvLogLevel, func(c *Config, v string) { c.Log.Level = v }},
-	{EnvAnthropicAPIKey, func(c *Config, v string) { c.LLM.AnthropicAPIKey = v }},
+	{EnvOpenCodeAPIKey, func(c *Config, v string) { c.LLM.APIKey = v }},
+	{EnvOpenCodeBaseURL, func(c *Config, v string) { c.LLM.BaseURL = v }},
+	{EnvOpenCodeModel, func(c *Config, v string) { c.LLM.Model = v }},
 }
 
 // DefaultLogLevel is used when neither YAML nor the environment sets a level.
@@ -59,11 +63,6 @@ type LogConfig struct {
 	Level string `yaml:"level"`
 }
 
-// LLMConfig holds model provider credentials. Secrets are optional at M0.
-type LLMConfig struct {
-	AnthropicAPIKey string `yaml:"anthropic_api_key"`
-}
-
 // Load reads configuration from the file named by CONFIG_FILE (when set) and
 // then overlays the environment. Precedence is defaults < YAML < environment.
 func Load() (Config, error) {
@@ -87,6 +86,7 @@ func LoadFile(path string) (Config, error) {
 		}
 	}
 	applyEnv(&cfg)
+	cfg.LLM = normalizeLLMConfig(cfg.LLM)
 	return cfg, nil
 }
 
@@ -105,12 +105,16 @@ func (c Config) Validate() error {
 	if err := c.Synth.Validate(); err != nil {
 		return err
 	}
+	if err := c.LLM.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func defaults() Config {
 	return Config{
 		Log:    LogConfig{Level: DefaultLogLevel},
+		LLM:    DefaultLLMConfig(),
 		Ledger: DefaultLedgerConfig(),
 		Match:  DefaultMatchConfig(),
 		Synth:  DefaultSynthConfig(),

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "source_url": "https://opencode.ai/inference/go/v1/models",
+  "fetched_at": "2026-11-06",
+  "models": [
+    {
+      "provider": "opencode-go",
+      "id": "deepseek-v4.1-flash",
+      "selector": "opencode-go/deepseek-v4.1-flash",
+      "context_limit": 1000000,
+      "output_limit": 384000,
+      "capabilities": {
+        "tools": true,
+        "tool_choice": ["auto", "none", "required", "tool"],
+        "temperature": true,
+        "reasoning": true,
+        "structured_output": true,
+        "cache": true
+      },
+      "prices_per_million": {
+        "input": "0.15",
+        "output": "0.60",
+        "cache_read": "0.003",
+        "cache_write_5m": "0",
+        "cache_write_1h": "0"
+      },
+      "peak": {
+        "multiplier": "2",
+        "windows": [
+          {
+            "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+            "start": "01:00",
+            "end": "04:00",
+            "timezone": "UTC"
+          },
+          {
+            "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+            "start": "06:00",
+            "end": "10:00",
+            "timezone": "UTC"
+          }
+        ]
+      },
+      "allowed_fallback": false
+    },
+    {
+      "provider": "opencode-go",
+      "id": "glm-5.3-flash",
+      "selector": "opencode-go/glm-5.3-flash",
+      "context_limit": 1000000,
+      "output_limit": 131072,
+      "capabilities": {
+        "tools": true,
+        "tool_choice": ["auto"],
+        "temperature": true,
+        "reasoning": true,
+        "structured_output": true,
+        "cache": true
+      },
+      "prices_per_million": {
+        "input": "0.15",
+        "output": "0.50",
+        "cache_read": "0.03",
+        "cache_write_5m": "0",
+        "cache_write_1h": "0"
+      },
+      "peak": null,
+      "allowed_fallback": false
+    }
+  ]
+}
