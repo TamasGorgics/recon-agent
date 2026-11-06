@@ -143,7 +143,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M1-16 | Matcher scoring, demo pipeline, and M1 gate | S | M1-11, M1-13, M1-14, M1-15 |
 | ☑ | M2-01 | Agent schema, views, grants, switches | S | M1-14, M1-04 |
 | ☑ | M2-02 | LLM client, OpenCode adapter, cassettes | M | M0-04 |
-| ☐ | M2-03 | Provider resilience | S | M2-02 |
+| ☑ | M2-03 | Provider resilience | S | M2-02 |
 | ☑ | M2-04 | Tool framework | M | M2-01, M1-01 |
 | ☑ | M2-05 | Read tools, part 1 | M | M2-04 |
 | ☑ | M2-06 | Read tools, part 2 | S | M2-04 |
