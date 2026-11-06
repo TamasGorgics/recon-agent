@@ -149,9 +149,9 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M2-06 | Read tools, part 2 | S | M2-04 |
 | ☑ | M2-07 | Untrusted data handling | M | M2-04, M1-11 |
 | ☑ | M2-08 | Proposal tools and server-side validation | L | M2-04, M2-05 |
-| ☐ | M2-09 | Agent loop and prompts | L | M2-02, M2-03, M2-05, M2-06, M2-07, M2-08 |
-| ☐ | M2-10 | Case worker | M | M1-14, M2-09, M2-01 |
-| ☐ | M2-11 | Agent CLI, smoke tests, and M2 gate | S | M2-09, M2-10, M1-11 |
+| ☑ | M2-09 | Agent loop and prompts | L | M2-02, M2-03, M2-05, M2-06, M2-07, M2-08 |
+| ☑ | M2-10 | Case worker | M | M1-14, M2-09, M2-01 |
+| ☑ | M2-11 | Agent CLI, smoke tests, and M2 gate | S | M2-09, M2-10, M1-11 |
 | ☐ | M3-01 | Eval schema, datasets, splits | M | M1-11 |
 | ☐ | M3-02 | Scenario sandbox | M | M3-01, M2-09 |
 | ☐ | M3-03 | Scorers | L | M3-01, M2-08 |

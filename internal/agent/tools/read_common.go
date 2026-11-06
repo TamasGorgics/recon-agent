@@ -136,16 +136,14 @@ func CollectRows[T any](rows pgx.Rows, scan func(pgx.Rows) (T, error)) ([]T, err
 
 // ListUntrustedFields returns the sorted unique fields of an external record
 // that must be treated as untrusted. It starts from the configured list for
-// the record's source (falling back to config.DefaultSynthIngestSources when
-// the configured map is empty), keeps only fields present with a non-null
-// value, and adds reference/bank_reference when those keys are present.
+// the record's source (falling back to config.DefaultUntrustedFields when the
+// configured map is empty), keeps only fields present with a non-null value,
+// and adds reference/bank_reference when those keys are present.
 func ListUntrustedFields(source string, raw map[string]any, configured map[string][]string) []string {
 	fields := []string{}
 	configuredFields := configured[source]
 	if len(configured) == 0 {
-		if defaults, ok := config.DefaultSynthIngestSources()[source]; ok {
-			configuredFields = defaults.UntrustedFields
-		}
+		configuredFields = config.DefaultUntrustedFields()[source]
 	}
 	for _, field := range configuredFields {
 		if value, present := raw[field]; present && value != nil {

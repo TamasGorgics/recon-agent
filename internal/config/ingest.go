@@ -56,6 +56,24 @@ var weekdayNames = map[string]time.Weekday{
 	"sat": time.Saturday,
 }
 
+// ConfiguredUntrustedFields projects the per-source ingest config into the map
+// the read tools use to label free-text fields. Sources that declare no
+// untrusted fields are omitted, and an empty projection returns nil so the
+// read tools can apply their own defaults.
+func (c Config) ConfiguredUntrustedFields() map[string][]string {
+	fields := make(map[string][]string, len(c.Ingest.Sources))
+	for source, sourceCfg := range c.Ingest.Sources {
+		if len(sourceCfg.UntrustedFields) == 0 {
+			continue
+		}
+		fields[source] = append([]string(nil), sourceCfg.UntrustedFields...)
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
 // Validate checks every configured source. A config without sources is valid:
 // commands that do not ingest have no reason to configure one.
 func (c IngestConfig) Validate() error {

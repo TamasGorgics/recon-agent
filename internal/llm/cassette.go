@@ -160,7 +160,7 @@ type cassetteFile struct {
 	Redactions     []string         `json:"redactions"`
 }
 
-func (c *Cassette) requestFor(req Request) canonicalRequest {
+func requestFor(req Request) canonicalRequest {
 	messages := append([]Message(nil), req.Messages...)
 	if messages == nil {
 		messages = []Message{}
@@ -180,31 +180,42 @@ func (c *Cassette) requestFor(req Request) canonicalRequest {
 	}
 }
 
-func (c *Cassette) key(req Request) (string, error) {
+// CanonicalRequestHash returns the SHA-256 key used by both the cassette layer
+// and the agent's llm_calls.request_hash column. The provider and base URL are
+// part of the document so a request cannot silently replay against a different
+// endpoint.
+func CanonicalRequestHash(provider, baseURL string, req Request) (string, error) {
 	if err := req.Validate(); err != nil {
-		return "", newRequestError(c.provider, APIID(req.Model), err.Error())
+		return "", newRequestError(provider, APIID(req.Model), err.Error())
 	}
 	if strings.TrimSpace(req.PromptVersion) == "" {
-		return "", newRequestError(c.provider, APIID(req.Model), "prompt version is required for cassettes")
+		return "", newRequestError(provider, APIID(req.Model), "prompt version is required for cassettes")
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = DefaultBaseURL
 	}
 	doc := canonicalKey{
 		CassetteSchema: cassetteSchema,
-		Provider:       c.provider,
-		BaseURL:        c.baseURL,
+		Provider:       provider,
+		BaseURL:        strings.TrimRight(baseURL, "/"),
 		Model:          APIID(req.Model),
 		PromptVersion:  req.PromptVersion,
-		Request:        c.requestFor(req),
+		Request:        requestFor(req),
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
-		return "", fmt.Errorf("llm: canonical cassette key: %w", err)
+		return "", fmt.Errorf("llm: canonical request hash: %w", err)
 	}
 	canonical, err := canonicalizeJSON(raw)
 	if err != nil {
-		return "", fmt.Errorf("llm: canonical cassette key: %w", err)
+		return "", fmt.Errorf("llm: canonical request hash: %w", err)
 	}
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func (c *Cassette) key(req Request) (string, error) {
+	return CanonicalRequestHash(c.provider, c.baseURL, req)
 }
 
 func canonicalizeJSON(data []byte) ([]byte, error) {
@@ -271,7 +282,7 @@ func (c *Cassette) record(req Request, response Response) (Response, error) {
 		PromptVersion:  req.PromptVersion,
 		RequestedModel: APIID(req.Model),
 		ActualModel:    response.ActualModel,
-		Request:        c.requestFor(req),
+		Request:        requestFor(req),
 		Response:       response,
 		DurationMS:     response.Latency.Milliseconds(),
 	}
@@ -388,6 +399,11 @@ func normalizeCassetteResponse(response Response) (Response, error) {
 	}
 	response.Raw = raw
 	response.Usage.Raw = usageRaw
+	for i := range response.Message.ToolCalls {
+		if len(response.Message.ToolCalls[i].Arguments) == 0 {
+			response.Message.ToolCalls[i].Arguments = nil
+		}
+	}
 	// JSON represents every zero decimal as "0"; canonicalize zero values so a
 	// recorded response and its replay are structurally identical.
 	for _, value := range []*decimal.Decimal{
@@ -406,7 +422,9 @@ func normalizeCassetteResponse(response Response) (Response, error) {
 
 func compactRaw(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
-		return raw, nil
+		// Return nil rather than a zero-length non-nil slice: encoding an empty
+		// json.RawMessage fails with "unexpected end of JSON input".
+		return nil, nil
 	}
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {

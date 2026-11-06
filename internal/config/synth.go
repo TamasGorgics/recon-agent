@@ -104,6 +104,23 @@ func DefaultSynthIngestSources() map[string]SourceConfig {
 	}
 }
 
+// DefaultUntrustedFields returns the fallback per-source untrusted-field map
+// the read tools use when no ingest config supplies the source. It includes the
+// generated sources plus the eval-only M2 fixture source psp_m2, whose synthetic
+// memo/reference text must still be wrapped and scanned.
+func DefaultUntrustedFields() map[string][]string {
+	sources := DefaultSynthIngestSources()
+	fields := make(map[string][]string, len(sources)+1)
+	for name, source := range sources {
+		if len(source.UntrustedFields) == 0 {
+			continue
+		}
+		fields[name] = append([]string(nil), source.UntrustedFields...)
+	}
+	fields["psp_m2"] = []string{"memo", "reference"}
+	return fields
+}
+
 // Validate checks the generator configuration before any output is written.
 func (c SynthConfig) Validate() error {
 	if len(c.Currencies) == 0 {

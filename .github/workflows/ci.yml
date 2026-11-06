@@ -64,6 +64,9 @@ jobs:
       # M1-16 gate: TestMilestone1Gate runs under test-integration above; this
       # also exercises the documented CLI demo path against the same Postgres.
       - run: make demo-m1
+      # M2-11 gate: scripted cassette replay on the fixed M2 fixture. CI never
+      # sets OPENCODE_API_KEY and never records cassettes.
+      - run: make demo-m2
 
   future-gates:
     if: ${{ false }}

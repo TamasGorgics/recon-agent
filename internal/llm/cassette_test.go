@@ -583,3 +583,58 @@ func TestCassetteReplayDoesNotCallInner(t *testing.T) {
 		t.Fatal("replay called the inner client")
 	}
 }
+
+func TestCanonicalRequestHashMatchesCassetteKey(t *testing.T) {
+	cassette, err := NewCassette(nil, CassetteOptions{Mode: CassetteReplay, Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewCassette: %v", err)
+	}
+	req := cassetteRequest()
+	want, err := cassette.key(req)
+	if err != nil {
+		t.Fatalf("cassette key: %v", err)
+	}
+	got, err := CanonicalRequestHash(cassette.provider, cassette.baseURL, req)
+	if err != nil {
+		t.Fatalf("CanonicalRequestHash: %v", err)
+	}
+	if got != want {
+		t.Fatalf("CanonicalRequestHash = %q, cassette key = %q", got, want)
+	}
+	if len(got) != 64 {
+		t.Fatalf("hash length = %d, want 64", len(got))
+	}
+}
+
+func TestCanonicalRequestHashRequiresPromptVersion(t *testing.T) {
+	req := cassetteRequest()
+	req.PromptVersion = ""
+	if _, err := CanonicalRequestHash(ProviderOpenCodeGo, DefaultBaseURL, req); err == nil {
+		t.Fatal("CanonicalRequestHash accepted a request without a prompt version")
+	}
+}
+
+// TestNormalizeCassetteResponseEmptyRaw pins that an adapter response with no
+// raw body still records: an empty non-nil json.RawMessage is not valid JSON.
+func TestNormalizeCassetteResponseEmptyRaw(t *testing.T) {
+	response := Response{
+		Raw:   json.RawMessage{},
+		Usage: Usage{Raw: json.RawMessage{}},
+		Message: Message{ToolCalls: []ToolCall{{
+			ID: "call_1", Name: "get_case", Arguments: json.RawMessage{},
+		}}},
+	}
+	normalized, err := normalizeCassetteResponse(response)
+	if err != nil {
+		t.Fatalf("normalizeCassetteResponse: %v", err)
+	}
+	if normalized.Raw != nil || normalized.Usage.Raw != nil {
+		t.Fatalf("empty raw values were not normalized to nil: %#v", normalized)
+	}
+	if normalized.Message.ToolCalls[0].Arguments != nil {
+		t.Fatalf("empty tool-call arguments were not normalized to nil: %#v", normalized.Message.ToolCalls[0])
+	}
+	if _, err := json.Marshal(normalized); err != nil {
+		t.Fatalf("marshal normalized response: %v", err)
+	}
+}

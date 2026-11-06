@@ -28,7 +28,7 @@ help:
 	@printf '  %-16s %s\n' 'must-not' 'stub until M6-04'
 	@printf '  %-16s %s\n' 'demo' 'stub until M5-12'
 	@printf '  %-16s %s\n' 'demo-m1' 'M1 end-to-end demo: seed 1, realistic, 14 days'
-	@printf '  %-16s %s\n' 'demo-m2' 'stub until M2-11'
+	@printf '  %-16s %s\n' 'demo-m2' 'M2 end-to-end gate: replay cassettes, no key required'
 
 build:
 	go build ./...
@@ -50,7 +50,7 @@ test-integration:
 	go test -race -tags=integration -parallel=4 ./...
 
 test-live:
-	go test -tags=live -run TestLive -v -count=1 ./internal/llm
+	go test -tags=live -run 'TestLive|TestRecordM2Cassettes' -v -count=1 ./internal/llm ./internal/agent
 
 test-fault:
 	@printf '%s\n' 'target test-fault: not implemented until M4-08' >&2
@@ -87,5 +87,4 @@ demo-m1:
 	go run ./cmd/recon demo seed --seed 1 --days 14 --difficulty realistic --reset
 
 demo-m2:
-	@printf '%s\n' 'target demo-m2: not implemented until M2-11' >&2
-	@exit 1
+	go test -race -tags=integration -run TestMilestone2Gate -v -count=1 ./internal/agent

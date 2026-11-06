@@ -72,3 +72,30 @@ non-blocking findings that do not change approved scope belong here.
 | Q-33 | **RESOLVED (M2-02):** spec section 17 sketches the LLM client interface under `internal/agent`, while roadmap M2-02 and this implementation place the provider-neutral types, adapter, pricing, scripted client, and cassettes in `internal/llm`. Section 17 is a layout sketch, and the package boundary keeps `internal/llm` from importing `internal/agent` so M2-09 can depend one way. | Spec section 17 / M2-02 | Recorded as a layout delta; do not edit `docs/spec.md`. |
 | Q-34 | **RESOLVED (M2-02):** spec section 2.2 says "provider SDK behind an `LLMClient` interface". The implementation uses a narrow `net/http` OpenAI-compatible adapter behind `llm.Client` instead of a vendor SDK, because the available provider is OpenCode Console Inference and a small adapter gives exact control over headers, `reasoning_content`, and `opencode` usage/cost fields. "SDK" is descriptive; the interface requirement is met and `go.mod` gains no LLM dependency. | Spec section 2.2 / M2-02 | Recorded as wording clarification; no `docs/spec.md` edit. |
 | Q-35 | **RESOLVED (M2-02):** cost semantics. `usage.cost` is 0 on Go; `opencode.list_cost` is recorded as `cost_usd` when present and `opencode.allowance` is recorded separately with no hard-coded Go-plan multiplier (observed 60% for DeepSeek and 100% for GLM). The pricing table computes a fallback cost from the token breakdown and records `CostMismatch` rather than failing. Product confirmation of whether `list_cost` already includes peak multipliers remains non-blocking. | M2-02 / M3-08 | Recorded as the M2 cost contract; revisit when the eval gate compares model costs. |
+
+## M2-09 loop decisions (OQ-1..OQ-3, OQ-6)
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| OQ-1 | **RESOLVED (M2-09):** the 3-minute lease TTL is shorter than the 5-minute run wall clock. M2 accepts reclaim-as-attempt instead of lease renewal: a run that outlives its lease is bounded by the wall clock and the worker's reclaim path owns the attempt. Revisit if slow runs appear. | M2-09 / M2-10 | Recorded as the M2 lease contract; no spec edit. |
+| OQ-2 | **RESOLVED (M2-09):** `agent_runs.outcome` keeps the five-value enum. A disabled run is finalized `escalated` and the case is not transitioned, so no `aborted`/`running` value is added. | M2-09 | Recorded as the disabled-run semantic; future migration only if M5 needs it. |
+| OQ-3 | **RESOLVED (M2-09):** budget exhaustion is the run outcome `budget_exhausted`, the loop does not transition the case, and the worker records one attempt; the attempt cap escalates `agent_failed`. | M2-09 / M2-10 | Recorded as the budget contract; no spec edit. |
+| OQ-6 | **RESOLVED (M2-09):** replay injects `NewRunID(caseID)` so the request transcript and wrapper token are deterministic. Replaying onto a database that already holds the run id fails loudly on the primary key; the CLI error tells the operator to reset or clone the fixture. | M2-09 / M2-11 | Recorded as the replay determinism contract; no silent run-id rewrite. |
+
+## M2-10 worker decisions (OQ-1, OQ-3, OQ-4)
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| OQ-1 | **RESOLVED (M2-10):** the worker passes the 3-minute lease TTL to `cases.Lease` and does not renew mid-run. A run that outlives its lease is reclaimed inline by the next `Lease` (or `ReclaimExpired`), which increments attempts; the losing worker's late release/attempt returns `ErrNotLeased`/`ErrNotLeaseOwner`/`ErrStale` and is logged as a no-op, never retried with a fresh version. This is the M2 risk accepted in M2-09. | M2-10 | Recorded as the worker lease contract; no spec edit. |
+| OQ-3 | **RESOLVED (M2-10):** `budget_exhausted` and `invalid_output` call `cases.RecordFailedAttempt` (one attempt, lease cleared); at `max_attempts` the same atomic call escalates `agent_failed`. `provider_error` and a disabled switch release without an attempt, and an expired-lease reclaim owns its own increment. A poison case therefore gets exactly `max_attempts` model runs. | M2-10 | Recorded as the attempt contract; no spec edit. |
+| OQ-4 | **RESOLVED (M2-10):** the daily USD budget is per process: `SUM(agent_runs.cost_usd)` for the UTC day is queried at most once per poll interval and in-flight run costs are added locally between queries. At/above the cap the worker stops leasing; in-flight runs finish and cases stay `open`. With one worker the overshoot is bounded by one poll interval of completed runs, and with several workers by `workers × concurrency × agent.max_cost_usd`; a spend ledger is deferred until a second worker is deployed. | M2-10 | Recorded as the approximate daily-budget contract; no spec edit. |
+
+## M2-11 CLI and gate decisions (OQ-5, OQ-6)
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| OQ-5 | **RESOLVED (M2-11):** `make demo-m2` is the M2 gate test (`TestMilestone2Gate`), not a `recon demo m2` subcommand. It replays the committed cassettes against a fresh `testdb` clone with ephemeral role logins, so it runs in the CI integration job after `make demo-m1` with no `OPENCODE_API_KEY` and no network. | M2-11 | Recorded as the demo contract; the top-level `demo` stub stays reserved for M5. |
+| OQ-6 | **RESOLVED (M2-11):** scripted replay deterministically derives the run id from the case id, so the request transcript and wrapper token are stable and cassettes hit. A second replay on a database that already holds that run id fails loudly on `agent_runs_pkey`; the CLI error (and the fixture README) tells the operator to use a fresh clone or reset the fixture. The gate and CLI tests always use fresh `testdb` clones; live `--llm opencode` runs use random run ids. | M2-09 / M2-11 | Recorded as the replay determinism contract; no silent run-id rewrite. |
+
+OQ-1..OQ-4 keep their M2-09/M2-10 resolutions above; M2-11 adds no new
+blocking open question.

@@ -123,6 +123,37 @@ func TestLeaseOrderAndRenewRelease(t *testing.T) {
 	}
 }
 
+// TestLeaseByIDClaimsTheNamedCase pins the CLI/gate path: a targeted lease
+// takes the requested case and leaves other open cases queued.
+func TestLeaseByIDClaimsTheNamedCase(t *testing.T) {
+	f := newFixture(t)
+	target := seedOneCase(t, f, "targeted-lease", 100)
+	other := seedOneCase(t, f, "targeted-other", 5_000_000)
+
+	leased, err := f.service.LeaseByID(context.Background(), target.ID, "cli:test", time.Minute)
+	if err != nil {
+		t.Fatalf("LeaseByID: %v", err)
+	}
+	if leased.ID != target.ID || leased.Status != cases.StatusInAgent {
+		t.Fatalf("leased case = %s/%s, want %s/in_agent", leased.ID, leased.Status, target.ID)
+	}
+	if leased.LeasedBy == nil || *leased.LeasedBy != "cli:test" {
+		t.Fatalf("leased_by = %v, want cli:test", leased.LeasedBy)
+	}
+	if got, want := f.auditCount(t, target.ID, cases.ActionCaseLease), 1; got != want {
+		t.Fatalf("lease audit rows = %d, want %d", got, want)
+	}
+	if got := f.getCase(t, other.ID); got.Status != cases.StatusOpen {
+		t.Fatalf("other case status = %s, want open", got.Status)
+	}
+	if _, err := f.service.LeaseByID(context.Background(), target.ID, "cli:test", time.Minute); !errors.Is(err, cases.ErrNotLeased) {
+		t.Fatalf("second LeaseByID error = %v, want ErrNotLeased", err)
+	}
+	if _, err := f.service.LeaseByID(context.Background(), "99999999-9999-4999-8999-999999999999", "cli:test", time.Minute); !errors.Is(err, cases.ErrCaseNotFound) {
+		t.Fatalf("missing LeaseByID error = %v, want ErrCaseNotFound", err)
+	}
+}
+
 // TestLeaseRejectsNonPositiveTTL covers the TTL <= 0 edge case.
 func TestLeaseRejectsNonPositiveTTL(t *testing.T) {
 	f := newFixture(t)
@@ -179,6 +210,88 @@ func TestExpiredLeaseIsReclaimed(t *testing.T) {
 	}
 	if got, want := released.Version, 3; got != want {
 		t.Fatalf("version after second lease = %d, want %d", got, want)
+	}
+}
+
+// TestReclaimExpiredEscalatesAtAttemptCap proves an expired lease counts as an
+// attempt and that reaching the cap escalates agent_failed instead of leaving
+// the case open for another lease.
+func TestReclaimExpiredEscalatesAtAttemptCap(t *testing.T) {
+	f := newFixture(t)
+	seeded := seedOneCase(t, f, "lease-reclaim-cap", 900)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		leased, err := f.service.Lease(context.Background(), "worker-a", time.Minute)
+		if err != nil {
+			t.Fatalf("Lease attempt %d: %v", attempt, err)
+		}
+		if leased.ID != seeded.ID {
+			t.Fatalf("leased case attempt %d = %s, want %s", attempt, leased.ID, seeded.ID)
+		}
+		f.clock.Advance(2 * time.Minute)
+		reclaimed, err := f.service.ReclaimExpired(context.Background())
+		if err != nil {
+			t.Fatalf("ReclaimExpired attempt %d: %v", attempt, err)
+		}
+		if reclaimed != 1 {
+			t.Fatalf("reclaimed attempt %d = %d, want 1", attempt, reclaimed)
+		}
+		after := f.getCase(t, seeded.ID)
+		if after.Status != cases.StatusOpen || after.Attempts != attempt {
+			t.Fatalf("case after reclaim %d = %s/%d, want open/%d",
+				attempt, after.Status, after.Attempts, attempt)
+		}
+	}
+
+	if _, err := f.service.Lease(context.Background(), "worker-a", time.Minute); err != nil {
+		t.Fatalf("Lease final attempt: %v", err)
+	}
+	f.clock.Advance(2 * time.Minute)
+	reclaimed, err := f.service.ReclaimExpired(context.Background())
+	if err != nil {
+		t.Fatalf("ReclaimExpired final: %v", err)
+	}
+	if reclaimed != 1 {
+		t.Fatalf("reclaimed final = %d, want 1", reclaimed)
+	}
+
+	final := f.getCase(t, seeded.ID)
+	if final.Status != cases.StatusEscalated {
+		t.Fatalf("final status = %s, want escalated", final.Status)
+	}
+	if final.Attempts != 3 {
+		t.Fatalf("final attempts = %d, want 3", final.Attempts)
+	}
+	if final.LeasedBy != nil || final.LeaseExpiresAt != nil {
+		t.Fatalf("escalated case still leased: %v/%v", final.LeasedBy, final.LeaseExpiresAt)
+	}
+	if final.EscalationReason == nil || *final.EscalationReason != "agent_failed" {
+		t.Fatalf("escalation reason = %v, want agent_failed", final.EscalationReason)
+	}
+	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseReclaim), 3; got != want {
+		t.Fatalf("reclaim audit rows = %d, want %d", got, want)
+	}
+
+	var afterStatus, afterReason *string
+	if err := f.db.Pool.QueryRow(context.Background(),
+		`SELECT after->>'status', after->>'escalation_reason'
+		   FROM audit_log WHERE entity_id = $1 AND action = $2
+		  ORDER BY seq DESC LIMIT 1`, seeded.ID, cases.ActionCaseReclaim).
+		Scan(&afterStatus, &afterReason); err != nil {
+		t.Fatalf("read final reclaim audit: %v", err)
+	}
+	if afterStatus == nil || *afterStatus != string(cases.StatusEscalated) {
+		t.Fatalf("final reclaim audit status = %v, want escalated", afterStatus)
+	}
+	if afterReason == nil || *afterReason != "agent_failed" {
+		t.Fatalf("final reclaim audit reason = %v, want agent_failed", afterReason)
+	}
+
+	if _, err := f.service.Lease(context.Background(), "worker-b", time.Minute); !errors.Is(err, cases.ErrNoCase) {
+		t.Fatalf("Lease after escalation = %v, want ErrNoCase", err)
+	}
+	if state := f.getCase(t, seeded.ID); state.Status != cases.StatusEscalated || state.Attempts != 3 {
+		t.Fatalf("lease attempt after escalation changed case: %s/%d", state.Status, state.Attempts)
 	}
 }
 
