@@ -40,8 +40,11 @@ func TestLoadFileValid(t *testing.T) {
 	if got, want := cfg.Log.Level, "debug"; got != want {
 		t.Errorf("Log.Level = %q, want %q", got, want)
 	}
-	if got, want := cfg.LLM.AnthropicAPIKey, "fake-anthropic-key"; got != want {
-		t.Errorf("LLM.AnthropicAPIKey = %q, want %q", got, want)
+	if got, want := cfg.LLM.Provider, DefaultLLMProvider; got != want {
+		t.Errorf("LLM.Provider = %q, want %q", got, want)
+	}
+	if got, want := cfg.LLM.Model, DefaultLLMModel; got != want {
+		t.Errorf("LLM.Model = %q, want %q", got, want)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want nil", err)
@@ -93,8 +96,17 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Database.TestURL != "" {
 		t.Errorf("Database.TestURL = %q, want empty", cfg.Database.TestURL)
 	}
-	if cfg.LLM.AnthropicAPIKey != "" {
-		t.Errorf("LLM.AnthropicAPIKey = %q, want empty", cfg.LLM.AnthropicAPIKey)
+	if cfg.LLM.APIKey != "" {
+		t.Errorf("LLM.APIKey = %q, want empty", cfg.LLM.APIKey)
+	}
+	if got, want := cfg.LLM.BaseURL, DefaultLLMBaseURL; got != want {
+		t.Errorf("LLM.BaseURL = %q, want %q", got, want)
+	}
+	if got, want := cfg.LLM.Timeout, DefaultLLMTimeout; got != want {
+		t.Errorf("LLM.Timeout = %s, want %s", got, want)
+	}
+	if got, want := cfg.LLM.MaxAttempts, DefaultLLMMaxAttempts; got != want {
+		t.Errorf("LLM.MaxAttempts = %d, want %d", got, want)
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate accepted the default config without Database.URL")
@@ -119,8 +131,8 @@ func TestEnvOverridesYAML(t *testing.T) {
 	if got, want := cfg.Database.TestURL, "postgres://recon:recon@localhost:5432/recon_test?sslmode=disable"; got != want {
 		t.Errorf("Database.TestURL = %q, want YAML value %q", got, want)
 	}
-	if got, want := cfg.LLM.AnthropicAPIKey, "fake-anthropic-key"; got != want {
-		t.Errorf("LLM.AnthropicAPIKey = %q, want YAML value %q", got, want)
+	if got, want := cfg.LLM.Model, DefaultLLMModel; got != want {
+		t.Errorf("LLM.Model = %q, want YAML value %q", got, want)
 	}
 }
 
@@ -129,7 +141,9 @@ func TestEnvOverridesAllFields(t *testing.T) {
 	t.Setenv(EnvDatabaseURL, "postgres://env:env@db:5432/env_recon?sslmode=disable")
 	t.Setenv(EnvDatabaseTestURL, "postgres://env:env@db:5432/env_recon_test?sslmode=disable")
 	t.Setenv(EnvLogLevel, "error")
-	t.Setenv(EnvAnthropicAPIKey, "env-anthropic-key")
+	t.Setenv(EnvOpenCodeAPIKey, "env-opencode-key")
+	t.Setenv(EnvOpenCodeBaseURL, "https://example.test/v1")
+	t.Setenv(EnvOpenCodeModel, "opencode-go/glm-5.3-flash")
 
 	cfg, err := Load()
 	if err != nil {
@@ -144,8 +158,14 @@ func TestEnvOverridesAllFields(t *testing.T) {
 	if got, want := cfg.Log.Level, "error"; got != want {
 		t.Errorf("Log.Level = %q, want %q", got, want)
 	}
-	if got, want := cfg.LLM.AnthropicAPIKey, "env-anthropic-key"; got != want {
-		t.Errorf("LLM.AnthropicAPIKey = %q, want %q", got, want)
+	if got, want := cfg.LLM.APIKey, "env-opencode-key"; got != want {
+		t.Errorf("LLM.APIKey = %q, want %q", got, want)
+	}
+	if got, want := cfg.LLM.Model, "glm-5.3-flash"; got != want {
+		t.Errorf("LLM.Model = %q, want normalized %q", got, want)
+	}
+	if got, want := cfg.LLM.BaseURL, "https://example.test/v1"; got != want {
+		t.Errorf("LLM.BaseURL = %q, want %q", got, want)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want nil", err)

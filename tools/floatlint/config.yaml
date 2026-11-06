@@ -12,3 +12,4 @@ packages:
   - internal/executor
   - internal/audit
   - internal/agent
+  - internal/llm

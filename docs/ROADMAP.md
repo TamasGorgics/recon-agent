@@ -45,7 +45,7 @@ Change only through a note in `docs/decisions/`.
 | HTTP, schemas | `chi`; `santhosh-tekuri/jsonschema` for tool and API payloads |
 | Decimals | `shopspring/decimal` for FX rates and input parsing only. Money itself is `int64` minor units |
 | Tests | stdlib `testing`, `pgregory.net/rapid` (properties), `go.uber.org/goleak`, golden files in `testdata/` with an `-update` flag |
-| LLM | Anthropic Go SDK behind `llm.Client`; prompts in `prompts/<version>/` |
+| LLM | OpenCode Console Inference API (OpenAI-compatible) behind `llm.Client`; prompts in `prompts/<version>/` |
 | Observability | OpenTelemetry SDK to OTLP to Phoenix; `prometheus/client_golang`; Grafana provisioned from files |
 | PDF | `html/template` rendered to PDF with `chromedp` |
 | Lint | `golangci-lint`, custom `floatlint` and `migrationlint` (M1-02), `forbidigo` banning `time.Now` in domain packages |
@@ -106,7 +106,7 @@ Sizes estimate **your** time with an agent doing the typing: **S ≈ 1 h**, **M 
 - **Untrusted-data handling moved earlier.** Spec section 9 items 1, 4, 5 (delimiting, sanitizing, detection) are built in M2-07 with the agent loop, since prompts are assembled there. M6-02 is the adversarial *test suite*.
 - **CI gate uses recorded LLM cassettes.** PR builds replay recorded model responses: deterministic, free, no API key. Live runs are scheduled or manual with a cost cap (M2-02, M3-09, M6-05).
 - **Spec patched to v0.5 alongside this roadmap:** the tie-out acceptance example is corrected (a *dropped* match only creates breaks and leaves balances tied; the detectable bug is a tolerance match whose delta is never booked); proposals carry an untrusted `pattern` claim and policy acts on `pattern_verified`; an `llm_calls` table lets `recon replay --exact` reproduce a run.
-- **Defaults for spec section 22 open questions:** ticketing is Linear; tracing backend is Phoenix; the fee schedule is derived from the generator config; v1 is batch-only; evals compare two Claude models and two prompt versions (an OpenAI-compatible adapter is optional).
+- **Defaults for spec section 22 open questions:** ticketing is Linear; tracing backend is Phoenix; the fee schedule is derived from the generator config; v1 is batch-only; evals compare two OpenAI-compatible models (`deepseek-v4.1-flash`, `glm-5.3-flash`) and two prompt versions.
 - **Tables not in spec section 3.1:** `match_runs` (M1-12), `system_switches` (M2-01), `policy_config_versions` (M4-01), `integrity_runs` (M5-06), and an `eval_truth` schema (M3-02). `external_records` gains `value_date DATE` (M1-07) because FIN-42 needs it.
 - **Spec §17 layout delta:** the M0 plan adds `internal/{money,db,testdb,clock,config,outbox,periods,tieout,matchscore,fault,worker}` and a root `compose.yaml`; `deploy/` remains reserved for Grafana/Prometheus provisioning (M5-04).
 - **Toolchain pins:** Go 1.27.3 (`go 1.27.3`, `toolchain go1.27.3`), golangci-lint v2.15.0, goose v3.29.0, pgx v5.12.0, Postgres 16.x pinned to one minor tag in compose and CI.
@@ -142,7 +142,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M1-15 | Balance tie-out | M | M1-07, M1-12 |
 | ☑ | M1-16 | Matcher scoring, demo pipeline, and M1 gate | S | M1-11, M1-13, M1-14, M1-15 |
 | ☑ | M2-01 | Agent schema, views, grants, switches | S | M1-14, M1-04 |
-| ☐ | M2-02 | LLM client, Anthropic adapter, cassettes | M | M0-04 |
+| ☑ | M2-02 | LLM client, OpenCode adapter, cassettes | M | M0-04 |
 | ☐ | M2-03 | Provider resilience | S | M2-02 |
 | ☑ | M2-04 | Tool framework | M | M2-01, M1-01 |
 | ☑ | M2-05 | Read tools, part 1 | M | M2-04 |
@@ -477,7 +477,7 @@ Goal: a correct money type, an immutable double-entry ledger enforced by the dat
 
 Goal: an agent that investigates a case through read-only tools and writes validated proposals, with budgets, resilience, and kill switches. No approval or execution yet. **Exit gate:** M2-11.
 
-Cassettes: the first recording of model responses needs `ANTHROPIC_API_KEY`. After that, every test and the gate replay from `eval/cassettes/`.
+Cassettes: the first recording of model responses needs `OPENCODE_API_KEY`. After that, every test and the gate replay from `eval/cassettes/`.
 
 **Lanes:** A: M2-02 → M2-03. B: M2-01 → M2-04 → (M2-05 ‖ M2-06 ‖ M2-07) → M2-08. Merge at M2-09, then M2-10 → M2-11.
 
@@ -493,18 +493,20 @@ Cassettes: the first recording of model responses needs `ANTHROPIC_API_KEY`. Aft
 - Extended role matrix: the agent role cannot read `audit_log`, `approvers`, or base tables; can insert proposals; cannot update them.
 - A second active proposal for the same case fails on the partial unique index.
 
-### M2-02 · LLM client, Anthropic adapter, cassettes · M
+### M2-02 · LLM client, OpenCode adapter, cassettes · M
 **Spec:** sections 2.2, 6.5, 11.3 · **Needs:** M0-04
 
 **Build** (`internal/llm`)
 - Provider-neutral types (`Message`, `ToolDef`, `ToolCall`, `Usage`, `StopReason`) and `Client.Complete`.
-- Anthropic adapter using the official Go SDK: tool use, system prompt, temperature 0 by default. Cost computed from `pricing.yaml` (per million tokens) with decimals, never floats.
+- OpenCode Console Inference adapter over OpenAI-compatible Chat Completions using a small `net/http` client, not an SDK: tool use, system prompt, `temperature` as `*float64` (so 0 serializes), `max_tokens`, `stream: false`, stable `x-opencode-session`, and `reasoning_content` preserved inbound.
+- Embedded `pricing.yaml` with decimal per-million prices, model limits/capabilities, DeepSeek peak windows, and `allowed_fallback`; cost is computed with `shopspring/decimal`, never floats.
 - `ScriptedClient` (queue of canned responses) for tests.
-- `CassetteClient` wrapping any client: modes `record`, `replay`, `passthrough`, keyed by hash of (model, prompt version, canonical request), stored in `eval/cassettes/`. A replay miss is an error in CI, never a silent live call.
+- `CassetteClient` wrapping any client: modes `record`, `replay`, `passthrough`, keyed by hash of (provider, base URL, model, prompt version, canonical request), stored in `eval/cassettes/`. A replay miss is an error in CI, never a silent live call.
+- Central redaction for API keys, bearer values, authorization headers, and OpenCode session IDs in errors, logs, and cassette diagnostics.
 
 **Done when**
 - Round-trip tests for scripted and cassette clients; adapter contract test against an `httptest` fake server.
-- A `live`-tagged test hits the real API (skipped by default).
+- A `live`-tagged test hits the real API (skipped by default; never in CI).
 - A test proves API keys never appear in logs or errors.
 
 ### M2-03 · Provider resilience · S
@@ -512,7 +514,7 @@ Cassettes: the first recording of model responses needs `ANTHROPIC_API_KEY`. Aft
 
 **Build**
 - `llm.Resilient`: error classification (retryable: 429, 5xx, timeouts, overloaded; fatal: auth, schema), exponential backoff with jitter on an injected sleeper, bounded attempts, honors `Retry-After`.
-- Per-provider circuit breaker (closed, open, half-open) with metric hooks. Optional fallback chain limited to models marked `allowed_fallback`; the response records the model actually used.
+- Per-provider circuit breaker (closed, open, half-open) with metric hooks. Optional fallback chain limited to models marked `allowed_fallback` that have passed the eval gate; the response records the model actually used.
 - Typed `ProviderError` so the worker can record `provider_error`.
 
 **Done when**
@@ -601,7 +603,7 @@ Cassettes: the first recording of model responses needs `ANTHROPIC_API_KEY`. Aft
 **Spec:** section 18 M2 · **Needs:** M2-09, M2-10, M1-11
 
 **Build**
-- `recon agent run --case <id> --llm scripted|anthropic --prompt v1` printing the transcript, tool calls, and proposal.
+- `recon agent run --case <id> --llm scripted|opencode --prompt v1` printing the transcript, tool calls, and proposal.
 - Smoke tests on three easy scenarios (`fee_variance`, `reference_typo`, `duplicate_charge`) from cassettes recorded once with a live key; a `live`-tagged test for manual runs.
 
 **Done when**
@@ -692,7 +694,7 @@ Goal: a repeatable, honest measurement of the agent: versioned datasets with hel
 **Spec:** sections 11.3, 19 · **Needs:** M2-02, M3-04
 
 **Build**
-- `prompts/v2` (for example a stricter evidence checklist) and a `models.yaml` registry with pricing. A second Claude model configured; an OpenAI-compatible adapter behind `llm.Client` is optional.
+- `prompts/v2` (for example a stricter evidence checklist) and a `models.yaml` registry with pricing. A second OpenAI-compatible model (`glm-5.3-flash`) configured behind `llm.Client`.
 - Record cassettes for each combination.
 
 **Done when**
