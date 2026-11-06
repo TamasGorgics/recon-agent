@@ -583,3 +583,33 @@ func TestCassetteReplayDoesNotCallInner(t *testing.T) {
 		t.Fatal("replay called the inner client")
 	}
 }
+
+func TestCanonicalRequestHashMatchesCassetteKey(t *testing.T) {
+	cassette, err := NewCassette(nil, CassetteOptions{Mode: CassetteReplay, Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewCassette: %v", err)
+	}
+	req := cassetteRequest()
+	want, err := cassette.key(req)
+	if err != nil {
+		t.Fatalf("cassette key: %v", err)
+	}
+	got, err := CanonicalRequestHash(cassette.provider, cassette.baseURL, req)
+	if err != nil {
+		t.Fatalf("CanonicalRequestHash: %v", err)
+	}
+	if got != want {
+		t.Fatalf("CanonicalRequestHash = %q, cassette key = %q", got, want)
+	}
+	if len(got) != 64 {
+		t.Fatalf("hash length = %d, want 64", len(got))
+	}
+}
+
+func TestCanonicalRequestHashRequiresPromptVersion(t *testing.T) {
+	req := cassetteRequest()
+	req.PromptVersion = ""
+	if _, err := CanonicalRequestHash(ProviderOpenCodeGo, DefaultBaseURL, req); err == nil {
+		t.Fatal("CanonicalRequestHash accepted a request without a prompt version")
+	}
+}

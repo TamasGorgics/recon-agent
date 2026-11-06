@@ -13,13 +13,15 @@ import (
 
 // Environment variable names read by Load.
 const (
-	EnvConfigFile      = "CONFIG_FILE"
-	EnvDatabaseURL     = "DATABASE_URL"
-	EnvDatabaseTestURL = "TEST_DATABASE_URL"
-	EnvLogLevel        = "LOG_LEVEL"
-	EnvOpenCodeAPIKey  = "OPENCODE_API_KEY"
-	EnvOpenCodeBaseURL = "OPENCODE_BASE_URL"
-	EnvOpenCodeModel   = "OPENCODE_MODEL"
+	EnvConfigFile       = "CONFIG_FILE"
+	EnvDatabaseURL      = "DATABASE_URL"
+	EnvDatabaseTestURL  = "TEST_DATABASE_URL"
+	EnvDatabaseAppURL   = "DATABASE_APP_URL"
+	EnvDatabaseAgentURL = "DATABASE_AGENT_URL"
+	EnvLogLevel         = "LOG_LEVEL"
+	EnvOpenCodeAPIKey   = "OPENCODE_API_KEY"
+	EnvOpenCodeBaseURL  = "OPENCODE_BASE_URL"
+	EnvOpenCodeModel    = "OPENCODE_MODEL"
 )
 
 type envBinding struct {
@@ -32,6 +34,8 @@ type envBinding struct {
 var envBindings = []envBinding{
 	{EnvDatabaseURL, func(c *Config, v string) { c.Database.URL = v }},
 	{EnvDatabaseTestURL, func(c *Config, v string) { c.Database.TestURL = v }},
+	{EnvDatabaseAppURL, func(c *Config, v string) { c.Database.AppURL = v }},
+	{EnvDatabaseAgentURL, func(c *Config, v string) { c.Database.AgentURL = v }},
 	{EnvLogLevel, func(c *Config, v string) { c.Log.Level = v }},
 	{EnvOpenCodeAPIKey, func(c *Config, v string) { c.LLM.APIKey = v }},
 	{EnvOpenCodeBaseURL, func(c *Config, v string) { c.LLM.BaseURL = v }},
@@ -46,16 +50,20 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Log      LogConfig      `yaml:"log"`
 	LLM      LLMConfig      `yaml:"llm"`
+	Agent    AgentConfig    `yaml:"agent"`
 	Ledger   LedgerConfig   `yaml:"ledger"`
 	Ingest   IngestConfig   `yaml:"ingest"`
 	Match    MatchConfig    `yaml:"match"`
 	Synth    SynthConfig    `yaml:"synth"`
 }
 
-// DatabaseConfig holds the Postgres DSNs.
+// DatabaseConfig holds the Postgres DSNs. AppURL and AgentURL are the
+// role-scoped pools (recon_app, recon_agent_ro); they are never superuser DSNs.
 type DatabaseConfig struct {
-	URL     string `yaml:"url"`
-	TestURL string `yaml:"test_url"`
+	URL      string `yaml:"url"`
+	TestURL  string `yaml:"test_url"`
+	AppURL   string `yaml:"app_url"`
+	AgentURL string `yaml:"agent_url"`
 }
 
 // LogConfig holds logging settings.
@@ -87,6 +95,7 @@ func LoadFile(path string) (Config, error) {
 	}
 	applyEnv(&cfg)
 	cfg.LLM = normalizeLLMConfig(cfg.LLM)
+	cfg.Agent = normalizeAgentConfig(cfg.Agent, cfg.LLM.Model)
 	return cfg, nil
 }
 
@@ -108,6 +117,9 @@ func (c Config) Validate() error {
 	if err := c.LLM.Validate(); err != nil {
 		return err
 	}
+	if err := c.Agent.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -115,6 +127,7 @@ func defaults() Config {
 	return Config{
 		Log:    LogConfig{Level: DefaultLogLevel},
 		LLM:    DefaultLLMConfig(),
+		Agent:  DefaultAgentConfig(),
 		Ledger: DefaultLedgerConfig(),
 		Match:  DefaultMatchConfig(),
 		Synth:  DefaultSynthConfig(),

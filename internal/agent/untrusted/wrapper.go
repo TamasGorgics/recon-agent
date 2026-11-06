@@ -1,6 +1,8 @@
 package untrusted
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -66,6 +68,17 @@ func NewWrapper(rand io.Reader, opts ...Option) (*Wrapper, error) {
 		}
 	}
 	return w, nil
+}
+
+// NewRunWrapper derives a deterministic 16-byte boundary token from the run
+// id. Production run ids are UUIDv4, so the token is unguessable; scripted
+// replay ids are deterministic, so the transcript is byte-stable.
+func NewRunWrapper(runID string) (*Wrapper, error) {
+	if strings.TrimSpace(runID) == "" {
+		return nil, errors.New("untrusted: run id is required for a run wrapper")
+	}
+	sum := sha256.Sum256([]byte("recon-m2-untrusted-v1:" + runID))
+	return NewWrapper(bytes.NewReader(sum[:boundaryTokenBytes]))
 }
 
 // Wrap sanitizes the value, escapes every exact token occurrence in both field
