@@ -627,6 +627,124 @@ func TestM2ExecutorAuditNoGrants(t *testing.T) {
 	}
 }
 
+// TestM2InjectionFlagColumns pins the M2-07 schema delta (Q-23): both trace
+// tables carry a non-null JSONB array defaulting to [], the array check rejects
+// objects, the app role can write the trace columns, and the agent role gains
+// no read access.
+func TestM2InjectionFlagColumns(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.New(t)
+
+	for _, table := range []string{"agent_runs", "tool_calls"} {
+		t.Run(table, func(t *testing.T) {
+			var dataType, nullable string
+			var columnDefault *string
+			if err := d.Pool.QueryRow(ctx,
+				`SELECT data_type, is_nullable, column_default
+				   FROM information_schema.columns
+				  WHERE table_schema = 'public' AND table_name = $1
+				    AND column_name = 'injection_flags'`, table).
+				Scan(&dataType, &nullable, &columnDefault); err != nil {
+				t.Fatalf("read %s.injection_flags definition: %v", table, err)
+			}
+			if dataType != "jsonb" {
+				t.Fatalf("%s.injection_flags data_type = %q, want jsonb", table, dataType)
+			}
+			if nullable != "NO" {
+				t.Fatalf("%s.injection_flags is_nullable = %q, want NO", table, nullable)
+			}
+			if columnDefault == nil || !strings.Contains(*columnDefault, "'[]'") {
+				t.Fatalf("%s.injection_flags default = %v, want '[]'::jsonb", table, columnDefault)
+			}
+
+			var agentSelect bool
+			if err := d.Pool.QueryRow(ctx,
+				`SELECT has_column_privilege($1::text, 'public.' || $2::text,
+				                              'injection_flags', 'SELECT')`,
+				db.RoleAgentRO, table).Scan(&agentSelect); err != nil {
+				t.Fatalf("read agent column privilege on %s: %v", table, err)
+			}
+			if agentSelect {
+				t.Fatalf("recon_agent_ro can SELECT %s.injection_flags, want no access", table)
+			}
+		})
+	}
+
+	caseID := m2CreateCase(t, d)
+	app := openRolePool(t, d, db.RoleApp)
+
+	var runID, runFlags string
+	if err := app.QueryRow(ctx,
+		`INSERT INTO agent_runs (case_id, model, prompt_version, started_at)
+		 VALUES ($1::uuid, 'scripted', 'prompt-v1', now())
+		 RETURNING id::text, injection_flags::text`, caseID).Scan(&runID, &runFlags); err != nil {
+		t.Fatalf("app insert agent_runs: %v", err)
+	}
+	if runFlags != "[]" {
+		t.Fatalf("agent_runs.injection_flags default = %q, want []", runFlags)
+	}
+
+	if _, err := app.Exec(ctx,
+		`UPDATE agent_runs SET injection_flags = '{"instruction_override":true}'::jsonb
+		  WHERE id = $1::uuid`, runID); err == nil {
+		t.Fatal("agent_runs.injection_flags accepted a JSON object, want array check")
+	} else {
+		requirePgError(t, err, "23514")
+	}
+
+	if _, err := app.Exec(ctx,
+		`UPDATE agent_runs SET injection_flags = '["instruction_override"]'::jsonb
+		  WHERE id = $1::uuid`, runID); err != nil {
+		t.Fatalf("app update agent_runs.injection_flags: %v", err)
+	}
+	if err := app.QueryRow(ctx,
+		`SELECT injection_flags::text FROM agent_runs WHERE id = $1::uuid`, runID).
+		Scan(&runFlags); err != nil {
+		t.Fatalf("read updated run flags: %v", err)
+	}
+	if runFlags != `["instruction_override"]` {
+		t.Fatalf("agent_runs.injection_flags = %q", runFlags)
+	}
+
+	var defaultFlags string
+	if err := app.QueryRow(ctx,
+		`INSERT INTO tool_calls
+		     (agent_run_id, seq, tool_name, args, result, result_hash, started_at, duration_ms)
+		 VALUES ($1::uuid, 1, 'get_case', '{}'::jsonb, '{"data":{}}'::jsonb,
+		         'hash-default', now(), 1)
+		 RETURNING injection_flags::text`, runID).Scan(&defaultFlags); err != nil {
+		t.Fatalf("app insert tool_calls with default flags: %v", err)
+	}
+	if defaultFlags != "[]" {
+		t.Fatalf("tool_calls.injection_flags default = %q, want []", defaultFlags)
+	}
+
+	var explicitFlags string
+	if err := app.QueryRow(ctx,
+		`INSERT INTO tool_calls
+		     (agent_run_id, seq, tool_name, args, result, result_hash,
+		      injection_flags, started_at, duration_ms)
+		 VALUES ($1::uuid, 2, 'lookup_external_record', '{}'::jsonb,
+		         '{"data":{}}'::jsonb, 'hash-explicit', '["url"]'::jsonb, now(), 1)
+		 RETURNING injection_flags::text`, runID).Scan(&explicitFlags); err != nil {
+		t.Fatalf("app insert tool_calls with explicit flags: %v", err)
+	}
+	if explicitFlags != `["url"]` {
+		t.Fatalf("tool_calls.injection_flags = %q, want [\"url\"]", explicitFlags)
+	}
+
+	if _, err := app.Exec(ctx,
+		`INSERT INTO tool_calls
+		     (agent_run_id, seq, tool_name, args, result, result_hash,
+		      injection_flags, started_at, duration_ms)
+		 VALUES ($1::uuid, 3, 'bad_flags', '{}'::jsonb, '{"data":{}}'::jsonb,
+		         'hash-bad', '{"x":1}'::jsonb, now(), 1)`, runID); err == nil {
+		t.Fatal("tool_calls.injection_flags accepted a JSON object, want array check")
+	} else {
+		requirePgError(t, err, "23514")
+	}
+}
+
 func m2CreateCase(t *testing.T, d *testdb.DB) string {
 	t.Helper()
 	var id string

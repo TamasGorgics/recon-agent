@@ -12,6 +12,9 @@ const (
 	CodeNotFound         = "not_found"
 	CodeToolError        = "tool_error"
 	CodeInternalError    = "internal_error"
+	// CodeInjectionFlagged means the run has untrusted-data injection flags,
+	// so proposal tools are disabled; escalate remains allowed (M2-07).
+	CodeInjectionFlagged = "injection_flagged"
 )
 
 // Sentinel errors. Handlers may wrap these with %w to select an error code;
@@ -89,7 +92,7 @@ func Failure(message string) error {
 
 func validErrorCode(code string) bool {
 	switch code {
-	case CodeInvalidArguments, CodeUnknownTool, CodeNotFound, CodeToolError, CodeInternalError:
+	case CodeInvalidArguments, CodeUnknownTool, CodeNotFound, CodeToolError, CodeInternalError, CodeInjectionFlagged:
 		return true
 	default:
 		return false
@@ -108,6 +111,8 @@ func defaultMessage(code string) string {
 		return "tool call failed"
 	case CodeInternalError:
 		return "internal error"
+	case CodeInjectionFlagged:
+		return "run has injection flags; only escalate is allowed"
 	default:
 		return "internal error"
 	}
