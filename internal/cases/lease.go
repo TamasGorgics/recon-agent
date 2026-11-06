@@ -89,6 +89,73 @@ func (s *Service) Lease(ctx context.Context, workerID string, ttl time.Duration)
 	return result, err
 }
 
+// LeaseByID claims one named open case for workerID. It is the CLI/gate path:
+// unlike Lease, it never scans the queue, so running a specific fixture case
+// cannot acquire and strand an unrelated open case. The owner guard and audit
+// entry are identical to Lease.
+func (s *Service) LeaseByID(ctx context.Context, caseID, workerID string, ttl time.Duration) (Case, error) {
+	if caseID == "" || strings.TrimSpace(workerID) == "" {
+		return Case{}, fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+	}
+	if ttl <= 0 {
+		return Case{}, fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+	}
+	now := s.clock.Now().UTC().Truncate(time.Microsecond)
+	expires := now.Add(ttl)
+
+	var result Case
+	err := db.WithTx(ctx, s.db, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
+		state, err := s.lockLease(ctx, tx, caseID)
+		if err != nil {
+			return err
+		}
+		if state.status != StatusOpen || state.leasedBy != nil {
+			return fmt.Errorf("%w: case is %s", ErrNotLeased, state.status)
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE cases
+			    SET status = 'in_agent',
+			        leased_by = $2,
+			        lease_expires_at = $3,
+			        version = version + 1
+			  WHERE id = $1::uuid AND status = 'open' AND leased_by IS NULL`,
+			caseID, workerID, expires)
+		if err != nil {
+			return fmt.Errorf("cases: lease case %s: %w", caseID, err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrStale
+		}
+		leased, err := s.getCaseTx(ctx, tx, caseID)
+		if err != nil {
+			return err
+		}
+		if _, err := audit.Append(ctx, tx, audit.Entry{
+			Actor:      s.actor,
+			Action:     ActionCaseLease,
+			EntityType: EntityCase,
+			EntityID:   caseID,
+			Before: map[string]any{
+				"status":  string(StatusOpen),
+				"version": leased.Version - 1,
+			},
+			After: map[string]any{
+				"status":           string(StatusInAgent),
+				"version":          leased.Version,
+				"attempts":         leased.Attempts,
+				"worker_id":        workerID,
+				"lease_expires_at": expires,
+			},
+			Timestamp: now,
+		}); err != nil {
+			return err
+		}
+		result = leased
+		return nil
+	})
+	return result, err
+}
+
 // Renew extends the owner's live lease. A non-owner, an unleased case, or an
 // expired lease is rejected; only the owner and only before expiry.
 func (s *Service) Renew(ctx context.Context, caseID, workerID string, ttl time.Duration) (Case, error) {

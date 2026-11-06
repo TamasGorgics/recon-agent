@@ -99,7 +99,7 @@ func run(ctx context.Context, args []string) error {
 		Client:          client,
 		Clock:           timeSource,
 		Config:          cfg,
-		UntrustedFields: configuredUntrustedFields(cfg),
+		UntrustedFields: cfg.ConfiguredUntrustedFields(),
 		BeforeStep: func(ctx context.Context) error {
 			enabled, err := switchReader.AgentEnabled(ctx)
 			if err != nil {
@@ -176,20 +176,4 @@ func run(ctx context.Context, args []string) error {
 	}
 	logger.Info("worker stopped", "worker_id", pollWorker.ID())
 	return nil
-}
-
-// configuredUntrustedFields projects the per-source ingest config into the map
-// the read tools use to label free-text fields.
-func configuredUntrustedFields(cfg config.Config) map[string][]string {
-	fields := make(map[string][]string, len(cfg.Ingest.Sources))
-	for source, sourceCfg := range cfg.Ingest.Sources {
-		if len(sourceCfg.UntrustedFields) == 0 {
-			continue
-		}
-		fields[source] = append([]string(nil), sourceCfg.UntrustedFields...)
-	}
-	if len(fields) == 0 {
-		return nil
-	}
-	return fields
 }

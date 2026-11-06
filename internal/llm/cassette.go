@@ -399,6 +399,11 @@ func normalizeCassetteResponse(response Response) (Response, error) {
 	}
 	response.Raw = raw
 	response.Usage.Raw = usageRaw
+	for i := range response.Message.ToolCalls {
+		if len(response.Message.ToolCalls[i].Arguments) == 0 {
+			response.Message.ToolCalls[i].Arguments = nil
+		}
+	}
 	// JSON represents every zero decimal as "0"; canonicalize zero values so a
 	// recorded response and its replay are structurally identical.
 	for _, value := range []*decimal.Decimal{
@@ -417,7 +422,9 @@ func normalizeCassetteResponse(response Response) (Response, error) {
 
 func compactRaw(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
-		return raw, nil
+		// Return nil rather than a zero-length non-nil slice: encoding an empty
+		// json.RawMessage fails with "unexpected end of JSON input".
+		return nil, nil
 	}
 	var out bytes.Buffer
 	if err := json.Compact(&out, raw); err != nil {

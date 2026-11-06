@@ -153,6 +153,13 @@ func TestListUntrustedFields(t *testing.T) {
 			want:       []string{"memo"},
 		},
 		{
+			name:       "psp_m2 fixture fallback",
+			source:     "psp_m2",
+			raw:        map[string]any{"memo": "hello", "reference": "r1"},
+			configured: nil,
+			want:       []string{"memo", "reference"},
+		},
+		{
 			name:       "unknown source",
 			source:     "other",
 			raw:        map[string]any{"memo": "hello"},

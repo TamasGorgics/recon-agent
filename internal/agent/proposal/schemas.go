@@ -18,8 +18,8 @@ var (
 	confidenceSchema   = map[string]any{"type": "number", "minimum": 0, "maximum": 1}
 	caseIDSchema       = map[string]any{"type": "string", "pattern": uuidSchemaPattern}
 	rationaleSchema    = map[string]any{"type": "string", "minLength": 1, "maxLength": 2000}
-	evidenceSchema     = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}}
-	externalRefSchema  = map[string]any{"type": "string", "minLength": 1}
+	evidenceSchema     = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "canonical refs returned by successful tool calls in this run"}
+	externalRefSchema  = map[string]any{"type": "string", "minLength": 1, "description": "canonical external evidence reference ext:<source>:<source_record_id>"}
 	ledgerTxnIDSchema  = map[string]any{"type": "string", "pattern": uuidSchemaPattern}
 	accountCodeSchema  = map[string]any{"type": "string", "minLength": 1}
 	directionSchema    = map[string]any{"type": "string", "enum": []string{"debit", "credit"}}

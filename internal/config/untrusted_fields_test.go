@@ -56,6 +56,48 @@ func TestIngestUntrustedFieldsConfig(t *testing.T) {
 	}
 }
 
+// TestConfiguredUntrustedFields pins the projection both cmd/worker and the
+// agent CLI/agentrun pass to the production runner.
+func TestConfiguredUntrustedFields(t *testing.T) {
+	cfg := Config{Ingest: IngestConfig{Sources: map[string]SourceConfig{
+		"psp_a":  {Timezone: "UTC", Cutoff: "17:00", UntrustedFields: []string{"memo"}},
+		"bank_x": {Timezone: "UTC", Cutoff: "15:30"},
+		"psp_m2": {Timezone: "UTC", Cutoff: "00:00", UntrustedFields: []string{"memo", "reference"}},
+	}}}
+	got := cfg.ConfiguredUntrustedFields()
+	if fields := strings.Join(got["psp_a"], ","); fields != "memo" {
+		t.Errorf("psp_a fields = %q, want memo", fields)
+	}
+	if _, ok := got["bank_x"]; ok {
+		t.Errorf("bank_x with no untrusted fields was projected: %v", got["bank_x"])
+	}
+	if fields := strings.Join(got["psp_m2"], ","); fields != "memo,reference" {
+		t.Errorf("psp_m2 fields = %q, want memo,reference", fields)
+	}
+	got["psp_a"][0] = "mutated"
+	if cfg.Ingest.Sources["psp_a"].UntrustedFields[0] != "memo" {
+		t.Fatal("ConfiguredUntrustedFields aliases the config slice")
+	}
+	if fields := (Config{}).ConfiguredUntrustedFields(); fields != nil {
+		t.Errorf("empty config fields = %v, want nil", fields)
+	}
+}
+
+// TestDefaultUntrustedFieldsIncludesPSPM2 pins the eval-only fallback used when
+// no ingest config names psp_m2: its memo and reference must be labelled.
+func TestDefaultUntrustedFieldsIncludesPSPM2(t *testing.T) {
+	fields := DefaultUntrustedFields()
+	if got := strings.Join(fields["psp_m2"], ","); got != "memo,reference" {
+		t.Fatalf("psp_m2 default fields = %q, want memo,reference", got)
+	}
+	if got := strings.Join(fields["psp_a"], ","); got != "memo" {
+		t.Errorf("psp_a default fields = %q, want memo", got)
+	}
+	if got := strings.Join(fields["bank_x"], ","); got != "description" {
+		t.Errorf("bank_x default fields = %q, want description", got)
+	}
+}
+
 func TestUntrustedFieldSetValidation(t *testing.T) {
 	cases := []struct {
 		name   string

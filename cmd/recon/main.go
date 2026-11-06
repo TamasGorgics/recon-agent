@@ -19,6 +19,9 @@ import (
 const usage = `usage: recon <command> [arguments]
 
 Commands:
+  agent run        run the M2 agent on one case and print the transcript
+                   usage: recon agent run --case <uuid> --llm scripted|opencode
+                          --prompt v1 [--model <id>] [--cassette-dir <dir>] [--json]
   demo seed        generate, ingest, match and tie out a deterministic dataset
                    usage: recon demo seed [--seed N] [--days N]
                           [--difficulty easy|realistic|adversarial] [--reset]
@@ -60,6 +63,8 @@ func runTo(ctx context.Context, args []string, out io.Writer) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprint(out, usage)
 		return err
+	case "agent":
+		return runAgent(ctx, args[1:])
 	case "migrate":
 		return runMigrate(ctx, args[1:])
 	case "testdb":

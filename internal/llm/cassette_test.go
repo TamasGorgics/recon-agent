@@ -613,3 +613,28 @@ func TestCanonicalRequestHashRequiresPromptVersion(t *testing.T) {
 		t.Fatal("CanonicalRequestHash accepted a request without a prompt version")
 	}
 }
+
+// TestNormalizeCassetteResponseEmptyRaw pins that an adapter response with no
+// raw body still records: an empty non-nil json.RawMessage is not valid JSON.
+func TestNormalizeCassetteResponseEmptyRaw(t *testing.T) {
+	response := Response{
+		Raw:   json.RawMessage{},
+		Usage: Usage{Raw: json.RawMessage{}},
+		Message: Message{ToolCalls: []ToolCall{{
+			ID: "call_1", Name: "get_case", Arguments: json.RawMessage{},
+		}}},
+	}
+	normalized, err := normalizeCassetteResponse(response)
+	if err != nil {
+		t.Fatalf("normalizeCassetteResponse: %v", err)
+	}
+	if normalized.Raw != nil || normalized.Usage.Raw != nil {
+		t.Fatalf("empty raw values were not normalized to nil: %#v", normalized)
+	}
+	if normalized.Message.ToolCalls[0].Arguments != nil {
+		t.Fatalf("empty tool-call arguments were not normalized to nil: %#v", normalized.Message.ToolCalls[0])
+	}
+	if _, err := json.Marshal(normalized); err != nil {
+		t.Fatalf("marshal normalized response: %v", err)
+	}
+}

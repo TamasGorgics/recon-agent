@@ -123,6 +123,37 @@ func TestLeaseOrderAndRenewRelease(t *testing.T) {
 	}
 }
 
+// TestLeaseByIDClaimsTheNamedCase pins the CLI/gate path: a targeted lease
+// takes the requested case and leaves other open cases queued.
+func TestLeaseByIDClaimsTheNamedCase(t *testing.T) {
+	f := newFixture(t)
+	target := seedOneCase(t, f, "targeted-lease", 100)
+	other := seedOneCase(t, f, "targeted-other", 5_000_000)
+
+	leased, err := f.service.LeaseByID(context.Background(), target.ID, "cli:test", time.Minute)
+	if err != nil {
+		t.Fatalf("LeaseByID: %v", err)
+	}
+	if leased.ID != target.ID || leased.Status != cases.StatusInAgent {
+		t.Fatalf("leased case = %s/%s, want %s/in_agent", leased.ID, leased.Status, target.ID)
+	}
+	if leased.LeasedBy == nil || *leased.LeasedBy != "cli:test" {
+		t.Fatalf("leased_by = %v, want cli:test", leased.LeasedBy)
+	}
+	if got, want := f.auditCount(t, target.ID, cases.ActionCaseLease), 1; got != want {
+		t.Fatalf("lease audit rows = %d, want %d", got, want)
+	}
+	if got := f.getCase(t, other.ID); got.Status != cases.StatusOpen {
+		t.Fatalf("other case status = %s, want open", got.Status)
+	}
+	if _, err := f.service.LeaseByID(context.Background(), target.ID, "cli:test", time.Minute); !errors.Is(err, cases.ErrNotLeased) {
+		t.Fatalf("second LeaseByID error = %v, want ErrNotLeased", err)
+	}
+	if _, err := f.service.LeaseByID(context.Background(), "99999999-9999-4999-8999-999999999999", "cli:test", time.Minute); !errors.Is(err, cases.ErrCaseNotFound) {
+		t.Fatalf("missing LeaseByID error = %v, want ErrCaseNotFound", err)
+	}
+}
+
 // TestLeaseRejectsNonPositiveTTL covers the TTL <= 0 edge case.
 func TestLeaseRejectsNonPositiveTTL(t *testing.T) {
 	f := newFixture(t)

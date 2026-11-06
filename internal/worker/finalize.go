@@ -3,13 +3,16 @@ package worker
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/TamasGorgics/recon-agent/internal/agent"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
 )
 
-// process runs one leased case and applies the M2-10 finalization policy:
+// Finalize applies the M2-10 outcome policy to one finished run. The CLI, the
+// gate helper, and Worker.process all call this function so a case becomes a
+// proposal, an attempt, or a release exactly once.
 //
 //	proposal / escalated        no-op (the loop transitioned); release as a safety net
 //	budget_exhausted / invalid  RecordFailedAttempt (attempt cap escalates agent_failed)
@@ -19,12 +22,12 @@ import (
 //
 // Every release and attempt is owner-guarded inside cases.Service. A lost lease
 // is logged and no-op; it is never retried with a fresh version.
-func (w *Worker) process(ctx context.Context, c cases.Case) {
-	result, err := w.runner.Run(ctx, c.ID)
-	w.recordSpend(result.CostUSD)
-
+func Finalize(ctx context.Context, svc CaseService, workerID string, maxAttempts int, logger *slog.Logger, caseID string, result agent.Result, runErr error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	logArgs := []any{
-		"case_id", c.ID,
+		"case_id", caseID,
 		"run_id", result.RunID,
 		"outcome", string(result.Outcome),
 		"steps", result.Steps,
@@ -34,38 +37,77 @@ func (w *Worker) process(ctx context.Context, c cases.Case) {
 		"cost_usd", result.CostUSD.String(),
 	}
 
-	if err != nil {
+	if runErr != nil {
 		switch {
-		case errors.Is(err, agent.ErrAgentDisabled):
-			w.logger.Info("worker: run stopped by kill switch", logArgs...)
-			w.release(c.ID)
-		case errors.Is(err, llm.ErrCassetteMiss):
-			w.logger.Warn("worker: run missed its cassette", append(logArgs, "error", err)...)
-			w.release(c.ID)
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), ctx.Err() != nil:
-			w.logger.Info("worker: run canceled during shutdown", logArgs...)
-			w.release(c.ID)
+		case errors.Is(runErr, agent.ErrAgentDisabled):
+			logger.Info("worker: run stopped by kill switch", logArgs...)
+			release(svc, workerID, logger, caseID)
+		case errors.Is(runErr, llm.ErrCassetteMiss):
+			logger.Warn("worker: run missed its cassette", append(logArgs, "error", runErr)...)
+			release(svc, workerID, logger, caseID)
+		case errors.Is(runErr, context.Canceled), errors.Is(runErr, context.DeadlineExceeded), ctx.Err() != nil:
+			logger.Info("worker: run canceled during shutdown", logArgs...)
+			release(svc, workerID, logger, caseID)
 		default:
-			w.logger.Error("worker: run failed", append(logArgs, "error", err)...)
-			w.release(c.ID)
+			logger.Error("worker: run failed", append(logArgs, "error", runErr)...)
+			release(svc, workerID, logger, caseID)
 		}
 		return
 	}
 
 	switch result.Outcome {
 	case agent.OutcomeProposal, agent.OutcomeEscalated:
-		w.logger.Info("worker: run finished", logArgs...)
-		w.release(c.ID)
+		logger.Info("worker: run finished", logArgs...)
+		release(svc, workerID, logger, caseID)
 	case agent.OutcomeBudgetExhausted, agent.OutcomeInvalidOutput:
-		w.logger.Info("worker: run consumed an attempt", logArgs...)
-		w.recordFailedAttempt(c.ID)
+		logger.Info("worker: run consumed an attempt", logArgs...)
+		recordFailedAttempt(svc, workerID, maxAttempts, logger, caseID)
 	case agent.OutcomeProviderError:
-		w.logger.Warn("worker: run hit a provider error; no attempt", logArgs...)
-		w.release(c.ID)
+		logger.Warn("worker: run hit a provider error; no attempt", logArgs...)
+		release(svc, workerID, logger, caseID)
 	default:
-		w.logger.Error("worker: run returned an unknown outcome", logArgs...)
-		w.release(c.ID)
+		logger.Error("worker: run returned an unknown outcome", logArgs...)
+		release(svc, workerID, logger, caseID)
 	}
+}
+
+// release returns the lease without incrementing attempts. It always uses a
+// fresh context so a canceled run context cannot prevent cleanup.
+func release(svc CaseService, workerID string, logger *slog.Logger, caseID string) {
+	releaseCtx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	if _, err := svc.Release(releaseCtx, caseID, workerID); err != nil {
+		if lostLease(err) {
+			logger.Info("worker: lease already lost; release no-op", "case_id", caseID, "error", err)
+			return
+		}
+		logger.Warn("worker: release lease failed", "case_id", caseID, "error", err)
+	}
+}
+
+// recordFailedAttempt atomically clears the lease and increments attempts; the
+// same call escalates the case at the configured cap.
+func recordFailedAttempt(svc CaseService, workerID string, maxAttempts int, logger *slog.Logger, caseID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	updated, err := svc.RecordFailedAttempt(ctx, caseID, workerID, maxAttempts)
+	if err != nil {
+		if lostLease(err) {
+			logger.Info("worker: lease already lost; attempt no-op", "case_id", caseID, "error", err)
+			return
+		}
+		logger.Warn("worker: record failed attempt failed", "case_id", caseID, "error", err)
+		return
+	}
+	logger.Info("worker: attempt recorded",
+		"case_id", caseID, "attempts", updated.Attempts, "status", string(updated.Status))
+}
+
+// process runs one leased case through the shared finalization policy.
+func (w *Worker) process(ctx context.Context, c cases.Case) {
+	result, err := w.runner.Run(ctx, c.ID)
+	w.recordSpend(result.CostUSD)
+	Finalize(ctx, w.cases, w.id, w.config.MaxAttempts, w.logger, c.ID, result, err)
 }
 
 // escalateExhausted dead-letters a case that reached the attempt cap without a
@@ -89,38 +131,6 @@ func (w *Worker) escalateExhausted(ctx context.Context, c cases.Case) error {
 	w.logger.Info("worker: case escalated at attempt cap",
 		"case_id", c.ID, "attempts", c.Attempts, "reason", agentFailedReason)
 	return nil
-}
-
-// release returns the lease without incrementing attempts. It always uses a
-// fresh context so a canceled run context cannot prevent cleanup.
-func (w *Worker) release(caseID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
-	defer cancel()
-	if _, err := w.cases.Release(ctx, caseID, w.id); err != nil {
-		if lostLease(err) {
-			w.logger.Info("worker: lease already lost; release no-op", "case_id", caseID, "error", err)
-			return
-		}
-		w.logger.Warn("worker: release lease failed", "case_id", caseID, "error", err)
-	}
-}
-
-// recordFailedAttempt atomically clears the lease and increments attempts; the
-// same call escalates the case at the configured cap.
-func (w *Worker) recordFailedAttempt(caseID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
-	defer cancel()
-	updated, err := w.cases.RecordFailedAttempt(ctx, caseID, w.id, w.config.MaxAttempts)
-	if err != nil {
-		if lostLease(err) {
-			w.logger.Info("worker: lease already lost; attempt no-op", "case_id", caseID, "error", err)
-			return
-		}
-		w.logger.Warn("worker: record failed attempt failed", "case_id", caseID, "error", err)
-		return
-	}
-	w.logger.Info("worker: attempt recorded",
-		"case_id", caseID, "attempts", updated.Attempts, "status", string(updated.Status))
 }
 
 // lostLease reports the owner-guard sentinels of a lease that moved or expired.
