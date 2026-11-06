@@ -100,8 +100,12 @@ func normalizeRefs(refs []string) ([]string, error) {
 	return SortedUnique(refs), nil
 }
 
-// untrustedFieldsFromData collects the sorted unique union of every
-// per-record untrusted_fields array present in the returned data.
+// untrustedFieldsFromData collects the sorted unique union of the per-record
+// untrusted_fields declarations present in the returned data. A declared name
+// is advertised only when it resolves to a field on the record object or in the
+// record's own raw payload. The raw payload is never itself treated as
+// metadata, so an attacker-supplied raw.untrusted_fields array contributes no
+// names.
 func untrustedFieldsFromData(data []byte) []string {
 	var value any
 	if err := json.Unmarshal(data, &value); err != nil {
@@ -112,16 +116,28 @@ func untrustedFieldsFromData(data []byte) []string {
 	walk = func(node any) {
 		switch typed := node.(type) {
 		case map[string]any:
-			if raw, ok := typed["untrusted_fields"]; ok {
-				if list, ok := raw.([]any); ok {
-					for _, item := range list {
-						if field, ok := item.(string); ok {
+			raw, _ := typed["raw"].(map[string]any)
+			if declared, ok := typed["untrusted_fields"].([]any); ok {
+				for _, item := range declared {
+					field, ok := item.(string)
+					if !ok || field == "" {
+						continue
+					}
+					if _, present := typed[field]; present {
+						fields = append(fields, field)
+						continue
+					}
+					if raw != nil {
+						if _, present := raw[field]; present {
 							fields = append(fields, field)
 						}
 					}
 				}
 			}
-			for _, child := range typed {
+			for key, child := range typed {
+				if key == "raw" || key == "untrusted_fields" {
+					continue
+				}
 				walk(child)
 			}
 		case []any:
