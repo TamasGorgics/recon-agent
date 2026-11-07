@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -17,17 +18,19 @@ import (
 // recordRequest is the decoded, tool-specific input to the validation
 // pipeline.
 type recordRequest struct {
-	kind        string
-	caseID      string
-	rationale   string
-	evidence    []string
-	confidence  json.Number
-	pattern     string
-	lines       []lineInput
-	ledgerTxnID string
-	externalRef string
-	duplicateOf string
-	question    string
+	kind         string
+	caseID       string
+	rationale    string
+	evidence     []string
+	confidence   json.Number
+	pattern      string
+	lines        []lineInput
+	ledgerTxnID  string
+	ledgerTxnIDs []string
+	linkSet      bool
+	externalRef  string
+	duplicateOf  string
+	question     string
 }
 
 // record runs the ordered validation pipeline for one proposal tool. It never
@@ -65,11 +68,19 @@ func (d Deps) record(ctx context.Context, run *tools.RunContext, req recordReque
 		return tools.Result{}, invalidArgumentsError("pattern is not allowed for this tool")
 	}
 	if req.kind == "link" {
-		ledgerTxnID, err := tools.ParseUUID(req.ledgerTxnID)
-		if err != nil {
-			return tools.Result{}, invalidArgumentsError("ledger_txn_id must be a UUID")
+		if req.linkSet {
+			ids, err := normalizeLedgerTxnIDs(req.ledgerTxnIDs)
+			if err != nil {
+				return tools.Result{}, err
+			}
+			req.ledgerTxnIDs = ids
+		} else {
+			ledgerTxnID, err := tools.ParseUUID(req.ledgerTxnID)
+			if err != nil {
+				return tools.Result{}, invalidArgumentsError("ledger_txn_id must be a UUID")
+			}
+			req.ledgerTxnID = strings.ToLower(ledgerTxnID)
 		}
-		req.ledgerTxnID = strings.ToLower(ledgerTxnID)
 	}
 	_, confidenceText, err := parseConfidence(req.confidence)
 	if err != nil {
@@ -214,26 +225,56 @@ func (d Deps) record(ctx context.Context, run *tools.RunContext, req recordReque
 	}}, nil
 }
 
-func (d Deps) checkLink(ctx context.Context, q tools.Queryer, req recordRequest, refs []string, breaks []BreakState) error {
-	ledgerTxnID, err := tools.ParseUUID(req.ledgerTxnID)
-	if err != nil {
-		return invalidArgumentsError("ledger_txn_id must be a UUID")
+// normalizeLedgerTxnIDs lowercases, sorts, and de-duplicates the plural wire
+// form. It rejects an empty array, malformed UUIDs, and duplicates that differ
+// only by case, so the payload and idempotency key are set-canonical.
+func normalizeLedgerTxnIDs(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, invalidArgumentsError("ledger_txn_ids must contain at least one UUID")
 	}
-	ledgerTxnID = strings.ToLower(ledgerTxnID)
+	seen := make(map[string]struct{}, len(raw))
+	normalized := make([]string, 0, len(raw))
+	for _, value := range raw {
+		parsed, err := tools.ParseUUID(value)
+		if err != nil {
+			return nil, invalidArgumentsError("ledger_txn_ids must contain UUIDs")
+		}
+		parsed = strings.ToLower(parsed)
+		if _, duplicate := seen[parsed]; duplicate {
+			return nil, invalidArgumentsError("ledger_txn_ids must not contain duplicate IDs")
+		}
+		seen[parsed] = struct{}{}
+		normalized = append(normalized, parsed)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
+}
+
+func (d Deps) checkLink(ctx context.Context, q tools.Queryer, req recordRequest, refs []string, breaks []BreakState) error {
+	ledgerTxnIDs := []string{req.ledgerTxnID}
+	if req.linkSet {
+		ledgerTxnIDs = req.ledgerTxnIDs
+	}
 	source, recordID, err := splitExternalRef(req.externalRef)
 	if err != nil {
 		return invalidEvidenceError()
 	}
-	ledgerRef := "ledger_txn:" + ledgerTxnID
-	if !containsString(refs, ledgerRef) || !containsString(refs, req.externalRef) {
+	for _, ledgerTxnID := range ledgerTxnIDs {
+		if !containsString(refs, "ledger_txn:"+ledgerTxnID) {
+			return ruleViolation(reasonNotInEvidence)
+		}
+	}
+	if !containsString(refs, req.externalRef) {
 		return ruleViolation(reasonNotInEvidence)
 	}
-	exists, err := ledgerTxnExists(ctx, q, ledgerTxnID)
-	if err != nil {
-		return &tools.CodedError{Code: tools.CodeInternalError, Message: "ledger transaction lookup failed"}
-	}
-	if !exists {
-		return ruleViolation(reasonLedgerTxnNotFound)
+	for _, ledgerTxnID := range ledgerTxnIDs {
+		exists, err := ledgerTxnExists(ctx, q, ledgerTxnID)
+		if err != nil {
+			return &tools.CodedError{Code: tools.CodeInternalError, Message: "ledger transaction lookup failed"}
+		}
+		if !exists {
+			return ruleViolation(reasonLedgerTxnNotFound)
+		}
 	}
 	recordExists, err := externalRecordExists(ctx, q, source, recordID)
 	if err != nil {
@@ -242,7 +283,22 @@ func (d Deps) checkLink(ctx context.Context, q tools.Queryer, req recordRequest,
 	if !recordExists {
 		return ruleViolation(reasonExternalRecordMissing)
 	}
-	if !ledgerTxnInCaseScope(ledgerTxnID, req.externalRef, breaks) {
+	if !externalRefInCaseScope(req.externalRef, breaks) {
+		return ruleViolation(reasonNotInCaseScope)
+	}
+	if req.linkSet {
+		for _, ledgerTxnID := range ledgerTxnIDs {
+			inScope, err := ledgerTxnInScope(ctx, q, ledgerTxnID, source, recordID)
+			if err != nil {
+				return &tools.CodedError{Code: tools.CodeInternalError, Message: "ledger transaction scope lookup failed"}
+			}
+			if !inScope {
+				return ruleViolation(reasonNotInCaseScope)
+			}
+		}
+		return nil
+	}
+	if !ledgerTxnInCaseScope(req.ledgerTxnID, req.externalRef, breaks) {
 		return ruleViolation(reasonNotInCaseScope)
 	}
 	return nil

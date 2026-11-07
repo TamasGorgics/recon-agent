@@ -13,9 +13,13 @@ import (
 const maxCommittedCassetteBytes = 1 << 20
 
 // wantM2CassetteFiles is the recorded M2 count: the three scenarios produced
-// 11 model interactions. Re-record only through the documented live test and
-// update this constant in the same change.
-const wantM2CassetteFiles = 11
+// 11 model interactions before the M2-08 composite-link schema change forced a
+// re-record. The re-record produced 12: fee_variance took one extra
+// get_settlement_batch step (3 -> 4) before proposing, while reference_typo
+// and duplicate_charge kept 5 and 3. The deviation is recorded in
+// docs/open-questions.md (Q-36). Re-record only through the documented live
+// test and update this constant in the same change.
+const wantM2CassetteFiles = 12
 
 var forbiddenCassettePattern = regexp.MustCompile(`(?i)oc_sk_|Bearer\s|ses_|Authorization|api_key`)
 

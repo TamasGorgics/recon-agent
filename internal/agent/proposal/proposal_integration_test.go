@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -276,6 +278,114 @@ func (w *proposalWorld) newScenarioWithStatus(t *testing.T, status string) *prop
 	return scenario
 }
 
+// newCompositeScenario attaches one external-only break to a fresh case. The
+// composite legs are deliberately not attached to the case; that is the shape a
+// payout-to-N charges link must support.
+func (w *proposalWorld) newCompositeScenario(t *testing.T, externalRecordID string) *proposalScenario {
+	t.Helper()
+	ctx := context.Background()
+	scenario := &proposalScenario{}
+	if err := w.DB.Pool.QueryRow(ctx,
+		`INSERT INTO cases (priority, value_minor, currency, status, version, attempts, created_at)
+		 VALUES (0, 3000, 'USD', 'open', 0, 0, '2026-01-02T00:00:00Z')
+		 RETURNING id::text`).Scan(&scenario.CaseID); err != nil {
+		t.Fatalf("create composite case: %v", err)
+	}
+
+	seq := integrationSeq.Add(1)
+	refs := fmt.Sprintf(`[{"source":"psp_a","source_record_id":%q}]`, externalRecordID)
+	if err := w.DB.Pool.QueryRow(ctx,
+		`INSERT INTO breaks
+		     (signature, scope_id, match_run_id, side, ledger_txn_ids, external_refs,
+		      delta_minor, currency, status, detected_at)
+		 VALUES ($1, $2::uuid, $3::uuid, 'external_only', ARRAY[]::uuid[],
+		         $4::jsonb, 3000, 'USD', 'open', '2026-01-02T00:00:00Z')
+		 RETURNING id::text`,
+		integrationSignature(fmt.Sprintf("proposal-it-composite-break-%d", seq)),
+		w.ScopeID, w.MatchRunID, refs).Scan(&scenario.BreakID); err != nil {
+		t.Fatalf("create composite break: %v", err)
+	}
+	if _, err := w.DB.Pool.Exec(ctx,
+		`INSERT INTO case_breaks (case_id, break_id, created_at)
+		 VALUES ($1::uuid, $2::uuid, '2026-01-02T00:00:00Z')`,
+		scenario.CaseID, scenario.BreakID); err != nil {
+		t.Fatalf("attach composite break to case: %v", err)
+	}
+	return scenario
+}
+
+// addPhantomLedgerBreak attaches a ledger-only break naming a UUID that has no
+// ledger_txns row. Breaks do not foreign-key their ID arrays, so get_case can
+// legitimately return evidence for a record that later fails existence
+// validation.
+func (w *proposalWorld) addPhantomLedgerBreak(t *testing.T, scenario *proposalScenario, ledgerTxnID string) {
+	t.Helper()
+	seq := integrationSeq.Add(1)
+	var breakID string
+	if err := w.DB.Pool.QueryRow(context.Background(),
+		`INSERT INTO breaks
+		     (signature, scope_id, match_run_id, side, ledger_txn_ids, external_refs,
+		      delta_minor, currency, status, detected_at)
+		 VALUES ($1, $2::uuid, $3::uuid, 'ledger_only', ARRAY[$4::uuid],
+		         '[]'::jsonb, 1000, 'USD', 'open', '2026-01-02T00:00:00Z')
+		 RETURNING id::text`,
+		integrationSignature(fmt.Sprintf("proposal-it-phantom-break-%d", seq)),
+		w.ScopeID, w.MatchRunID, ledgerTxnID).Scan(&breakID); err != nil {
+		t.Fatalf("create phantom break: %v", err)
+	}
+	if _, err := w.DB.Pool.Exec(context.Background(),
+		`INSERT INTO case_breaks (case_id, break_id, created_at)
+		 VALUES ($1::uuid, $2::uuid, '2026-01-02T00:00:00Z')`,
+		scenario.CaseID, breakID); err != nil {
+		t.Fatalf("attach phantom break to case: %v", err)
+	}
+}
+
+// insertIntegrationLedgerTxnOnAccounts writes one balanced transaction whose
+// entries never touch the reconciliation scope's ledger account. It models a
+// ledger leg from another scope.
+func insertIntegrationLedgerTxnOnAccounts(t *testing.T, d *testdb.DB, debitCode, creditCode string, amountMinor int64) string {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin out-of-scope ledger txn: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+
+	seq := integrationSeq.Add(1)
+	var txnID, debitID, creditID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO ledger_txns
+		     (value_date, kind, idempotency_key, request_hash, description, period_id)
+		 VALUES ('2026-01-02', 'charge', $1, $2, 'proposal out-of-scope fixture', $3::uuid)
+		 RETURNING id::text`,
+		fmt.Sprintf("proposal-it-out-of-scope-txn-%d", seq), fmt.Sprintf("hash-out-of-scope-%d", seq),
+		integrationPeriodID).Scan(&txnID); err != nil {
+		t.Fatalf("create out-of-scope ledger txn: %v", err)
+	}
+	for _, item := range []struct {
+		code string
+		id   *string
+	}{{debitCode, &debitID}, {creditCode, &creditID}} {
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM accounts WHERE code = $1`, item.code).Scan(item.id); err != nil {
+			t.Fatalf("load account %s: %v", item.code, err)
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO ledger_entries
+		     (txn_id, account_id, direction, amount_minor, currency, posted_at)
+		 VALUES ($1::uuid, $2::uuid, 'debit', $3, 'USD', '2026-01-02T00:00:00Z'),
+		        ($1::uuid, $4::uuid, 'credit', $3, 'USD', '2026-01-02T00:00:00Z')`,
+		txnID, debitID, amountMinor, creditID); err != nil {
+		t.Fatalf("create out-of-scope entries: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit out-of-scope ledger txn: %v", err)
+	}
+	return txnID
+}
+
 func (w *proposalWorld) insertRun(t *testing.T, caseID string) string {
 	t.Helper()
 	var runID string
@@ -356,6 +466,31 @@ func (s *proposalSession) seedEvidence() []string {
 		s.t.Fatal("get_case returned no evidence refs")
 	}
 	return refs
+}
+
+// seedLedgerEvidence fetches the case and then each referenced ledger
+// transaction through the real read tool so the run's tool_calls rows authorize
+// the citation.
+func (s *proposalSession) seedLedgerEvidence(txnIDs ...string) []string {
+	s.t.Helper()
+	s.seedEvidence()
+	for _, txnID := range txnIDs {
+		envelope := s.call("lookup_ledger_txn", map[string]any{"txn_id": txnID})
+		if code := integrationEnvelopeErrorCode(envelope); code != "" {
+			s.t.Fatalf("lookup_ledger_txn %s error = %q: %v", txnID, code, envelope)
+		}
+	}
+	return s.run.RetrievedRefs()
+}
+
+func withoutRef(refs []string, drop string) []string {
+	filtered := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref != drop {
+			filtered = append(filtered, ref)
+		}
+	}
+	return filtered
 }
 
 func (s *proposalSession) baseArgs(evidence []string) map[string]any {
@@ -640,6 +775,275 @@ func TestProposalFlowHappyPaths(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (w *proposalWorld) accountID(t *testing.T, code string) string {
+	t.Helper()
+	var id string
+	if err := w.DB.Pool.QueryRow(context.Background(),
+		`SELECT id::text FROM accounts WHERE code = $1`, code).Scan(&id); err != nil {
+		t.Fatalf("load account %s: %v", code, err)
+	}
+	return id
+}
+
+type linkPayload struct {
+	LedgerTxnID  *string  `json:"ledger_txn_id"`
+	LedgerTxnIDs []string `json:"ledger_txn_ids"`
+	ExternalRef  string   `json:"external_ref"`
+}
+
+func decodeLinkPayload(t *testing.T, row storedProposal) linkPayload {
+	t.Helper()
+	var payload linkPayload
+	if err := json.Unmarshal(row.Payload, &payload); err != nil {
+		t.Fatalf("decode link payload: %v\n%s", err, row.Payload)
+	}
+	return payload
+}
+
+// TestProposalCompositeLink covers the M2-08 follow-up: an exact set of ledger
+// transaction IDs is validated and stored, while singular links keep their old
+// payload shape.
+func TestProposalCompositeLink(t *testing.T) {
+	world := newProposalWorld(t)
+	clearingID := world.accountID(t, accountClearing)
+
+	t.Run("three legs records exact set", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		ids := []string{
+			insertIntegrationLedgerTxn(t, world.DB, clearingID),
+			insertIntegrationLedgerTxn(t, world.DB, clearingID),
+			insertIntegrationLedgerTxn(t, world.DB, clearingID),
+		}
+		refs := session.seedLedgerEvidence(ids...)
+		args := session.baseArgs(refs)
+		args["ledger_txn_ids"] = []string{ids[2], ids[0], ids[1]}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != "" {
+			t.Fatalf("propose_link error = %q: %v", code, envelope)
+		}
+		if status := integrationEnvelopeData(t, envelope)["status"]; status != "recorded" {
+			t.Fatalf("status = %v, want recorded", status)
+		}
+		row := world.loadProposalByRun(t, session.runID)
+		if row.Type != "link" {
+			t.Fatalf("stored type = %q, want link", row.Type)
+		}
+		payload := decodeLinkPayload(t, row)
+		want := append([]string(nil), ids...)
+		sort.Strings(want)
+		if !slices.Equal(payload.LedgerTxnIDs, want) {
+			t.Fatalf("stored ledger set = %v, want %v", payload.LedgerTxnIDs, want)
+		}
+		if payload.LedgerTxnID != nil {
+			t.Fatalf("plural payload contains singular ledger_txn_id: %v", *payload.LedgerTxnID)
+		}
+		if payload.ExternalRef != world.ExternalRef {
+			t.Fatalf("external_ref = %q, want %q", payload.ExternalRef, world.ExternalRef)
+		}
+		state, err := proposal.ResolveState(context.Background(), world.Agent, scenario.CaseID, refs)
+		if err != nil {
+			t.Fatalf("ResolveState(): %v", err)
+		}
+		hash, err := proposal.Hash(state)
+		if err != nil {
+			t.Fatalf("Hash(): %v", err)
+		}
+		if row.StateHash != hash {
+			t.Fatalf("stored state_hash = %q, want %q", row.StateHash, hash)
+		}
+	})
+
+	t.Run("one-element plural is stored plural", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		txnID := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		refs := session.seedLedgerEvidence(txnID)
+		args := session.baseArgs(refs)
+		args["ledger_txn_ids"] = []string{txnID}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != "" {
+			t.Fatalf("propose_link error = %q: %v", code, envelope)
+		}
+		payload := decodeLinkPayload(t, world.loadProposalByRun(t, session.runID))
+		if payload.LedgerTxnID != nil {
+			t.Fatal("one-element plural payload contains ledger_txn_id")
+		}
+		if !slices.Equal(payload.LedgerTxnIDs, []string{txnID}) {
+			t.Fatalf("one-element plural set = %v, want [%s]", payload.LedgerTxnIDs, txnID)
+		}
+	})
+
+	t.Run("singular payload unchanged", func(t *testing.T) {
+		scenario := world.newScenario(t)
+		session := world.newSession(t, scenario)
+		refs := session.seedEvidence()
+		args := session.baseArgs(refs)
+		args["ledger_txn_id"] = world.LedgerTxnID
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != "" {
+			t.Fatalf("propose_link error = %q: %v", code, envelope)
+		}
+		payload := decodeLinkPayload(t, world.loadProposalByRun(t, session.runID))
+		if payload.LedgerTxnID == nil || *payload.LedgerTxnID != world.LedgerTxnID {
+			t.Fatalf("singular payload = %+v", payload)
+		}
+		if payload.LedgerTxnIDs != nil {
+			t.Fatalf("singular payload contains ledger_txn_ids: %v", payload.LedgerTxnIDs)
+		}
+	})
+
+	t.Run("duplicate plural rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		txnID := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		refs := session.seedLedgerEvidence(txnID)
+		args := session.baseArgs(refs)
+		args["ledger_txn_ids"] = []string{txnID, txnID}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeInvalidArguments {
+			t.Fatalf("error = %q, want invalid_arguments: %v", code, envelope)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
+
+	t.Run("case-variant duplicate rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		txnID := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		refs := session.seedLedgerEvidence(txnID)
+		args := session.baseArgs(refs)
+		args["ledger_txn_ids"] = []string{strings.ToUpper(txnID), txnID}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeInvalidArguments {
+			t.Fatalf("error = %q, want invalid_arguments: %v", code, envelope)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
+
+	t.Run("leg not fetched rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		txnID := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		refs := session.seedEvidence()
+		args := session.baseArgs(append(refs, "ledger_txn:"+txnID))
+		args["ledger_txn_ids"] = []string{txnID}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeEvidenceNotRetrieved {
+			t.Fatalf("error = %q, want evidence_not_retrieved: %v", code, envelope)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
+
+	t.Run("leg fetched but not cited rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		txnID := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		refs := session.seedLedgerEvidence(txnID)
+		args := session.baseArgs(withoutRef(refs, "ledger_txn:"+txnID))
+		args["ledger_txn_ids"] = []string{txnID}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeBusinessRuleViolation {
+			t.Fatalf("error = %q, want business_rule_violation: %v", code, envelope)
+		}
+		if message := integrationEnvelopeErrorMessage(envelope); !strings.Contains(message, "not_in_evidence") {
+			t.Fatalf("message = %q, want not_in_evidence", message)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
+
+	t.Run("external record not in case break rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		txnID := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		session.seedLedgerEvidence(txnID)
+		lookup := session.call("lookup_external_record", map[string]any{"source": "psp_a", "record_id": "rec-2"})
+		if code := integrationEnvelopeErrorCode(lookup); code != "" {
+			t.Fatalf("lookup_external_record error = %q: %v", code, lookup)
+		}
+		args := session.baseArgs(session.run.RetrievedRefs())
+		args["ledger_txn_ids"] = []string{txnID}
+		args["external_ref"] = "ext:psp_a:rec-2"
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeBusinessRuleViolation {
+			t.Fatalf("error = %q, want business_rule_violation: %v", code, envelope)
+		}
+		if message := integrationEnvelopeErrorMessage(envelope); !strings.Contains(message, "not_in_case_scope") {
+			t.Fatalf("message = %q, want not_in_case_scope", message)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
+
+	t.Run("other scope leg rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		session := world.newSession(t, scenario)
+		inScope := insertIntegrationLedgerTxn(t, world.DB, clearingID)
+		outOfScope := insertIntegrationLedgerTxnOnAccounts(t, world.DB, accountRevenue, accountSuspense, 1000)
+		refs := session.seedLedgerEvidence(inScope, outOfScope)
+		args := session.baseArgs(refs)
+		args["ledger_txn_ids"] = []string{inScope, outOfScope}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeBusinessRuleViolation {
+			t.Fatalf("error = %q, want business_rule_violation: %v", code, envelope)
+		}
+		if message := integrationEnvelopeErrorMessage(envelope); !strings.Contains(message, "not_in_case_scope") {
+			t.Fatalf("message = %q, want not_in_case_scope", message)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
+
+	t.Run("nonexistent leg rejected", func(t *testing.T) {
+		scenario := world.newCompositeScenario(t, "rec-1")
+		phantomID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		world.addPhantomLedgerBreak(t, scenario, phantomID)
+		session := world.newSession(t, scenario)
+		refs := session.seedEvidence()
+		args := session.baseArgs(refs)
+		args["ledger_txn_ids"] = []string{phantomID}
+		args["external_ref"] = world.ExternalRef
+
+		envelope := session.call("propose_link", args)
+		if code := integrationEnvelopeErrorCode(envelope); code != tools.CodeBusinessRuleViolation {
+			t.Fatalf("error = %q, want business_rule_violation: %v", code, envelope)
+		}
+		if message := integrationEnvelopeErrorMessage(envelope); !strings.Contains(message, "ledger_txn_not_found") {
+			t.Fatalf("message = %q, want ledger_txn_not_found", message)
+		}
+		if count := world.proposalCountByRun(t, session.runID); count != 0 {
+			t.Fatalf("rejected proposal wrote %d rows", count)
+		}
+	})
 }
 
 // TestProposalExactReplayAndSecondProposal covers FIN-12: the same request in

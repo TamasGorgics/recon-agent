@@ -86,6 +86,120 @@ func TestIdempotencyKey(t *testing.T) {
 	}
 }
 
+func linkKey(t *testing.T, req recordRequest, confidence, rationale string, evidence []string) (string, map[string]any) {
+	t.Helper()
+	payload, err := buildPayload(req)
+	if err != nil {
+		t.Fatalf("buildPayload(): %v", err)
+	}
+	_, fixed, err := parseConfidence(json.Number(confidence))
+	if err != nil {
+		t.Fatalf("parseConfidence(): %v", err)
+	}
+	key, err := idempotencyKey(unitCaseID, unitRunID, "link", payload, rationale, evidence, fixed, "")
+	if err != nil {
+		t.Fatalf("idempotencyKey(): %v", err)
+	}
+	return key, payload
+}
+
+func linkEvidence(req recordRequest) []string {
+	refs := []string{"ext:psp_a:rec-1"}
+	if req.linkSet {
+		for _, id := range req.ledgerTxnIDs {
+			refs = append(refs, "ledger_txn:"+id)
+		}
+		return refs
+	}
+	return append(refs, "ledger_txn:"+req.ledgerTxnID)
+}
+
+// TestLinkSingularGolden pins the pre-composite singular payload and
+// idempotency key byte for byte. The M2-08 plural form must not change them.
+//
+// covers: FIN-12
+func TestLinkSingularGolden(t *testing.T) {
+	t.Parallel()
+	req := recordRequest{kind: "link", ledgerTxnID: unitTxnID, externalRef: "ext:psp_a:rec-1"}
+	key, payload := linkKey(t, req, "0.87", "one payout covers three ledger charges",
+		[]string{"ext:psp_a:rec-1", "ledger_txn:" + unitTxnID, "case:" + unitCaseID})
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	wantPayload := `{"external_ref":"ext:psp_a:rec-1","ledger_txn_id":"` + unitTxnID + `"}`
+	if string(encoded) != wantPayload {
+		t.Fatalf("singular payload = %s, want %s", encoded, wantPayload)
+	}
+	const wantKey = "a6e438042fb990aa8d07ed0369a97e641f3a60a9022e612294169d28d51b3a72"
+	if key != wantKey {
+		t.Fatalf("singular key = %s, want pre-change golden %s", key, wantKey)
+	}
+}
+
+// TestLinkPluralKeySetSemantics proves the plural payload/key is the canonical
+// exact set: input order is irrelevant, a one-element plural is a distinct wire
+// form, and changing one leg changes the key.
+//
+// covers: FIN-12
+func TestLinkPluralKeySetSemantics(t *testing.T) {
+	t.Parallel()
+	first := "77777777-7777-4777-8777-777777777777"
+	second := "88888888-8888-4888-8888-888888888888"
+	third := "99999999-9999-4999-8999-999999999998"
+
+	ordered := recordRequest{kind: "link", linkSet: true,
+		ledgerTxnIDs: []string{first, second, third}, externalRef: "ext:psp_a:rec-1"}
+	reordered := recordRequest{kind: "link", linkSet: true,
+		ledgerTxnIDs: []string{third, first, second}, externalRef: "ext:psp_a:rec-1"}
+	orderedKey, orderedPayload := linkKey(t, ordered, "0.87", "one payout covers three ledger charges", linkEvidence(ordered))
+	reorderedKey, reorderedPayload := linkKey(t, reordered, "0.87", "one payout covers three ledger charges", linkEvidence(reordered))
+	if orderedKey != reorderedKey {
+		t.Fatalf("leg order changed the key: %s != %s", orderedKey, reorderedKey)
+	}
+	orderedJSON, _ := json.Marshal(orderedPayload)
+	reorderedJSON, _ := json.Marshal(reorderedPayload)
+	if string(orderedJSON) != string(reorderedJSON) {
+		t.Fatalf("leg order changed the payload: %s != %s", orderedJSON, reorderedJSON)
+	}
+	if ids := orderedPayload["ledger_txn_ids"].([]string); len(ids) != 3 ||
+		ids[0] != first || ids[1] != second || ids[2] != third {
+		t.Fatalf("plural payload is not sorted: %v", orderedPayload["ledger_txn_ids"])
+	}
+	if ordered.ledgerTxnIDs[0] != first {
+		t.Fatal("buildPayload mutated the request order")
+	}
+
+	singular := recordRequest{kind: "link", ledgerTxnID: first, externalRef: "ext:psp_a:rec-1"}
+	singularKey, singularPayload := linkKey(t, singular, "0.87", "one payout covers three ledger charges", linkEvidence(singular))
+	one := recordRequest{kind: "link", linkSet: true,
+		ledgerTxnIDs: []string{first}, externalRef: "ext:psp_a:rec-1"}
+	oneKey, onePayload := linkKey(t, one, "0.87", "one payout covers three ledger charges", linkEvidence(one))
+	if singularKey == oneKey {
+		t.Fatal("singular and one-element plural collapsed to the same key")
+	}
+	if _, ok := singularPayload["ledger_txn_ids"]; ok {
+		t.Fatal("singular payload contains ledger_txn_ids")
+	}
+	if ids, ok := onePayload["ledger_txn_ids"].([]string); !ok || len(ids) != 1 || ids[0] != first {
+		t.Fatalf("one-element plural payload = %v", onePayload)
+	}
+
+	changed := recordRequest{kind: "link", linkSet: true,
+		ledgerTxnIDs: []string{first, second, third, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+		externalRef:  "ext:psp_a:rec-1"}
+	changedKey, _ := linkKey(t, changed, "0.87", "one payout covers three ledger charges", linkEvidence(changed))
+	if orderedKey == changedKey {
+		t.Fatal("adding one leg did not change the key")
+	}
+
+	reversedEvidence := []string{"ledger_txn:" + third, "ledger_txn:" + first, "ext:psp_a:rec-1", "ledger_txn:" + second}
+	evidenceKey, _ := linkKey(t, ordered, "0.87", "one payout covers three ledger charges", reversedEvidence)
+	if orderedKey != evidenceKey {
+		t.Fatal("evidence order changed the key")
+	}
+}
+
 func TestParseConfidence(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

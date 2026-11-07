@@ -152,9 +152,9 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M2-09 | Agent loop and prompts | L | M2-02, M2-03, M2-05, M2-06, M2-07, M2-08 |
 | ☑ | M2-10 | Case worker | M | M1-14, M2-09, M2-01 |
 | ☑ | M2-11 | Agent CLI, smoke tests, and M2 gate | S | M2-09, M2-10, M1-11 |
-| ☐ | M3-01 | Eval schema, datasets, splits | M | M1-11 |
+| ☑ | M3-01 | Eval schema, datasets, splits | M | M1-11 |
 | ☐ | M3-02 | Scenario sandbox | M | M3-01, M2-09 |
-| ☐ | M3-03 | Scorers | L | M3-01, M2-08 |
+| ☑ | M3-03 | Scorers | L | M3-01, M2-08 |
 | ☐ | M3-04 | Eval runner | M | M3-02, M3-03, M2-09 |
 | ☐ | M3-05 | Reports | M | M3-04 |
 | ☐ | M3-06 | Component evals and calibration | M | M1-16, M3-03, M3-04 |
@@ -575,6 +575,10 @@ Cassettes: the first recording of model responses needs `OPENCODE_API_KEY`. Afte
 **Done when**
 - Table-driven rejections, each recorded and each a structured error: unbalanced entry, evidence never fetched, second proposal in a run, wrong currency, non-allowlisted account, adjustment above the delta, confidence outside 0 to 1.
 - A partial-index conflict surfaces as `ErrActiveProposalExists`.
+
+**M3 piece A prerequisite:** M3 piece A extends `propose_link` with an
+exact-set `ledger_txn_ids` form and re-records the M2-11 gate cassettes once
+(12 interactions; see Q-36).
 
 ### M2-09 · Agent loop and prompts · L
 **Spec:** sections 6.1, 6.4, 9 · **Needs:** M2-02, M2-03, M2-05, M2-06, M2-07, M2-08

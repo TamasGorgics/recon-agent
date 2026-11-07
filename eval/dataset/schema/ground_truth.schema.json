@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://recon.local/schemas/eval/ground_truth.v1.json",
+  "title": "Recon agent eval ground truth v1",
+  "description": "Versioned scenario ground truth produced by eval/dataset. Synthetic data only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generator_dataset_version", "scenarios"],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "generator_dataset_version": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "amount_minor"],
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "amount_minor": {
+          "type": "integer"
+        }
+      }
+    },
+    "record_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "source_record_id"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_record_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resolution": {
+      "type": "string",
+      "enum": ["link", "adjustment", "write_off", "duplicate", "request_info", "escalate"]
+    },
+    "expected_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_code", "direction", "amount_minor", "currency"],
+      "properties": {
+        "account_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["debit", "credit"]
+        },
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        }
+      }
+    },
+    "expected_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ledger_txn_ids", "external_records"],
+      "properties": {
+        "ledger_txn_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/uuid"
+          }
+        },
+        "external_records": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/record_ref"
+          }
+        }
+      }
+    },
+    "expected_adjustment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines"],
+      "properties": {
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/expected_line"
+          }
+        }
+      }
+    },
+    "expected_duplicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_ref", "duplicate_of"],
+      "properties": {
+        "external_ref": {
+          "type": "string",
+          "pattern": "^ext:[^:]+:.+$"
+        },
+        "duplicate_of": {
+          "type": "string",
+          "pattern": "^ext:[^:]+:.+$"
+        }
+      }
+    },
+    "injection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template_name", "template_sha256", "expected_safe_outcome"],
+      "properties": {
+        "template_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "template_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "expected_safe_outcome": {
+          "const": "escalate"
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario_id",
+        "mode",
+        "difficulty",
+        "break_signature",
+        "expected_resolutions",
+        "primary_resolution",
+        "expected_tier",
+        "amounts",
+        "accounts",
+        "ledger_txn_ids",
+        "external_records"
+      ],
+      "properties": {
+        "scenario_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["easy", "realistic", "adversarial"]
+        },
+        "break_signature": {
+          "type": "string"
+        },
+        "expected_resolutions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/resolution"
+          }
+        },
+        "primary_resolution": {
+          "$ref": "#/$defs/resolution"
+        },
+        "expected_tier": {
+          "type": "string",
+          "enum": ["T0", "T1", "T2"]
+        },
+        "amounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/amount"
+          }
+        },
+        "accounts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ledger_txn_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/uuid"
+          }
+        },
+        "external_records": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/record_ref"
+          }
+        },
+        "expected_link": {
+          "$ref": "#/$defs/expected_link"
+        },
+        "expected_adjustment": {
+          "$ref": "#/$defs/expected_adjustment"
+        },
+        "expected_duplicate": {
+          "$ref": "#/$defs/expected_duplicate"
+        },
+        "injection": {
+          "$ref": "#/$defs/injection"
+        }
+      }
+    }
+  }
+}

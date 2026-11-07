@@ -39,7 +39,7 @@ type linkTool struct{ deps Deps }
 func (*linkTool) Name() string { return "propose_link" }
 
 func (*linkTool) Description() string {
-	return "Propose linking a ledger transaction to an external record. Does NOT post to the ledger."
+	return "Propose linking a ledger transaction, or an exact set of ledger transactions, to an external record. Does NOT post to the ledger."
 }
 
 func (*linkTool) InputSchema() json.RawMessage { return schemaLink }
@@ -47,22 +47,32 @@ func (*linkTool) InputSchema() json.RawMessage { return schemaLink }
 func (t *linkTool) Call(ctx context.Context, run *tools.RunContext, args json.RawMessage) (tools.Result, error) {
 	var request struct {
 		commonArgs
-		LedgerTxnID string `json:"ledger_txn_id"`
-		ExternalRef string `json:"external_ref"`
+		LedgerTxnID  *string   `json:"ledger_txn_id"`
+		LedgerTxnIDs *[]string `json:"ledger_txn_ids"`
+		ExternalRef  string    `json:"external_ref"`
 	}
 	if err := decodeArguments(args, &request); err != nil {
 		return tools.Result{}, err
 	}
-	return t.deps.record(ctx, run, recordRequest{
+	if (request.LedgerTxnID == nil) == (request.LedgerTxnIDs == nil) {
+		return tools.Result{}, invalidArgumentsError("exactly one of ledger_txn_id or ledger_txn_ids is required")
+	}
+	record := recordRequest{
 		kind:        "link",
 		caseID:      request.CaseID,
 		rationale:   request.Rationale,
 		evidence:    request.Evidence,
 		confidence:  request.Confidence,
 		pattern:     request.pattern(),
-		ledgerTxnID: request.LedgerTxnID,
 		externalRef: request.ExternalRef,
-	})
+	}
+	if request.LedgerTxnID != nil {
+		record.ledgerTxnID = *request.LedgerTxnID
+	} else {
+		record.ledgerTxnIDs = *request.LedgerTxnIDs
+		record.linkSet = true
+	}
+	return t.deps.record(ctx, run, record)
 }
 
 // ---------------------------------------------------------------------------

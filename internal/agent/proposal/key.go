@@ -16,6 +16,14 @@ import (
 func buildPayload(req recordRequest) (map[string]any, error) {
 	switch req.kind {
 	case "link":
+		if req.linkSet {
+			ids := append([]string(nil), req.ledgerTxnIDs...)
+			sort.Strings(ids)
+			return map[string]any{
+				"ledger_txn_ids": ids,
+				"external_ref":   req.externalRef,
+			}, nil
+		}
 		return map[string]any{
 			"ledger_txn_id": req.ledgerTxnID,
 			"external_ref":  req.externalRef,
