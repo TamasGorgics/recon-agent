@@ -8,7 +8,7 @@ import (
 const uuidSchemaPattern = `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`
 
 var (
-	schemaLink         = buildProposalSchema(linkProperties(), []string{"ledger_txn_id", "external_ref"}, true)
+	schemaLink         = buildLinkSchema()
 	schemaAdjustment   = buildProposalSchema(linesProperties(), []string{"lines"}, true)
 	schemaWriteOff     = buildProposalSchema(linesProperties(), []string{"lines"}, true)
 	schemaDuplicate    = buildProposalSchema(duplicateProperties(), []string{"external_ref"}, false)
@@ -21,6 +21,13 @@ var (
 	evidenceSchema     = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "canonical refs returned by successful tool calls in this run"}
 	externalRefSchema  = map[string]any{"type": "string", "minLength": 1, "description": "canonical external evidence reference ext:<source>:<source_record_id>"}
 	ledgerTxnIDSchema  = map[string]any{"type": "string", "pattern": uuidSchemaPattern}
+	ledgerTxnIDsSchema = map[string]any{
+		"type":        "array",
+		"minItems":    1,
+		"uniqueItems": true,
+		"items":       map[string]any{"type": "string", "pattern": uuidSchemaPattern},
+		"description": "exact set of ledger transaction IDs covered by external_ref; mutually exclusive with ledger_txn_id",
+	}
 	accountCodeSchema  = map[string]any{"type": "string", "minLength": 1}
 	directionSchema    = map[string]any{"type": "string", "enum": []string{"debit", "credit"}}
 	amountMinorSchema  = map[string]any{"type": "integer", "minimum": 1}
@@ -51,6 +58,52 @@ func linkProperties() map[string]any {
 	properties["ledger_txn_id"] = ledgerTxnIDSchema
 	properties["external_ref"] = externalRefSchema
 	return properties
+}
+
+func linkPluralProperties() map[string]any {
+	properties := commonProperties()
+	properties["ledger_txn_ids"] = ledgerTxnIDsSchema
+	properties["external_ref"] = externalRefSchema
+	return properties
+}
+
+// buildLinkSchema exposes the singular and plural wire forms. Each oneOf branch
+// is a closed object, so exactly one form is accepted; the runtime validator
+// repeats the check because it is the authoritative rule. Both top-level
+// properties are published so the model can see the mutually exclusive forms.
+func buildLinkSchema() json.RawMessage {
+	base := []string{"case_id", "rationale", "evidence", "confidence"}
+	singular := linkProperties()
+	singular["pattern"] = map[string]any{"type": "string", "enum": patternEnumValues}
+	plural := linkPluralProperties()
+	plural["pattern"] = map[string]any{"type": "string", "enum": patternEnumValues}
+	return mustMarshal(map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"description":          "Link one external record to one ledger transaction (ledger_txn_id) or an exact set of ledger transactions (ledger_txn_ids). Provide exactly one of the two forms.",
+		"oneOf": []any{
+			map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             append(base, "ledger_txn_id", "external_ref"),
+				"properties":           singular,
+			},
+			map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             append(base, "ledger_txn_ids", "external_ref"),
+				"properties":           plural,
+			},
+		},
+		"properties": func() map[string]any {
+			properties := commonProperties()
+			properties["ledger_txn_id"] = ledgerTxnIDSchema
+			properties["ledger_txn_ids"] = ledgerTxnIDsSchema
+			properties["external_ref"] = externalRefSchema
+			properties["pattern"] = map[string]any{"type": "string", "enum": patternEnumValues}
+			return properties
+		}(),
+	})
 }
 
 func linesProperties() map[string]any {

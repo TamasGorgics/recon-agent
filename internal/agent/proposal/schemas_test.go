@@ -3,6 +3,7 @@ package proposal
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,6 +23,13 @@ func proposalBaseArgs() map[string]any {
 func linkArgs() map[string]any {
 	args := proposalBaseArgs()
 	args["ledger_txn_id"] = unitTxnID
+	args["external_ref"] = "ext:psp_a:rec-1"
+	return args
+}
+
+func pluralLinkArgs(ids ...string) map[string]any {
+	args := proposalBaseArgs()
+	args["ledger_txn_ids"] = ids
 	args["external_ref"] = "ext:psp_a:rec-1"
 	return args
 }
@@ -67,6 +75,12 @@ func TestProposalSchemaRejections(t *testing.T) {
 		args map[string]any
 	}{
 		{name: "unknown field", tool: "propose_link", args: withField(linkArgs(), "extra", true)},
+		{name: "link both forms", tool: "propose_link", args: withField(linkArgs(), "ledger_txn_ids", []string{unitTxnID})},
+		{name: "link neither form", tool: "propose_link", args: deleteField(linkArgs(), "ledger_txn_id")},
+		{name: "link empty plural", tool: "propose_link", args: pluralLinkArgs()},
+		{name: "link duplicate plural", tool: "propose_link", args: pluralLinkArgs(unitTxnID, unitTxnID)},
+		{name: "link case-variant duplicate plural", tool: "propose_link", args: pluralLinkArgs(unitTxnID, strings.ToUpper(unitTxnID))},
+		{name: "link non-UUID plural", tool: "propose_link", args: pluralLinkArgs("not-a-uuid")},
 		{name: "fractional amount", tool: "propose_adjustment", args: withField(adjustmentArgs(), "lines", []map[string]any{
 			{"account_code": "fees_expense_usd", "direction": "debit", "amount_minor": 12.5, "currency": "USD"},
 			{"account_code": "suspense_usd", "direction": "credit", "amount_minor": 12.5, "currency": "USD"},
@@ -143,6 +157,8 @@ func TestProposalSchemasAcceptValidShapes(t *testing.T) {
 		args map[string]any
 	}{
 		{tool: "propose_link", args: linkArgs()},
+		{tool: "propose_link", args: pluralLinkArgs(unitTxnID)},
+		{tool: "propose_link", args: pluralLinkArgs(unitTxnID, otherCaseID, unitBatchID)},
 		{tool: "propose_adjustment", args: adjustmentArgs()},
 		{tool: "propose_write_off", args: adjustmentArgs()},
 		{tool: "mark_duplicate", args: duplicateArgs()},

@@ -99,3 +99,9 @@ non-blocking findings that do not change approved scope belong here.
 
 OQ-1..OQ-4 keep their M2-09/M2-10 resolutions above; M2-11 adds no new
 blocking open question.
+
+## M2-08 prerequisites: composite link and cassette re-record (Q-36)
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-36 | **RESOLVED (M2-08 prereq):** `propose_link` accepts an exact-set `ledger_txn_ids` form in addition to `ledger_txn_id`, with a separately keyed canonical payload (sorted, lowercased, de-duplicated) and every leg required to be in the same source+currency scope as the external record; the singular payload/key is byte-identical to the pre-change shape. The schema change invalidated the M2-11 gate cassette keys, so the 11 committed interactions were deliberately re-recorded. The live provider produced **12** interactions: `fee_variance` 3 → 4 (one extra `get_settlement_batch` verification step before proposing), while `reference_typo` stayed 5 and `duplicate_charge` stayed 3. The 12-cassette set passes `TestCommittedCassettes` and `make demo-m2` offline (adjustment/link/duplicate plus outage), and hygiene checks found no key, session, authorization material, or real PII. `wantM2CassetteFiles` was explicitly updated 11 → 12; no recorded response was hand-edited and no test was weakened. | M2-08 prereq / M2-11 gate | Recorded as the accepted 12-interaction deviation; update the pin and this row together on any future re-record. |

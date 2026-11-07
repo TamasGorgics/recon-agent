@@ -190,6 +190,97 @@ func TestCanonicalStateSensitivity(t *testing.T) {
 	}
 }
 
+// TestCanonicalStateCompositeLegs proves every cited composite leg appears in
+// the hashed state and that leg/record order cannot change the hash.
+func TestCanonicalStateCompositeLegs(t *testing.T) {
+	t.Parallel()
+	legs := []string{
+		"77777777-7777-4777-8777-777777777777",
+		"88888888-8888-4888-8888-888888888888",
+		"99999999-9999-4999-8999-999999999998",
+	}
+	legRecord := func(id string, amount int64) RecordState {
+		return RecordState{
+			Ref:  "ledger_txn:" + id,
+			Kind: "ledger_txn",
+			Fields: map[string]any{
+				"kind":       "charge",
+				"value_date": "2026-01-02",
+				"entries": []map[string]any{
+					{"account_code": "clearing_usd", "direction": "debit", "amount_minor": amount, "currency": "USD"},
+					{"account_code": "revenue_usd", "direction": "credit", "amount_minor": amount, "currency": "USD"},
+				},
+			},
+		}
+	}
+	base := State{
+		Case: CaseState{ID: unitCaseID, Status: "open"},
+		Breaks: []BreakState{{
+			ID:           "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+			Signature:    strings.Repeat("b", 64),
+			Side:         "external_only",
+			Status:       "open",
+			DeltaMinor:   -3000,
+			Currency:     "USD",
+			LedgerTxnIDs: []string{},
+			ExternalRefs: []string{"ext:psp_a:rec-1"},
+		}},
+		Records: []RecordState{
+			legRecord(legs[0], 1000),
+			legRecord(legs[1], 1001),
+			legRecord(legs[2], 1002),
+			{
+				Ref:  "ext:psp_a:rec-1",
+				Kind: "ext",
+				Fields: map[string]any{
+					"source":           "psp_a",
+					"source_record_id": "rec-1",
+					"amount_minor":     int64(-3000),
+					"currency":         "USD",
+				},
+			},
+			{Ref: "case:" + unitCaseID, Kind: "case", Fields: map[string]any{
+				"id": unitCaseID, "status": "open", "resolution_type": "",
+			}},
+		},
+	}
+	baseHash, err := Hash(base)
+	if err != nil {
+		t.Fatalf("Hash(base): %v", err)
+	}
+	canonical, err := Canonical(base)
+	if err != nil {
+		t.Fatalf("Canonical(base): %v", err)
+	}
+	for _, leg := range legs {
+		if !bytes.Contains(canonical, []byte(`"ledger_txn:`+leg+`"`)) {
+			t.Fatalf("canonical state is missing cited leg %s: %s", leg, canonical)
+		}
+	}
+
+	reordered := base
+	reordered.Records = []RecordState{
+		base.Records[4], base.Records[2], base.Records[0], base.Records[3], base.Records[1],
+	}
+	reorderedHash, err := Hash(reordered)
+	if err != nil {
+		t.Fatalf("Hash(reordered): %v", err)
+	}
+	if baseHash != reorderedHash {
+		t.Fatal("record order changed the composite state hash")
+	}
+
+	dropped := base
+	dropped.Records = []RecordState{base.Records[0], base.Records[1], base.Records[3], base.Records[4]}
+	droppedHash, err := Hash(dropped)
+	if err != nil {
+		t.Fatalf("Hash(dropped): %v", err)
+	}
+	if baseHash == droppedHash {
+		t.Fatal("dropping a cited composite leg did not change the state hash")
+	}
+}
+
 func TestEmptyStateIsStable(t *testing.T) {
 	t.Parallel()
 	empty := State{Case: CaseState{ID: unitCaseID, Status: "open"}}

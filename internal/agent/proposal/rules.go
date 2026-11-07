@@ -199,6 +199,30 @@ func externalRefInCaseScope(externalRef string, breaks []BreakState) bool {
 	return false
 }
 
+// ledgerTxnInScope reports whether the ledger transaction has an entry on the
+// reconciliation scope ledger account for the external record's source and
+// currency. Composite legs need not be attached to a case break; they only need
+// to belong to the same reconciliation scope as the external record.
+func ledgerTxnInScope(ctx context.Context, q tools.Queryer, ledgerTxnID, source, recordID string) (bool, error) {
+	var inScope bool
+	if err := q.QueryRow(ctx,
+		`SELECT EXISTS (
+		    SELECT 1
+		      FROM v_agent_external_records er
+		      JOIN v_agent_ledger_txns t ON t.id = $1
+		      JOIN v_agent_ledger_entries le ON le.txn_id = t.id
+		      JOIN v_agent_scopes s ON s.ledger_account_id = le.account_id
+		     WHERE er.source = $2
+		       AND er.source_record_id = $3
+		       AND s.source = er.source
+		       AND s.currency = er.currency
+		       AND le.currency = er.currency
+		)`, ledgerTxnID, source, recordID).Scan(&inScope); err != nil {
+		return false, fmt.Errorf("proposal: check ledger transaction scope: %w", err)
+	}
+	return inScope, nil
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
