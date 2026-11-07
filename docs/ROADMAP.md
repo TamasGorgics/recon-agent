@@ -154,7 +154,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M2-11 | Agent CLI, smoke tests, and M2 gate | S | M2-09, M2-10, M1-11 |
 | ☑ | M3-01 | Eval schema, datasets, splits | M | M1-11 |
 | ☐ | M3-02 | Scenario sandbox | M | M3-01, M2-09 |
-| ☐ | M3-03 | Scorers | L | M3-01, M2-08 |
+| ☑ | M3-03 | Scorers | L | M3-01, M2-08 |
 | ☐ | M3-04 | Eval runner | M | M3-02, M3-03, M2-09 |
 | ☐ | M3-05 | Reports | M | M3-04 |
 | ☐ | M3-06 | Component evals and calibration | M | M1-16, M3-03, M3-04 |

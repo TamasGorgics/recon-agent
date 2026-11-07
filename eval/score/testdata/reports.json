@@ -1,0 +1,631 @@
+{
+  "cost_latency_even": {
+    "cases": 4,
+    "accuracy": {
+      "defined": true,
+      "numerator": 4,
+      "denominator": 4,
+      "value": 1
+    },
+    "correct_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "over_escalation": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 4,
+      "value": 0
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 4,
+      "value": 0
+    },
+    "false_fix_by_split": {
+      "test": {
+        "defined": true,
+        "numerator": 0,
+        "denominator": 4,
+        "value": 0
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 4,
+      "denominator": 4,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 4,
+      "total_usd": "0.04",
+      "mean_usd": "0.01"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 4,
+      "p50_ms": 20,
+      "p95_ms": 40
+    },
+    "steps": {
+      "defined": true,
+      "cases": 4,
+      "total": 4,
+      "mean": "1"
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "cost_latency_odd": {
+    "cases": 5,
+    "accuracy": {
+      "defined": true,
+      "numerator": 5,
+      "denominator": 5,
+      "value": 1
+    },
+    "correct_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "over_escalation": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 5,
+      "value": 0
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 5,
+      "value": 0
+    },
+    "false_fix_by_split": {
+      "test": {
+        "defined": true,
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 5,
+      "denominator": 5,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 5,
+      "total_usd": "0.1",
+      "mean_usd": "0.02"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 5,
+      "p50_ms": 30,
+      "p95_ms": 50
+    },
+    "steps": {
+      "defined": true,
+      "cases": 5,
+      "total": 20,
+      "mean": "4"
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "empty": {
+    "cases": 0,
+    "accuracy": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "correct_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "over_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "false_fix": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "false_fix_by_split": {},
+    "evidence_validity": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "cost": {
+      "defined": false,
+      "cases": 0,
+      "total_usd": null,
+      "mean_usd": null
+    },
+    "latency": {
+      "defined": false,
+      "observations": 0,
+      "p50_ms": null,
+      "p95_ms": null
+    },
+    "steps": {
+      "defined": false,
+      "cases": 0,
+      "total": 0,
+      "mean": null
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "injection_split": {
+    "cases": 4,
+    "accuracy": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "correct_escalation": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 4,
+      "value": 0.25
+    },
+    "over_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 4,
+      "value": 0.25
+    },
+    "false_fix_by_split": {
+      "injection": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 4,
+        "value": 0.25
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 3,
+      "denominator": 3,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 4,
+      "total_usd": "0",
+      "mean_usd": "0"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 4,
+      "p50_ms": 0,
+      "p95_ms": 0
+    },
+    "steps": {
+      "defined": true,
+      "cases": 4,
+      "total": 0,
+      "mean": "0"
+    },
+    "injection_resistance": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 4,
+      "value": 0.5
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "link_only": {
+    "cases": 2,
+    "accuracy": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 2,
+      "value": 0.5
+    },
+    "correct_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "over_escalation": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 2,
+      "value": 0
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 2,
+      "value": 0
+    },
+    "false_fix_by_split": {
+      "test": {
+        "defined": true,
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 2,
+      "total_usd": "0",
+      "mean_usd": "0"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 2,
+      "p50_ms": 0,
+      "p95_ms": 0
+    },
+    "steps": {
+      "defined": true,
+      "cases": 2,
+      "total": 0,
+      "mean": "0"
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "mixed_test": {
+    "cases": 8,
+    "accuracy": {
+      "defined": true,
+      "numerator": 4,
+      "denominator": 8,
+      "value": 0.5
+    },
+    "correct_escalation": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 1,
+      "value": 1
+    },
+    "over_escalation": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 7,
+      "value": 0.14285714285714285
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 8,
+      "value": 0.125
+    },
+    "false_fix_by_split": {
+      "test": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 8,
+        "value": 0.125
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 5,
+      "denominator": 5,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 8,
+      "total_usd": "0",
+      "mean_usd": "0"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 8,
+      "p50_ms": 0,
+      "p95_ms": 0
+    },
+    "steps": {
+      "defined": true,
+      "cases": 8,
+      "total": 0,
+      "mean": "0"
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "partial_refund": {
+    "cases": 3,
+    "accuracy": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 3,
+      "value": 0.6666666666666666
+    },
+    "correct_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "over_escalation": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 3,
+      "value": 0
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 1,
+      "denominator": 3,
+      "value": 0.3333333333333333
+    },
+    "false_fix_by_split": {
+      "test": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 3,
+        "value": 0.3333333333333333
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 3,
+      "denominator": 3,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 3,
+      "total_usd": "0",
+      "mean_usd": "0"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 3,
+      "p50_ms": 0,
+      "p95_ms": 0
+    },
+    "steps": {
+      "defined": true,
+      "cases": 3,
+      "total": 0,
+      "mean": "0"
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "test_and_injection": {
+    "cases": 2,
+    "accuracy": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 1,
+      "value": 0
+    },
+    "correct_escalation": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 1,
+      "value": 0
+    },
+    "over_escalation": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 1,
+      "value": 0
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1
+    },
+    "false_fix_by_split": {
+      "injection": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1
+      },
+      "test": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1
+      }
+    },
+    "evidence_validity": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1
+    },
+    "cost": {
+      "defined": true,
+      "cases": 2,
+      "total_usd": "0",
+      "mean_usd": "0"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 2,
+      "p50_ms": 0,
+      "p95_ms": 0
+    },
+    "steps": {
+      "defined": true,
+      "cases": 2,
+      "total": 0,
+      "mean": "0"
+    },
+    "injection_resistance": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 1,
+      "value": 0
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "zero_proposals": {
+    "cases": 2,
+    "accuracy": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1
+    },
+    "correct_escalation": {
+      "defined": true,
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1
+    },
+    "over_escalation": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "false_fix": {
+      "defined": true,
+      "numerator": 0,
+      "denominator": 2,
+      "value": 0
+    },
+    "false_fix_by_split": {
+      "test": {
+        "defined": true,
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0
+      }
+    },
+    "evidence_validity": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "cost": {
+      "defined": true,
+      "cases": 2,
+      "total_usd": "0",
+      "mean_usd": "0"
+    },
+    "latency": {
+      "defined": true,
+      "observations": 2,
+      "p50_ms": 0,
+      "p95_ms": 0
+    },
+    "steps": {
+      "defined": true,
+      "cases": 2,
+      "total": 0,
+      "mean": "0"
+    },
+    "injection_resistance": {
+      "defined": false,
+      "numerator": 0,
+      "denominator": 0,
+      "value": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  }
+}
