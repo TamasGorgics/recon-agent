@@ -9,7 +9,7 @@ generator/seed/config.
 ## Committed content
 
 - `dev/manifest.json`, `test/manifest.json`, `injection/manifest.json` — one
-  manifest per split (about 31 KiB each, total below the 256 KiB budget).
+  manifest per split (77,529 B total, below the 256 KiB budget).
 - This README.
 
 Everything else under a split directory is a regeneration artifact and must
