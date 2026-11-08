@@ -16,7 +16,7 @@ help:
 	@printf '  %-16s %s\n' 'lint' 'go vet + floatlint + migrationlint + golangci-lint v2.15.0 + scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'lint-negative' 'scripts/lint-negative.sh'
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
-	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 ./...'
+	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 -p 1 ./...'
 	@printf '  %-16s %s\n' 'test-live' 'manual live LLM test; requires OPENCODE_API_KEY'
 	@printf '  %-16s %s\n' 'test-fault' 'stub until M4-08'
 	@printf '  %-16s %s\n' 'db-up' 'docker compose up -d --wait postgres'
@@ -46,8 +46,12 @@ lint-negative:
 test:
 	go test -race ./...
 
+# -p 1: eval/sandbox's CleanupOrphans (by design) drops every recon_eval_% clone,
+# including a live clone owned by the concurrently running eval/runner test
+# process. Serialize package binaries so destructive cleanup can only touch
+# leftovers; -parallel=4 still parallelizes tests within a package.
 test-integration:
-	go test -race -tags=integration -parallel=4 ./...
+	go test -race -tags=integration -parallel=4 -p 1 ./...
 
 test-live:
 	go test -tags=live -run 'TestLive|TestRecordM2Cassettes' -v -count=1 ./internal/llm ./internal/agent

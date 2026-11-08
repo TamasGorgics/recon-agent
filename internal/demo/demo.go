@@ -51,6 +51,13 @@ const (
 // ErrResetProduction is returned by Reset when RECON_ENV=production.
 var ErrResetProduction = errors.New("demo: --reset is refused when RECON_ENV=production")
 
+// evalOwnedSchemas lists the non-public schemas created by the eval
+// migrations. DROP SCHEMA public CASCADE leaves them behind, so Reset must
+// drop them explicitly before re-running migrations; otherwise the next
+// migration run collides with their existing tables (M3-02 eval_truth caused
+// SQLSTATE 42P07 on every reset after the first).
+var evalOwnedSchemas = []string{"eval_truth"}
+
 // Options configures one demo run. Zero values select the documented defaults.
 type Options struct {
 	DBURL      string
@@ -453,8 +460,9 @@ func (s Summary) Write(out io.Writer) error {
 }
 
 // Reset implements the dev-only `--reset`: it drops and recreates the public
-// schema and then applies every embedded migration. It is refused when
-// RECON_ENV is production (case-insensitive), before any connection is made.
+// schema and the eval-owned non-public schemas, then applies every embedded
+// migration. It is refused when RECON_ENV is production (case-insensitive),
+// before any connection is made.
 func Reset(ctx context.Context, dsn string) error {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("RECON_ENV")), "production") {
 		return ErrResetProduction
@@ -469,6 +477,11 @@ func Reset(ctx context.Context, dsn string) error {
 	defer func() { _ = sqlDB.Close() }()
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("demo: connect database: %w", err)
+	}
+	for _, schema := range evalOwnedSchemas {
+		if _, err := sqlDB.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+			return fmt.Errorf("demo: drop %s schema: %w", schema, err)
+		}
 	}
 	if _, err := sqlDB.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE`); err != nil {
 		return fmt.Errorf("demo: drop public schema: %w", err)
