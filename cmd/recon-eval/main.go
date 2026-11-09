@@ -27,6 +27,9 @@ Commands:
                    usage: recon-eval report --run <eval_run_id>
                           [--dataset-dir <path>] [--json <path>|--out-dir <dir>]
                           [--appendix-limit <n>]
+  matcher          build the standalone matcher component report
+                   usage: recon-eval matcher --split dev|test|injection
+                          [--dataset-dir <path>] [--json <path>|--out-dir <dir>]
   help             print this help
 
 Environment:
@@ -41,11 +44,15 @@ Exit codes: 0 completed or cost-cap stop, 1 failure, 2 usage error.
 // commandDeps are process-boundary seams for commands that need an injectable
 // loader. The run command keeps its own runner.Deps seam.
 type commandDeps struct {
-	Report reportDeps
+	Report  reportDeps
+	Matcher matcherDeps
 }
 
 func defaultCommandDeps() commandDeps {
-	return commandDeps{Report: defaultReportDeps()}
+	return commandDeps{
+		Report:  defaultReportDeps(),
+		Matcher: defaultMatcherDeps(),
+	}
 }
 
 func main() {
@@ -71,6 +78,8 @@ func mainWithDeps(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return runCommand(ctx, args[1:], stdout, stderr)
 	case "report":
 		return reportCommand(ctx, args[1:], stdout, stderr, deps.Report)
+	case "matcher":
+		return matcherCommand(ctx, args[1:], stdout, stderr, deps.Matcher)
 	default:
 		_, _ = fmt.Fprintf(stderr, "recon-eval: unknown command %q (try: recon-eval help)\n", args[0])
 		return 2

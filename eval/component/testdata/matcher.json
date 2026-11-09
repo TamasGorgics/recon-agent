@@ -1,0 +1,72 @@
+{
+  "schema": "matcher-report/v1",
+  "generated_at": "2026-11-09T00:00:00Z",
+  "split": "dev",
+  "dataset_version": "fixture-version",
+  "scenarios": 8,
+  "scoreable_scenarios": 6,
+  "matches": 4,
+  "correct_matches": 2,
+  "precision": {
+    "defined": true,
+    "numerator": 2,
+    "denominator": 4,
+    "value": 0.5
+  },
+  "expected_links": 3,
+  "recalled_links": 2,
+  "recall": {
+    "defined": true,
+    "numerator": 2,
+    "denominator": 3,
+    "value": 0.6666666666666666
+  },
+  "per_pass": [
+    {
+      "pass": "exact",
+      "matches": 3,
+      "correct_matches": 1,
+      "precision": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 3,
+        "value": 0.3333333333333333
+      },
+      "required_hits": 1,
+      "recall": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 3,
+        "value": 0.3333333333333333
+      }
+    },
+    {
+      "pass": "fuzzy",
+      "matches": 1,
+      "correct_matches": 1,
+      "precision": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1
+      },
+      "required_hits": 1,
+      "recall": {
+        "defined": true,
+        "numerator": 1,
+        "denominator": 3,
+        "value": 0.3333333333333333
+      }
+    }
+  ],
+  "excluded": {
+    "ambiguous": 1,
+    "escalate": 1,
+    "no_external_record": 1,
+    "no_ledger_txn": 1,
+    "not_expected_link": 1
+  },
+  "warnings": [
+    "recall below 1.0: inspect per-pass misses and ADR 0004 residuals"
+  ]
+}

@@ -90,11 +90,28 @@ Repeat group `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`, k=3. Values are per-run fir
 
 ## Calibration
 
-Not applicable (M3-06).
+Target: correct. N=8 proposal confidence observations in 10 equal-width bins; confidence 1.0 is in the last bin. ECE is weighted by bin count and is descriptive only.
+
+| Bin | Count | Mean confidence | Accuracy | Gap |
+|---|---|---|---|---|
+| [0.0,0.1) | 0 | — | — | — |
+| [0.1,0.2) | 0 | — | — | — |
+| [0.2,0.3) | 0 | — | — | — |
+| [0.3,0.4) | 0 | — | — | — |
+| [0.4,0.5) | 0 | — | — | — |
+| [0.5,0.6) | 0 | — | — | — |
+| [0.6,0.7) | 1 | 0.6000 | 0.0000 | 0.6000 |
+| [0.7,0.8) | 2 | 0.7000 | 1.0000 | 0.3000 |
+| [0.8,0.9) | 3 | 0.8000 | 0.6667 | 0.1333 |
+| [0.9,1.0] | 2 | 0.9000 | 1.0000 | 0.1000 |
+
+Expected calibration error (ECE): 0.2250
+
+Per-run ECE: r0=0.4000 (n=3); r1=0.1500 (n=2); r2=0.3667 (n=3)
 
 ## Component scorecards
 
-No component scorecards in M3-05.
+- verifier: not applicable until M4-05 (deterministic verifiers land in M4-05)
 
 ## Failure appendix
 

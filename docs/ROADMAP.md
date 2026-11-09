@@ -157,7 +157,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M3-03 | Scorers | L | M3-01, M2-08 |
 | ☑ | M3-04 | Eval runner | M | M3-02, M3-03, M2-09 |
 | ☑ | M3-05 | Reports | M | M3-04 |
-| ☐ | M3-06 | Component evals and calibration | M | M1-16, M3-03, M3-04 |
+| ☑ | M3-06 | Component evals and calibration | M | M1-16, M3-03, M3-04 |
 | ☐ | M3-07 | Run comparison | S | M3-04 |
 | ☐ | M3-08 | Prompt versions and second model | M | M2-02, M3-04 |
 | ☐ | M3-09 | Baseline, thresholds, gate command | M | M3-05, M3-06, M3-07, M3-08 |

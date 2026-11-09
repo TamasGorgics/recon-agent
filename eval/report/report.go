@@ -114,7 +114,7 @@ type Report struct {
 	ByMode          map[string]MetricBlock `json:"by_mode"`
 	ByDifficulty    map[string]MetricBlock `json:"by_difficulty"`
 	Repeats         *Repeats               `json:"repeats"`
-	Calibration     any                    `json:"calibration"`
+	Calibration     *Calibration           `json:"calibration"`
 	Scorecards      []Scorecard            `json:"scorecards"`
 	FailureAppendix []AppendixCase         `json:"failure_appendix"`
 	Warnings        []string               `json:"warnings"`
@@ -309,7 +309,7 @@ type Scorecard struct {
 	DeferredTo string            `json:"deferred_to,omitempty"`
 	Reason     string            `json:"reason,omitempty"`
 	Cases      int               `json:"cases"`
-	Metrics    []ScorecardMetric `json:"metrics,omitempty"`
+	Metrics    []ScorecardMetric `json:"metrics"`
 }
 
 // ScorecardMetric is one scorecard measurement.
@@ -318,6 +318,19 @@ type ScorecardMetric struct {
 	Value string `json:"value"`
 	Unit  string `json:"unit"`
 	Note  string `json:"note"`
+}
+
+// verifierScorecard is the M3-06 placeholder filled by M4-05. M3-06 does not
+// import or create internal/policy/verify.
+func verifierScorecard() Scorecard {
+	return Scorecard{
+		Name:       "verifier",
+		Applicable: false,
+		DeferredTo: "M4-05",
+		Reason:     "deterministic verifiers land in M4-05",
+		Cases:      0,
+		Metrics:    []ScorecardMetric{},
+	}
 }
 
 // Build loads one run (or its complete repeat group), rebuilds and verifies
@@ -394,9 +407,9 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 		},
 		ByMode:       map[string]MetricBlock{},
 		ByDifficulty: map[string]MetricBlock{},
-		// M3-05 leaves calibration nil and scorecards empty; M3-06 fills them.
+		// M3-06 fills calibration and the verifier scorecard placeholder.
 		Calibration:     nil,
-		Scorecards:      []Scorecard{},
+		Scorecards:      []Scorecard{verifierScorecard()},
 		FailureAppendix: []AppendixCase{},
 	}
 	if len(runData) > 1 || (len(runData) == 1 && runs[0].RepeatGroup != "") {
@@ -405,6 +418,11 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 	report.Headline = buildHeadline(runData, opts.MinSample)
 	report.ByMode = buildPartitions(runData, opts.MinSample, partitionMode)
 	report.ByDifficulty = buildPartitions(runData, opts.MinSample, partitionDifficulty)
+	calibration, err := buildCalibration(runData)
+	if err != nil {
+		return Report{}, err
+	}
+	report.Calibration = calibration
 
 	appendix, transcriptWarnings := buildAppendix(runData, resolved.Scenarios, requested, opts)
 	report.FailureAppendix = appendix

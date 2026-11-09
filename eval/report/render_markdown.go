@@ -210,19 +210,46 @@ func writeRepeats(builder *strings.Builder, repeats *Repeats) {
 	builder.WriteString("\n")
 }
 
-func writeCalibration(builder *strings.Builder, calibration any) {
+func writeCalibration(builder *strings.Builder, calibration *Calibration) {
 	builder.WriteString("## Calibration\n\n")
 	if calibration == nil {
-		builder.WriteString("Not applicable (M3-06).\n\n")
+		builder.WriteString("Not applicable (no calibration data).\n\n")
 		return
 	}
-	builder.WriteString("Calibration data is not rendered by the M3-05 report.\n\n")
+	if !calibration.Applicable {
+		fmt.Fprintf(builder, "Not applicable: no proposal confidence observations (target: %s).\n\n",
+			mdEscape(calibration.Target))
+		return
+	}
+	fmt.Fprintf(builder, "Target: %s. N=%d proposal confidence observations in %d equal-width bins; "+
+		"confidence 1.0 is in the last bin. ECE is weighted by bin count and is descriptive only.\n\n",
+		mdEscape(calibration.Target), calibration.N, calibration.Bins)
+	builder.WriteString("| Bin | Count | Mean confidence | Accuracy | Gap |\n")
+	builder.WriteString("|---|---|---|---|---|\n")
+	for _, bin := range calibration.Reliability {
+		fmt.Fprintf(builder, "| %s | %d | %s | %s | %s |\n",
+			mdEscape(bin.Bin), bin.Count,
+			floatPtrText(bin.MeanConfidence, 4),
+			floatPtrText(bin.Accuracy, 4),
+			floatPtrText(bin.Gap, 4))
+	}
+	builder.WriteString("\n")
+	fmt.Fprintf(builder, "Expected calibration error (ECE): %s\n\n",
+		floatPtrText(calibration.ECE, 4))
+	if calibration.Scope == CalibrationScopeRepeatGroup && len(calibration.PerRunECE) > 0 {
+		parts := make([]string, 0, len(calibration.PerRunECE))
+		for _, perRun := range calibration.PerRunECE {
+			parts = append(parts, fmt.Sprintf("r%d=%s (n=%d)", perRun.RepeatIndex,
+				floatPtrText(perRun.ECE, 4), perRun.N))
+		}
+		fmt.Fprintf(builder, "Per-run ECE: %s\n\n", strings.Join(parts, "; "))
+	}
 }
 
 func writeScorecards(builder *strings.Builder, scorecards []Scorecard) {
 	builder.WriteString("## Component scorecards\n\n")
 	if len(scorecards) == 0 {
-		builder.WriteString("No component scorecards in M3-05.\n\n")
+		builder.WriteString("No component scorecards.\n\n")
 		return
 	}
 	for _, scorecard := range scorecards {

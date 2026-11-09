@@ -3,9 +3,11 @@ package report
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -106,11 +108,11 @@ func TestBuildReportShape(t *testing.T) {
 	if _, ok := built.ByDifficulty["realistic"]; !ok {
 		t.Fatalf("by_difficulty = %v", built.ByDifficulty)
 	}
-	if built.Calibration != nil {
-		t.Fatalf("calibration = %v, want nil in M3-05", built.Calibration)
+	if built.Calibration == nil || !built.Calibration.Applicable {
+		t.Fatalf("calibration = %+v, want an applicable M3-06 section", built.Calibration)
 	}
-	if len(built.Scorecards) != 0 {
-		t.Fatalf("scorecards = %v, want empty in M3-05", built.Scorecards)
+	if len(built.Scorecards) != 1 || built.Scorecards[0].Name != "verifier" {
+		t.Fatalf("scorecards = %v, want only the verifier placeholder", built.Scorecards)
 	}
 	if len(built.FailureAppendix) != 4 {
 		t.Fatalf("appendix = %d, want 4", len(built.FailureAppendix))
@@ -254,6 +256,61 @@ func fixtureBaseRun(t *testing.T, index int, repeatIndex int) RunRow {
 		RepeatGroup:    fixtureGroup,
 		RepeatIndex:    &repeat,
 		CostCapUSD:     &cap,
+	}
+}
+
+// covers: FIN-01, FIN-05
+func TestReportMoneyStaysDecimalText(t *testing.T) {
+	source := goldenFixture(t)
+	built, err := Build(context.Background(), source, fixtureRun1, Options{
+		DatasetDir: devDatasetDir(t),
+		Clock:      fixtureClock(t),
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	data, err := RenderJSON(built)
+	if err != nil {
+		t.Fatalf("RenderJSON: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode report JSON: %v", err)
+	}
+	headline, ok := document["headline"].(map[string]any)
+	if !ok {
+		t.Fatalf("headline is not an object: %T", document["headline"])
+	}
+	cost, ok := headline["cost"].(map[string]any)
+	if !ok {
+		t.Fatalf("headline cost is not an object: %T", headline["cost"])
+	}
+	moneyPattern := regexp.MustCompile(`^[0-9]+\.[0-9]{6}$`)
+	for _, key := range []string{"total_usd", "mean_usd"} {
+		text, ok := cost[key].(string)
+		if !ok {
+			t.Fatalf("headline cost.%s is %T, want decimal string", key, cost[key])
+		}
+		if !moneyPattern.MatchString(text) {
+			t.Fatalf("headline cost.%s = %q, want 6 fractional digits", key, text)
+		}
+	}
+	repeats, ok := document["repeats"].(map[string]any)
+	if !ok {
+		t.Fatalf("repeats is not an object: %T", document["repeats"])
+	}
+	repeatCost, ok := repeats["cost"].(map[string]any)
+	if !ok {
+		t.Fatalf("repeats cost is not an object: %T", repeats["cost"])
+	}
+	for _, key := range []string{"mean_usd", "min_usd", "max_usd", "stddev_usd"} {
+		text, ok := repeatCost[key].(string)
+		if !ok {
+			t.Fatalf("repeats cost.%s is %T, want decimal string", key, repeatCost[key])
+		}
+		if !moneyPattern.MatchString(text) {
+			t.Fatalf("repeats cost.%s = %q, want 6 fractional digits", key, text)
+		}
 	}
 }
 

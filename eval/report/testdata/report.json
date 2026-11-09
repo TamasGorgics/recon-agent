@@ -2800,8 +2800,116 @@
       }
     ]
   },
-  "calibration": null,
-  "scorecards": [],
+  "calibration": {
+    "applicable": true,
+    "target": "correct",
+    "bins": 10,
+    "n": 8,
+    "ece": 0.225,
+    "reliability": [
+      {
+        "bin": "[0.0,0.1)",
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "gap": null
+      },
+      {
+        "bin": "[0.1,0.2)",
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "gap": null
+      },
+      {
+        "bin": "[0.2,0.3)",
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "gap": null
+      },
+      {
+        "bin": "[0.3,0.4)",
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "gap": null
+      },
+      {
+        "bin": "[0.4,0.5)",
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "gap": null
+      },
+      {
+        "bin": "[0.5,0.6)",
+        "count": 0,
+        "mean_confidence": null,
+        "accuracy": null,
+        "gap": null
+      },
+      {
+        "bin": "[0.6,0.7)",
+        "count": 1,
+        "mean_confidence": 0.6,
+        "accuracy": 0,
+        "gap": 0.6
+      },
+      {
+        "bin": "[0.7,0.8)",
+        "count": 2,
+        "mean_confidence": 0.7,
+        "accuracy": 1,
+        "gap": 0.3
+      },
+      {
+        "bin": "[0.8,0.9)",
+        "count": 3,
+        "mean_confidence": 0.8,
+        "accuracy": 0.666666666667,
+        "gap": 0.133333333333
+      },
+      {
+        "bin": "[0.9,1.0]",
+        "count": 2,
+        "mean_confidence": 0.9,
+        "accuracy": 1,
+        "gap": 0.1
+      }
+    ],
+    "scope": "repeat_group",
+    "per_run_ece": [
+      {
+        "run_id": "11111111-1111-4111-8111-111111111111",
+        "repeat_index": 0,
+        "n": 3,
+        "ece": 0.4
+      },
+      {
+        "run_id": "22222222-2222-4222-8222-222222222222",
+        "repeat_index": 1,
+        "n": 2,
+        "ece": 0.15
+      },
+      {
+        "run_id": "33333333-3333-4333-8333-333333333333",
+        "repeat_index": 2,
+        "n": 3,
+        "ece": 0.366666666667
+      }
+    ]
+  },
+  "scorecards": [
+    {
+      "name": "verifier",
+      "applicable": false,
+      "deferred_to": "M4-05",
+      "reason": "deterministic verifiers land in M4-05",
+      "cases": 0,
+      "metrics": []
+    }
+  ],
   "failure_appendix": [
     {
       "scenario_id": "0bbc4d76-cfe0-5252-a9e0-179abf9987b6",

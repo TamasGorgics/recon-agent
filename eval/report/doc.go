@@ -29,6 +29,19 @@
 // Wilson interval is attached to a mean of rates. Cost is decimal text with
 // six fractional digits end to end.
 //
+// # Calibration and component scorecards
+//
+// Calibration covers proposal rows with a non-null confidence and targets
+// resolution correctness (never false-fix). It uses ten equal-width confidence
+// bins with 1.0 in the last bin; bin assignment is decimal, while display
+// values and ECE are float64. Empty observations are not applicable. A repeat
+// group pools observations for the reliability table and lists per-run ECE.
+// Calibration is descriptive and never gates.
+//
+// Every report carries a generic verifier scorecard placeholder
+// (applicable=false, deferred_to=M4-05). M3-06 does not import or create
+// internal/policy/verify; M4-05 fills the same report-owned shape.
+//
 // # Transcripts and redaction
 //
 // The failure appendix renders only the sanitized, bounded version-1 snapshot
