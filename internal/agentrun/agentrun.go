@@ -68,12 +68,15 @@ type Deps struct {
 }
 
 // Step is one recorded tool call, safe to print: it never carries arguments or
-// results.
+// results. Refs are the canonical evidence references declared by the tool
+// result envelope, and Truncated mirrors that envelope's truncation flag.
 type Step struct {
-	Seq        int    `json:"seq"`
-	Tool       string `json:"tool"`
-	ErrorCode  string `json:"error_code,omitempty"`
-	DurationMS int    `json:"duration_ms"`
+	Seq        int      `json:"seq"`
+	Tool       string   `json:"tool"`
+	Refs       []string `json:"refs,omitempty"`
+	ErrorCode  string   `json:"error_code,omitempty"`
+	Truncated  bool     `json:"truncated,omitempty"`
+	DurationMS int      `json:"duration_ms"`
 }
 
 // Report is the command result. It contains no raw tool data or memos.

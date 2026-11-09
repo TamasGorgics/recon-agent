@@ -162,3 +162,11 @@ behavior.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-55 | **OPEN (M3-04 post-adversary, operational):** `internal/demo.Reset` refuses to drop/recreate schemas only when `RECON_ENV=production` (case-insensitive). `.env.example` now sets `RECON_ENV=development` for local runs, but a deployment that copies the example or leaves the variable unset is not protected from `recon demo --reset`. The guard is env-based by design; there is no additional host/database check. | M3-04 / deploy config | Ensure production and shared environments set `RECON_ENV=production`; keep the example at `development` for local use. No behavior change in this fix. |
+
+## M3 piece C transcript prerequisite (Q-56)
+
+Accepted post-merge M3-04 delta. No roadmap tick, migration, or grant change.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-56 | **RESOLVED (M3-04 post-merge prereq):** every newly scored case stores a sanitized transcript snapshot v1 in the existing `eval_case_results.detail` JSONB under `"transcript"`. The snapshot carries the terminal `agent_runs.outcome`, a `{id,type}` proposal summary (null when absent), the latest already-sanitized assistant excerpt redacted and capped at 200 runes, and ordered tool steps limited to `seq`, tool name, canonical sorted-unique refs, error code, and the envelope truncation flag. It never carries tool arguments, raw results, memo text, DSNs, API keys, or session IDs. `internal/llm.Redact` covers the shared secret classes; `eval/runner` adds `postgres://`/`postgresql://` DSN and password-key redaction. The snapshot is bounded to 20 steps, 20 refs per step, 64-rune error codes, and 16 KiB of marshaled JSON; over-bound snapshots drop refs first, then shorten the assistant, and set snapshot-level `truncated=true`. `internal/agentrun.Step` gains additive `refs`/`truncated` fields read only from `tool_calls.result->'refs'` and `result->>'truncated'`. Missing snapshots mean the run predates v1 and reports degrade to “transcript unavailable”; unknown versions are unsupported, never guessed. The snapshot is not full PII/PAN scrubbing (M6-06 owns retention/redaction). | M3-04 / M3-05 | Recorded as the versioned bounded snapshot contract; no schema change, no task tick, and `docs/spec.md` is untouched. |
