@@ -7,6 +7,20 @@ import "math"
 // level (spec §5.4).
 const z95 = 1.959963984540054
 
+// reportFloatScale is the decimal scale report display floats are rounded to.
+// Go may contract floating-point expressions into fused operations
+// differently per GOARCH, so raw last-ULP bits are not portable; goldens and
+// JSON reports must be. Twelve places is far more precision than any renderer
+// shows (Markdown renders at most six).
+const reportFloatScale = 1e12
+
+// canonicalFloat strips architecture-dependent last-ULP noise from a report
+// display value. Rates are proportions in [0, 1] and the remaining report
+// floats are display metrics, so the absolute 1e-12 scale is safe.
+func canonicalFloat(value float64) float64 {
+	return math.Round(value*reportFloatScale) / reportFloatScale
+}
+
 // Interval is a closed Wilson score interval. Low and High are proportions in
 // [0, 1].
 type Interval struct {
@@ -35,8 +49,8 @@ func Wilson(numerator, denominator int) (Interval, bool) {
 	denominatorTerm := 1 + z2/n
 	center := (p + z2/(2*n)) / denominatorTerm
 	half := z95 / denominatorTerm * math.Sqrt(p*(1-p)/n+z2/(4*n*n))
-	low := clamp01(center - half)
-	high := clamp01(center + half)
+	low := canonicalFloat(clamp01(center - half))
+	high := canonicalFloat(clamp01(center + half))
 	return Interval{Low: low, High: high}, true
 }
 
@@ -72,13 +86,13 @@ func meanSpread(values []float64) (mean, minValue, maxValue float64, stddev *flo
 	}
 	mean = sum / float64(len(values))
 	if len(values) < 2 {
-		return mean, minValue, maxValue, nil
+		return canonicalFloat(mean), canonicalFloat(minValue), canonicalFloat(maxValue), nil
 	}
 	sumSquares := 0.0
 	for _, value := range values {
 		delta := value - mean
 		sumSquares += delta * delta
 	}
-	sd := math.Sqrt(sumSquares / float64(len(values)-1))
-	return mean, minValue, maxValue, &sd
+	sd := canonicalFloat(math.Sqrt(sumSquares / float64(len(values)-1)))
+	return canonicalFloat(mean), canonicalFloat(minValue), canonicalFloat(maxValue), &sd
 }

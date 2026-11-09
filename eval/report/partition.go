@@ -257,7 +257,7 @@ func singleRateView(rate score.Rate, minSample int) RateView {
 		MinSampleMet: denominator > 0 && denominator >= minSample,
 	}
 	if rate.Defined && rate.Value != nil {
-		value := *rate.Value
+		value := canonicalFloat(*rate.Value)
 		interval, _ := Wilson(rate.Numerator, rate.Denominator)
 		view.Value = &value
 		view.WilsonLow = &interval.Low
@@ -287,7 +287,7 @@ func repeatRateView(metric string, reports []score.Report, runs []RunRow, minSam
 			Denominator: rate.Denominator,
 		}
 		if rate.Defined && rate.Value != nil {
-			value := *rate.Value
+			value := canonicalFloat(*rate.Value)
 			perRun.Value = &value
 			interval, _ := Wilson(rate.Numerator, rate.Denominator)
 			perRun.WilsonLow = &interval.Low
@@ -481,7 +481,7 @@ func repeatStepsView(reports []score.Report, runs []RunRow) StepsView {
 		var value *float64
 		if report.Steps.Defined && report.Steps.Mean != nil {
 			means = append(means, *report.Steps.Mean)
-			floatValue := report.Steps.Mean.InexactFloat64()
+			floatValue := canonicalFloat(report.Steps.Mean.InexactFloat64())
 			value = &floatValue
 			meanValues = append(meanValues, floatValue)
 		} else {
@@ -625,7 +625,7 @@ func repeatMetric(metric string, reports []score.Report, runs []RunRow) RepeatMe
 		rate := metricRate(report, metric)
 		var value *float64
 		if rate.Defined && rate.Value != nil {
-			copied := *rate.Value
+			copied := canonicalFloat(*rate.Value)
 			value = &copied
 			values = append(values, copied)
 		} else {

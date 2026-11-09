@@ -123,9 +123,10 @@ func Calibrate(observations []CalibrationObservation) (Calibration, error) {
 }
 
 // roundCalibration strips binary float noise from display values and ECE while
-// preserving far more precision than the report renders.
+// preserving far more precision than the report renders. It shares the report
+// canonicalization so calibration values are as portable as the rate views.
 func roundCalibration(value float64) float64 {
-	return math.Round(value*1e12) / 1e12
+	return canonicalFloat(value)
 }
 
 func ptrRoundCalibration(value float64) *float64 {
