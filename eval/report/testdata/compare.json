@@ -1,0 +1,1344 @@
+{
+  "schema": "compare/v1",
+  "generated_at": "2026-11-09T00:00:00Z",
+  "a": {
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "suite": "agent",
+    "split": "dev",
+    "dataset_version": "8b4e905f0fee854575e74a56bbe0475921a41abe06214e42061cb1be83e8b411",
+    "model": "deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "seed": 1,
+    "git_sha": "0123456789abcdef0123456789abcdef01234567",
+    "repeat_group": "",
+    "repeat_index": null,
+    "cases": 144,
+    "proposals": 0,
+    "confidence_observations": 0,
+    "complete": true,
+    "aborted": false,
+    "abort_reason": "",
+    "partial": false,
+    "missing_scoreable": 0,
+    "missing_modes": []
+  },
+  "b": {
+    "run_id": "22222222-2222-4222-8222-222222222222",
+    "suite": "agent",
+    "split": "dev",
+    "dataset_version": "8b4e905f0fee854575e74a56bbe0475921a41abe06214e42061cb1be83e8b411",
+    "model": "glm-5.3-flash",
+    "prompt_version": "v2",
+    "seed": 1,
+    "git_sha": "0123456789abcdef0123456789abcdef01234567",
+    "repeat_group": "",
+    "repeat_index": null,
+    "cases": 144,
+    "proposals": 0,
+    "confidence_observations": 0,
+    "complete": true,
+    "aborted": false,
+    "abort_reason": "",
+    "partial": false,
+    "missing_scoreable": 0,
+    "missing_modes": []
+  },
+  "overall": {
+    "cases": {
+      "a": 144,
+      "b": 144
+    },
+    "accuracy": {
+      "a": 0.9375,
+      "b": 0.9375,
+      "a_n": 144,
+      "b_n": 144,
+      "delta_pp": 0,
+      "a_ci": [
+        0.885490965934,
+        0.966773351566
+      ],
+      "b_ci": [
+        0.885490965934,
+        0.966773351566
+      ],
+      "overlap": true,
+      "direction": "higher_is_better",
+      "gating": true,
+      "classification": "no_change"
+    },
+    "false_fix": {
+      "a": 0.041666666667,
+      "b": 0.041666666667,
+      "a_n": 144,
+      "b_n": 144,
+      "delta_pp": 0,
+      "a_ci": [
+        0.019233886662,
+        0.087917780719
+      ],
+      "b_ci": [
+        0.019233886662,
+        0.087917780719
+      ],
+      "overlap": true,
+      "direction": "lower_is_better",
+      "gating": true,
+      "classification": "no_change"
+    },
+    "correct_escalation": {
+      "a": null,
+      "b": null,
+      "a_n": 0,
+      "b_n": 0,
+      "delta_pp": null,
+      "a_ci": null,
+      "b_ci": null,
+      "overlap": null,
+      "direction": "higher_is_better",
+      "gating": true,
+      "classification": "n/a"
+    },
+    "over_escalation": {
+      "a": null,
+      "b": null,
+      "a_n": 0,
+      "b_n": 0,
+      "delta_pp": null,
+      "a_ci": null,
+      "b_ci": null,
+      "overlap": null,
+      "direction": "lower_is_better",
+      "gating": false,
+      "classification": "n/a"
+    },
+    "evidence_validity": {
+      "a": null,
+      "b": null,
+      "a_n": 0,
+      "b_n": 0,
+      "delta_pp": null,
+      "a_ci": null,
+      "b_ci": null,
+      "overlap": null,
+      "direction": "higher_is_better",
+      "gating": true,
+      "classification": "n/a"
+    },
+    "injection_resistance": {
+      "a": null,
+      "b": null,
+      "a_n": 0,
+      "b_n": 0,
+      "delta_pp": null,
+      "a_ci": null,
+      "b_ci": null,
+      "overlap": null,
+      "direction": "higher_is_better",
+      "gating": false,
+      "classification": "n/a"
+    }
+  },
+  "by_mode": {
+    "ambiguous": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "batch_composite": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "chargeback": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "duplicate_charge": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 0.5,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 50,
+        "a_ci": [
+          0.253781597634,
+          0.746218402366
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": false,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "improvement"
+      },
+      "false_fix": {
+        "a": 0.5,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": -50,
+        "a_ci": [
+          0.253781597634,
+          0.746218402366
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": false,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "improvement"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "fee_variance": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 0.5,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": -50,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.253781597634,
+          0.746218402366
+        ],
+        "overlap": false,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "regression"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0.5,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 50,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0.253781597634,
+          0.746218402366
+        ],
+        "overlap": false,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "regression"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "fx_rounding": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "injection_memo": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "late_settlement": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "missing_settlement": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "partial_refund": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 0.75,
+        "b": 0.75,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.467694665066,
+          0.911058331606
+        ],
+        "b_ci": [
+          0.467694665066,
+          0.911058331606
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "reference_typo": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    },
+    "unknown_deposit": {
+      "cases": {
+        "a": 12,
+        "b": 12
+      },
+      "accuracy": {
+        "a": 1,
+        "b": 1,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0.757505993345,
+          1
+        ],
+        "b_ci": [
+          0.757505993345,
+          1
+        ],
+        "overlap": true,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "false_fix": {
+        "a": 0,
+        "b": 0,
+        "a_n": 12,
+        "b_n": 12,
+        "delta_pp": 0,
+        "a_ci": [
+          0,
+          0.242494006655
+        ],
+        "b_ci": [
+          0,
+          0.242494006655
+        ],
+        "overlap": true,
+        "direction": "lower_is_better",
+        "gating": true,
+        "classification": "no_change"
+      },
+      "correct_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "over_escalation": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "lower_is_better",
+        "gating": false,
+        "classification": "n/a"
+      },
+      "evidence_validity": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": true,
+        "classification": "n/a"
+      },
+      "injection_resistance": {
+        "a": null,
+        "b": null,
+        "a_n": 0,
+        "b_n": 0,
+        "delta_pp": null,
+        "a_ci": null,
+        "b_ci": null,
+        "overlap": null,
+        "direction": "higher_is_better",
+        "gating": false,
+        "classification": "n/a"
+      }
+    }
+  },
+  "cost": {
+    "a_cases": 144,
+    "b_cases": 144,
+    "a_mean_usd": "0.010000",
+    "b_mean_usd": "0.020000",
+    "delta_usd": "0.010000",
+    "delta_pct": 100
+  },
+  "latency": {
+    "a_p50_ms": 100,
+    "b_p50_ms": 150,
+    "p50_delta_ms": 50,
+    "p50_delta_pct": 50,
+    "a_p95_ms": 100,
+    "b_p95_ms": 150,
+    "p95_delta_ms": 50,
+    "p95_delta_pct": 50
+  },
+  "steps": {
+    "a_mean": "2.00",
+    "b_mean": "3.00",
+    "delta_steps": "1.00"
+  },
+  "exit_criteria": {
+    "failed": true,
+    "report_only": false,
+    "incomplete": false,
+    "incomplete_runs": [],
+    "regressions": [
+      {
+        "scope": "mode",
+        "mode": "fee_variance",
+        "metric": "false_fix",
+        "a": 0,
+        "b": 0.5,
+        "delta_pp": 50
+      },
+      {
+        "scope": "mode",
+        "mode": "fee_variance",
+        "metric": "accuracy",
+        "a": 1,
+        "b": 0.5,
+        "delta_pp": -50
+      }
+    ]
+  },
+  "warnings": []
+}

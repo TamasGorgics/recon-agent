@@ -195,6 +195,9 @@ func (e *runExecution) executeCase(ctx context.Context, ref sandbox.CaseRef) err
 			"note": "incomplete run; latency is supplied only for completed agent runs",
 		}
 	}
+	// Persist the sanitized, bounded transcript before the sandbox is
+	// destroyed; reports render it after the clone is gone.
+	detail["transcript"] = transcriptSnapshot(report, facts.Outcome, facts.ProposalID, facts.ProposalType)
 
 	if err := insertCaseResult(ctx, e.results, e.run.ID, caseResultRow{
 		ScenarioID:   ref.ScenarioID,

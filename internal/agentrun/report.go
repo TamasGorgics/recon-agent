@@ -2,6 +2,7 @@ package agentrun
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,7 +26,10 @@ func fillReport(ctx context.Context, q reportQueryer, report *Report) error {
 		return nil
 	}
 	rows, err := q.Query(ctx,
-		`SELECT seq, tool_name, COALESCE(error, ''), duration_ms
+		`SELECT seq, tool_name, COALESCE(error, ''),
+		        COALESCE(result->'refs', '[]'::jsonb),
+		        COALESCE(result->>'truncated' = 'true', false),
+		        duration_ms
 		   FROM tool_calls
 		  WHERE agent_run_id = $1::uuid
 		  ORDER BY seq`, report.RunID)
@@ -34,11 +38,22 @@ func fillReport(ctx context.Context, q reportQueryer, report *Report) error {
 	}
 	steps := make([]Step, 0)
 	for rows.Next() {
-		var step Step
-		if err := rows.Scan(&step.Seq, &step.Tool, &step.ErrorCode, &step.DurationMS); err != nil {
+		var (
+			step     Step
+			refsJSON []byte
+		)
+		if err := rows.Scan(&step.Seq, &step.Tool, &step.ErrorCode,
+			&refsJSON, &step.Truncated, &step.DurationMS); err != nil {
 			rows.Close()
 			return fmt.Errorf("agent: scan tool transcript: %w", err)
 		}
+		if len(refsJSON) > 0 {
+			if err := json.Unmarshal(refsJSON, &step.Refs); err != nil {
+				rows.Close()
+				return fmt.Errorf("agent: decode tool refs: %w", err)
+			}
+		}
+		step.Refs = tools.SortedUnique(step.Refs)
 		steps = append(steps, step)
 	}
 	if err := rows.Err(); err != nil {

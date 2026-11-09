@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
@@ -245,6 +246,32 @@ func TestEvalRun20ScenariosScripted(t *testing.T) {
 		t.Fatalf("total cost = %q, want 0.020000", costText)
 	}
 
+	// Every scored case carries a bounded version-1 transcript snapshot; the
+	// raw tool args/results never leave tool_calls.
+	transcripts, err := loadTranscripts(t, pool, run.RunID)
+	if err != nil {
+		t.Fatalf("load transcripts: %v", err)
+	}
+	if len(transcripts) != 20 {
+		t.Fatalf("transcripts = %d, want 20", len(transcripts))
+	}
+	for _, snapshot := range transcripts {
+		if snapshot["version"] != float64(1) {
+			t.Fatalf("transcript version = %v, want 1", snapshot["version"])
+		}
+		if snapshot["outcome"] != "escalated" {
+			t.Fatalf("transcript outcome = %v, want escalated", snapshot["outcome"])
+		}
+		if snapshot["proposal"] != nil {
+			t.Fatalf("transcript proposal = %#v, want null", snapshot["proposal"])
+		}
+		steps, ok := snapshot["tool_steps"].([]any)
+		if !ok || len(steps) == 0 {
+			t.Fatalf("transcript tool_steps = %#v, want at least one step", snapshot["tool_steps"])
+		}
+		assertSafeTranscriptKeys(t, snapshot)
+	}
+
 	var (
 		queryCases int
 		queryCost  string
@@ -295,6 +322,185 @@ func TestEvalRun20ScenariosScripted(t *testing.T) {
 	// Results survive sandbox close: the durable DB is a different database
 	// from the dropped clone, and no clone from this process remains.
 	assertNoPackageSandboxes(t)
+}
+
+// TestEvalRunTranscriptRedaction proves the persisted snapshot redacts a
+// planted secret and keeps the safe envelope shape end to end.
+func TestEvalRunTranscriptRedaction(t *testing.T) {
+	cfg := smallAcceptanceConfig(t)
+	ds, err := dataset.Build(cfg)
+	if err != nil {
+		t.Fatalf("build small dataset: %v", err)
+	}
+	dir := writeManifest(t, ds)
+	pool, resultsDSN := newResultsPool(t)
+
+	summary, err := runner.Run(context.Background(), baseOptions(dir),
+		baseDeps(t, cfg, resultsDSN, transcriptRedactionClient()))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.Runs) != 1 || summary.Runs[0].Completed != 2 {
+		t.Fatalf("summary = %+v, want 2 completed", summary.Runs)
+	}
+
+	transcripts, err := loadTranscripts(t, pool, summary.Runs[0].RunID)
+	if err != nil {
+		t.Fatalf("load transcripts: %v", err)
+	}
+	if len(transcripts) != 2 {
+		t.Fatalf("transcripts = %d, want 2", len(transcripts))
+	}
+	for _, snapshot := range transcripts {
+		assistant, ok := snapshot["assistant"].(string)
+		if !ok {
+			t.Fatalf("assistant has type %T", snapshot["assistant"])
+		}
+		if utf8.RuneCountInString(assistant) > 200 {
+			t.Fatalf("assistant runes = %d, want <= 200", utf8.RuneCountInString(assistant))
+		}
+		if !strings.Contains(assistant, "[REDACTED]") {
+			t.Fatalf("assistant was not redacted: %q", assistant)
+		}
+		if !strings.Contains(assistant, "memo") {
+			t.Fatalf("non-secret assistant context was dropped: %q", assistant)
+		}
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatalf("marshal transcript: %v", err)
+		}
+		for _, secret := range []string{
+			"oc_sk_synthetic_secret",
+			"abc.def-123",
+			"auth-secret",
+			"ses_abc123",
+			"postgres://user:pass@localhost:5432/recon",
+			"hunter2",
+		} {
+			if strings.Contains(string(encoded), secret) {
+				t.Fatalf("transcript leaked %q: %s", secret, encoded)
+			}
+		}
+		assertSafeTranscriptKeys(t, snapshot)
+	}
+	assertNoPackageSandboxes(t)
+}
+
+// transcriptRedactionClient emits one assistant memo containing planted secrets
+// before the terminal escalate call.
+func transcriptRedactionClient() func(sandbox.CaseRef, dataset.ScenarioTruth) (llm.Client, error) {
+	return func(ref sandbox.CaseRef, _ dataset.ScenarioTruth) (llm.Client, error) {
+		preamble := llm.Response{
+			Provider:    llm.ProviderOpenCodeGo,
+			ActualModel: "test-model-2026",
+			Message: llm.Message{
+				Role: llm.RoleAssistant,
+				Content: "memo from customer: api key oc_sk_synthetic_secret, Bearer abc.def-123, " +
+					"authorization: auth-secret, session ses_abc123, " +
+					"postgres://user:pass@localhost:5432/recon, password=hunter2",
+			},
+			StopReason: llm.StopStop,
+			Usage: llm.Usage{
+				PromptTokens:     10,
+				CompletionTokens: 5,
+				CostUSD:          decimal.RequireFromString("0.001"),
+			},
+		}
+		args := fmt.Sprintf(`{"case_id":%q,"reason":"eval_scripted","summary":"scripted escalation"}`, ref.CaseID)
+		return llm.NewScripted(
+			llm.ScriptedStep{Response: preamble},
+			llm.ScriptedStep{Response: toolCallResponse("escalate", args)},
+		), nil
+	}
+}
+
+// loadTranscripts decodes every result detail and returns its transcript
+// snapshot. It fails when a case has no snapshot or when the snapshot carries
+// raw-data keys.
+func loadTranscripts(t *testing.T, pool *pgxpool.Pool, runID string) ([]map[string]any, error) {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT detail FROM eval_case_results WHERE eval_run_id = $1::uuid`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	transcripts := make([]map[string]any, 0)
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var detail map[string]any
+		if err := json.Unmarshal(raw, &detail); err != nil {
+			t.Fatalf("detail is not valid JSON: %v: %s", err, raw)
+		}
+		value, ok := detail["transcript"]
+		if !ok {
+			t.Fatalf("detail has no transcript: %s", raw)
+		}
+		snapshot, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("transcript has type %T, want object: %s", value, raw)
+		}
+		assertSafeTranscriptKeys(t, snapshot)
+		transcripts = append(transcripts, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return transcripts, nil
+}
+
+// assertSafeTranscriptKeys enforces the transcript v1 whitelist and proves no
+// raw args/results/memos/DSNs/keys leaked into the snapshot.
+func assertSafeTranscriptKeys(t *testing.T, snapshot map[string]any) {
+	t.Helper()
+	for _, key := range []string{"args", "result", "raw", "memo", "dsn", "api_key"} {
+		if jsonHasKey(snapshot, key) {
+			t.Fatalf("transcript contains raw-data key %q: %#v", key, snapshot)
+		}
+	}
+	steps, ok := snapshot["tool_steps"].([]any)
+	if !ok {
+		t.Fatalf("tool_steps has type %T", snapshot["tool_steps"])
+	}
+	allowedStepKeys := map[string]bool{
+		"seq": true, "tool": true, "refs": true, "error_code": true, "truncated": true,
+	}
+	for _, value := range steps {
+		step, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("step has type %T", value)
+		}
+		for key := range step {
+			if !allowedStepKeys[key] {
+				t.Fatalf("step contains unexpected key %q: %#v", key, step)
+			}
+		}
+		if _, ok := step["refs"].([]any); !ok {
+			t.Fatalf("step refs has type %T", step["refs"])
+		}
+	}
+}
+
+func jsonHasKey(value any, key string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for candidate, child := range typed {
+			if candidate == key || jsonHasKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if jsonHasKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestEvalRunCostCapAndResume(t *testing.T) {
