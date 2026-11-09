@@ -21,7 +21,8 @@ recon-eval report --run <eval_run_id>
 - Markdown goes to stdout by default.
 - `--json <path>` writes JSON to exactly that path and still prints Markdown.
 - `--out-dir <dir>` writes `<dir>/report.md` and `<dir>/report.json` and
-  suppresses stdout.
+  suppresses stdout. The pair is written Markdown first, then JSON; it is not
+  an atomic transaction, so a failed JSON write can leave the Markdown updated.
 - `--json` and `--out-dir` are mutually exclusive. Parent directories must
   already exist; reports are never written implicitly.
 - `DATABASE_URL` is the durable results database. `--dataset-dir` defaults to
@@ -121,8 +122,11 @@ mean of rates. Per-run numerators/denominators and per-run Wilson intervals
 remain visible in `repeat.per_run` and the Repeats table.
 
 For cost, the group total is the sum of per-run totals and the group mean is
-the mean of per-run means, never total divided by pooled cases. Money is always
-a decimal string with exactly six fractional digits, end to end.
+the mean of per-run means, never total divided by pooled cases. Money values
+are decimal strings with exactly six fractional digits, end to end. In
+`repeat.per_run`, an undefined per-run metric (for example a zero-case member)
+currently encodes `cost_total_usd`, `cost_mean_usd` and `steps_mean` as `""`
+rather than `null`; the latency fields use `null`. Treat `""` as undefined.
 
 ## Minimum sample
 
@@ -153,8 +157,15 @@ The only transcript content is the sanitized, bounded version-1 snapshot the
 runner stored in `eval_case_results.detail["transcript"]`: locator, proposal
 summary, a redacted ≤200-rune assistant excerpt, and ordered tool steps with
 only tool name, canonical refs, error code and truncation flag. The report
-re-applies shared secret redaction (API keys, bearer/authorization headers,
-OpenCode session IDs and `postgres://`/`postgresql://` DSNs) defensively.
+re-applies shared secret redaction defensively: API keys, Bearer/Basic/Token
+and `Authorization`/`Proxy-Authorization` header values (including JSON-escaped
+forms), OpenCode session IDs and `postgres://`/`postgresql://` DSNs. Redaction
+is pattern-based and best-effort, so exotic encodings are not guaranteed to be
+removed. Both the snapshot writer and the report reader drop a ref whole when
+it is empty, contains control characters, fails canonical validation, or
+contains credential material (URI userinfo, `token=`/`api_key=` assignments,
+or an `sk_live_` key); a ref is never partially redacted. Credential-shaped
+refs outside that deny-list are not guaranteed to be removed.
 
 - Missing snapshot: "transcript unavailable (run predates snapshot v1)" and
   the locator; this is not a report failure.
@@ -222,8 +233,10 @@ and prompt versions are allowed and shown in the metadata block.
 Both runs are rebuilt through the same report pipeline. A repeat-group member
 is compared as that named run only, with a warning; repeat-group comparison is
 handled by the M3-05 report (mean ± spread) and is not redefined here. A run
-compared with itself is allowed: all deltas are zero, intervals overlap, a
-warning says “comparing a run to itself”, and the exit code is 0.
+compared with itself is allowed: all deltas are zero, intervals overlap, and a
+warning says “comparing a run to itself”. A complete self-comparison exits 0;
+if either side is incomplete, the incomplete-data exit 2 below still applies
+(unless `--report-only`).
 
 Rates are proportions and deltas are percentage points. Each rate shows both
 sides' 95% Wilson intervals, whether they overlap, the direction (higher or
