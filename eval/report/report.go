@@ -118,6 +118,32 @@ type Report struct {
 	Scorecards      []Scorecard            `json:"scorecards"`
 	FailureAppendix []AppendixCase         `json:"failure_appendix"`
 	Warnings        []string               `json:"warnings"`
+
+	// completeness is the structured provenance behind the human-readable
+	// completeness warnings. It is deliberately unexported and therefore not
+	// part of the eval-report/v1 JSON contract; Compare uses it to fail closed
+	// on incomplete runs without parsing warning text.
+	completeness map[string]runCompleteness
+}
+
+// runCompleteness is one run's coverage verdict against the committed dataset.
+// Warnings holds the exact completeness warnings emitted by Build so compare
+// can surface the same wording.
+type runCompleteness struct {
+	Partial          bool
+	Aborted          bool
+	AbortReason      string
+	NoCaseResults    bool
+	MissingScoreable int
+	MissingModes     []string
+	Warnings         []string
+}
+
+// complete reports whether the run record and its case results cover the
+// committed dataset. Missing modes imply missing scoreable scenarios, but are
+// tracked separately for diagnostics.
+func (c runCompleteness) complete() bool {
+	return !c.Partial && !c.Aborted && !c.NoCaseResults && c.MissingScoreable == 0
 }
 
 // RunMetadata is the whitelisted run provenance. It never contains arbitrary
@@ -394,7 +420,7 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 		runData = append(runData, newRunReport(run, results, resolved.Scenarios))
 	}
 
-	warnings := initialWarnings(runs, runData, resolved)
+	warnings, completeness := initialWarnings(runs, runData, resolved)
 	report := Report{
 		Schema:      Schema,
 		GeneratedAt: opts.Clock.Now().UTC(),
@@ -430,6 +456,7 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 	warnings = append(warnings, sampleWarnings(report.ByMode, report.ByDifficulty,
 		opts.MinSample)...)
 	report.Warnings = warnings
+	report.completeness = completeness
 	return report, nil
 }
 
@@ -611,20 +638,32 @@ func groupRowsByRun(runIDs []string, rows []CaseRow) (map[string][]CaseRow, erro
 	return grouped, nil
 }
 
-func initialWarnings(runs []RunRow, data []runReport, resolved *resolvedDataset) []string {
-	warnings := make([]string, 0, len(runs)*3)
+func initialWarnings(runs []RunRow, data []runReport,
+	resolved *resolvedDataset) ([]string, map[string]runCompleteness) {
+	warnings := make([]string, 0, len(runs)*4)
+	completeness := make(map[string]runCompleteness, len(runs))
 	for _, run := range runs {
-		if run.EndedAt == nil {
-			warnings = append(warnings, fmt.Sprintf(
-				"run %s is partial: ended_at is null", run.ID))
+		record := runCompleteness{
+			Partial: run.EndedAt == nil,
+			Aborted: run.Aborted,
 		}
 		if run.Aborted {
-			reason := strings.TrimSpace(run.AbortReason)
-			if reason == "" {
-				reason = "unspecified"
+			record.AbortReason = strings.TrimSpace(run.AbortReason)
+			if record.AbortReason == "" {
+				record.AbortReason = "unspecified"
 			}
-			warnings = append(warnings, fmt.Sprintf("run %s aborted (%s)", run.ID, reason))
 		}
+		if record.Partial {
+			warning := fmt.Sprintf("run %s is partial: ended_at is null", run.ID)
+			warnings = append(warnings, warning)
+			record.Warnings = append(record.Warnings, warning)
+		}
+		if record.Aborted {
+			warning := fmt.Sprintf("run %s aborted (%s)", run.ID, record.AbortReason)
+			warnings = append(warnings, warning)
+			record.Warnings = append(record.Warnings, warning)
+		}
+		completeness[run.ID] = record
 	}
 	var gitSHA string
 	for _, run := range runs {
@@ -645,8 +684,12 @@ func initialWarnings(runs []RunRow, data []runReport, resolved *resolvedDataset)
 
 	scoreable := scoreableScenarios(resolved.Truth.Scenarios)
 	for index, run := range runs {
+		record := completeness[run.ID]
 		if len(data[index].results) == 0 {
-			warnings = append(warnings, fmt.Sprintf("run %s has no case results", run.ID))
+			record.NoCaseResults = true
+			warning := fmt.Sprintf("run %s has no case results", run.ID)
+			warnings = append(warnings, warning)
+			record.Warnings = append(record.Warnings, warning)
 		}
 		present := make(map[string]struct{}, len(data[index].results))
 		for _, result := range data[index].results {
@@ -659,12 +702,15 @@ func initialWarnings(runs []RunRow, data []runReport, resolved *resolvedDataset)
 			}
 		}
 		if missing > 0 {
+			record.MissingScoreable = missing
 			state := "missing"
 			if run.EndedAt == nil || run.Aborted {
 				state = "partial run missing"
 			}
-			warnings = append(warnings, fmt.Sprintf(
-				"run %s is %s %d scoreable scenarios", run.ID, state, missing))
+			warning := fmt.Sprintf(
+				"run %s is %s %d scoreable scenarios", run.ID, state, missing)
+			warnings = append(warnings, warning)
+			record.Warnings = append(record.Warnings, warning)
 		}
 		if run.EndedAt == nil || run.Aborted {
 			expectedModes := truthModes(resolved.Truth.Scenarios)
@@ -676,13 +722,17 @@ func initialWarnings(runs []RunRow, data []runReport, resolved *resolvedDataset)
 			}
 			if len(missingModes) > 0 {
 				sort.Strings(missingModes)
-				warnings = append(warnings, fmt.Sprintf(
+				record.MissingModes = missingModes
+				warning := fmt.Sprintf(
 					"partial run %s has no results for modes: %s",
-					run.ID, strings.Join(missingModes, ", ")))
+					run.ID, strings.Join(missingModes, ", "))
+				warnings = append(warnings, warning)
+				record.Warnings = append(record.Warnings, warning)
 			}
 		}
+		completeness[run.ID] = record
 	}
-	return warnings
+	return warnings, completeness
 }
 
 func scoreableScenarios(scenarios []dataset.ScenarioTruth) map[string]struct{} {

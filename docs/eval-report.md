@@ -1,8 +1,9 @@
-# Eval reports and component evals (M3-05/M3-06)
+# Eval reports, component evals, and run comparison (M3-05/M3-06/M3-07)
 
 `recon-eval report` renders M3 agent evaluation results as Markdown and
 `eval-report/v1` JSON. `recon-eval matcher` renders the standalone matcher
-component report as Markdown and `matcher-report/v1` JSON. Reports are
+component report as Markdown and `matcher-report/v1` JSON. `recon-eval compare`
+renders a `compare/v1` Markdown/JSON diff between two scored runs. Reports are
 synthetic-data tooling: they read only the durable `eval_runs` /
 `eval_case_results` rows (agent reports) or a disposable eval sandbox clone
 (matcher report) plus the committed dataset truth, and they never write to the
@@ -204,6 +205,67 @@ Every M3-06 agent report contains one generic verifier placeholder:
 
 Markdown renders "not applicable until M4-05". M3-06 does not import or create
 `internal/policy/verify`; M4-05 fills the same report-owned scorecard shape.
+
+## Run comparison (`compare/v1`)
+
+```text
+recon-eval compare <runA> <runB> [--report-only]
+                   [--dataset-dir <path>]
+                   [--json <path> | --out-dir <dir>]
+```
+
+A is the baseline and B is the candidate; every delta is `B − A`. Both run IDs
+must be valid UUIDs and exist. The two runs must share `suite`, `split`, and
+`dataset_version`; a mismatch is exit 2 with a clear message. Different models
+and prompt versions are allowed and shown in the metadata block.
+
+Both runs are rebuilt through the same report pipeline. A repeat-group member
+is compared as that named run only, with a warning; repeat-group comparison is
+handled by the M3-05 report (mean ± spread) and is not redefined here. A run
+compared with itself is allowed: all deltas are zero, intervals overlap, a
+warning says “comparing a run to itself”, and the exit code is 0.
+
+Rates are proportions and deltas are percentage points. Each rate shows both
+sides' 95% Wilson intervals, whether they overlap, the direction (higher or
+lower is better), and a flag:
+
+- `regression`: intervals are disjoint and the candidate is worse.
+- `improvement`: intervals are disjoint and the candidate is better.
+- `no change`: intervals overlap, even when the point delta is large.
+- `n/a`: either side has a zero denominator; never a regression.
+
+The gating set is false-fix increase, accuracy decrease, evidence-validity
+decrease, and correct-escalation decrease, overall and per mode. Injection
+resistance and over-escalation are displayed and classified but are non-gating
+in M3-07. Cost, latency, and steps deltas are descriptive only and never drive
+the exit code.
+
+A run is **incomplete** when it is partial (`ended_at` null), aborted, has no
+case results, or omits scoreable scenarios from the committed dataset. Compare
+copies the report pipeline's completeness warnings into `warnings` and records
+`complete`, `aborted`, `abort_reason`, `partial`, `missing_scoreable`, and
+`missing_modes` per side. An incomplete comparison never claims “no gating
+regression”: it exits 2 unless `--report-only` is set, in which case it exits 0
+with the warnings and an explicit suppressed-exit footer. This applies to
+missing candidate scenarios as well as aborted or zero-case runs.
+
+- cost: `delta_usd` is decimal text (six fractional digits) and `delta_pct` is
+  null when the baseline mean is not positive;
+- latency: p50/p95 `delta_ms` and `delta_pct` when baseline > 0;
+- steps: mean delta as decimal text.
+
+Exit codes: `0` no gating regression on complete runs, `1` gating regression
+or load/validation/database/render/write failure, `2` usage, metadata
+mismatch, or incomplete run data. `--report-only` suppresses the gating exit 1
+and the incomplete exit 2; the footer says “--report-only: exit suppressed
+(would exit 1)” for a regression and “(would exit 2 for incomplete data)” for
+an incomplete comparison. Output follows the report
+command: Markdown to stdout by default, `--json <path>` writes that exact JSON
+path and still prints Markdown, `--out-dir <dir>` writes
+`<dir>/compare.md` and `<dir>/compare.json` and suppresses stdout. Parents must
+already exist; nothing is written implicitly. `generated_at` is the only
+volatile field and comes from the injected clock; there is no appendix or
+transcript content in compare output.
 
 ## JSON shape
 

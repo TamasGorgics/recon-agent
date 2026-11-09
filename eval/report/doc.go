@@ -42,6 +42,23 @@
 // (applicable=false, deferred_to=M4-05). M3-06 does not import or create
 // internal/policy/verify; M4-05 fills the same report-owned shape.
 //
+// # Run comparison
+//
+// Compare builds each named run through the same report pipeline (never the
+// repeat-group report aggregation), requires matching suite, split, and
+// dataset_version, and renders compare/v1 Markdown + JSON from one model.
+// Rate deltas are percentage points with both 95% Wilson intervals; a
+// disjoint interval plus adverse direction is the only regression signal.
+// False-fix increase and accuracy/evidence-validity/correct-escalation
+// decreases gate exit 1, overall and per mode; injection resistance and
+// over-escalation are classified but non-gating, and cost/latency/steps are
+// descriptive. Build's completeness warnings (missing scoreable scenarios,
+// partial/aborted state, zero cases, missing modes) are copied into the
+// comparison, and either incomplete side makes the comparison exit 2 unless
+// --report-only. --report-only suppresses the gating and incomplete exits; it
+// never hides usage/metadata/load errors. Repeated runs are compared as the
+// named run only, with a warning.
+//
 // # Transcripts and redaction
 //
 // The failure appendix renders only the sanitized, bounded version-1 snapshot

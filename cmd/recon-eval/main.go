@@ -30,6 +30,9 @@ Commands:
   matcher          build the standalone matcher component report
                    usage: recon-eval matcher --split dev|test|injection
                           [--dataset-dir <path>] [--json <path>|--out-dir <dir>]
+  compare          compare two scored runs and flag gating regressions
+                   usage: recon-eval compare <runA> <runB> [--report-only]
+                          [--dataset-dir <path>] [--json <path>|--out-dir <dir>]
   help             print this help
 
 Environment:
@@ -39,6 +42,9 @@ Environment:
   CONFIG_FILE        optional YAML config path (defaults < environment)
 
 Exit codes: 0 completed or cost-cap stop, 1 failure, 2 usage error.
+compare: 0 no gating regression, 1 gating regression or failure, 2 usage,
+metadata mismatch, or incomplete run data; --report-only suppresses the gating
+exit 1 and the incomplete exit 2, exiting 0 with warnings.
 `
 
 // commandDeps are process-boundary seams for commands that need an injectable
@@ -46,12 +52,14 @@ Exit codes: 0 completed or cost-cap stop, 1 failure, 2 usage error.
 type commandDeps struct {
 	Report  reportDeps
 	Matcher matcherDeps
+	Compare compareDeps
 }
 
 func defaultCommandDeps() commandDeps {
 	return commandDeps{
 		Report:  defaultReportDeps(),
 		Matcher: defaultMatcherDeps(),
+		Compare: defaultCompareDeps(),
 	}
 }
 
@@ -80,6 +88,8 @@ func mainWithDeps(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return reportCommand(ctx, args[1:], stdout, stderr, deps.Report)
 	case "matcher":
 		return matcherCommand(ctx, args[1:], stdout, stderr, deps.Matcher)
+	case "compare":
+		return compareCommand(ctx, args[1:], stdout, stderr, deps.Compare)
 	default:
 		_, _ = fmt.Fprintf(stderr, "recon-eval: unknown command %q (try: recon-eval help)\n", args[0])
 		return 2

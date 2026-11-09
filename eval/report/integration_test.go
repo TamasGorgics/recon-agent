@@ -191,3 +191,96 @@ func countCaseRows(t *testing.T, pool *pgxpool.Pool) int {
 	}
 	return count
 }
+
+func TestPostgresCompareEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	truth, manifest := devDataset(t)
+	feeScenarios := make([]dataset.ScenarioTruth, 0, 12)
+	for _, scenario := range truth.Scenarios {
+		if scenario.Mode == "fee_variance" && scenario.BreakSignature != "" {
+			feeScenarios = append(feeScenarios, scenario)
+		}
+	}
+	if len(feeScenarios) != 12 {
+		t.Fatalf("fee_variance scoreable scenarios = %d, want 12", len(feeScenarios))
+	}
+
+	database := testdb.New(t)
+	app, err := db.OpenRole(ctx, db.RoleApp, database.DSNFor(db.RoleApp))
+	if err != nil {
+		t.Fatalf("open app role: %v", err)
+	}
+	t.Cleanup(app.Close)
+	pool := app.Pool
+
+	started := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	insertRun := func(model, prompt string) string {
+		t.Helper()
+		var runID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO eval_runs
+			     (suite, split, dataset_version, model, prompt_version, seed,
+			      git_sha, config, started_at, ended_at)
+			 VALUES ('agent', 'dev', $1, $2, $3, $4, NULL, '{}'::jsonb, $5, $6)
+			 RETURNING id::text`,
+			manifest.EvalDatasetVersion, model, prompt, manifest.Seed,
+			started, ended).Scan(&runID); err != nil {
+			t.Fatalf("insert eval run: %v", err)
+		}
+		return runID
+	}
+	insertCase := func(runID string, scenario dataset.ScenarioTruth, correct, falseFix bool) {
+		t.Helper()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO eval_case_results
+			     (eval_run_id, scenario_id, failure_mode, correct, false_fix, escalated,
+			      confidence, cost_usd, latency_ms, steps, detail)
+			 VALUES ($1::uuid, $2, $3, $4, $5, false, NULL, '0.010000'::numeric,
+			         120, 2, '{}'::jsonb)`,
+			runID, scenario.ScenarioID, scenario.Mode, correct, falseFix); err != nil {
+			t.Fatalf("insert case result: %v", err)
+		}
+	}
+
+	runA := insertRun("model-a", "v1")
+	runB := insertRun("model-b", "v2")
+	for index, scenario := range feeScenarios {
+		insertCase(runA, scenario, true, false)
+		insertCase(runB, scenario, index < 6, index >= 6)
+	}
+
+	before := countCaseRows(t, pool)
+	comparison, err := Compare(ctx, NewPostgresSource(pool), runA, runB, CompareOptions{
+		DatasetDir: devDatasetDir(t),
+		Clock:      fixtureClock(t),
+	})
+	after := countCaseRows(t, pool)
+	if before != after {
+		t.Fatalf("compare wrote case rows: %d -> %d", before, after)
+	}
+	if err != nil {
+		t.Fatalf("Compare: %v", err)
+	}
+	if comparison.Schema != CompareSchema || comparison.A.RunID != runA ||
+		comparison.B.RunID != runB {
+		t.Fatalf("comparison metadata = %+v", comparison)
+	}
+	if comparison.Overall.Cases.A != 12 || comparison.Overall.Cases.B != 12 {
+		t.Fatalf("cases = %+v", comparison.Overall.Cases)
+	}
+	if comparison.Overall.FalseFix.Classification != ClassificationRegression ||
+		!comparison.ExitCriteria.Failed {
+		t.Fatalf("comparison = %+v", comparison.Overall.FalseFix)
+	}
+	markdown, err := RenderCompareMarkdown(comparison)
+	if err != nil {
+		t.Fatalf("RenderCompareMarkdown: %v", err)
+	}
+	if !strings.Contains(string(markdown), "Gating regression detected") {
+		t.Fatalf("markdown = %s", markdown)
+	}
+	if _, err := RenderCompareJSON(comparison); err != nil {
+		t.Fatalf("RenderCompareJSON: %v", err)
+	}
+}
