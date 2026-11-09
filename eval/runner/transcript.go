@@ -26,6 +26,15 @@ const (
 var (
 	postgresDSNPattern = regexp.MustCompile(`(?i)\bpostgres(?:ql)?://[^\s"'<>]+`)
 	passwordPattern    = regexp.MustCompile(`(?i)\bpassword(["']?\s*[:=]\s*)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)`)
+	controlCharPattern = regexp.MustCompile(`[\x00-\x1f\x7f]`)
+	// refSecretPattern covers credential shapes that the shared LLM redactor
+	// does not know about but that must never survive in an evidence ref:
+	// URI userinfo, token/api-key assignments, and live Stripe keys.
+	refSecretPattern = regexp.MustCompile(`(?i)(?:` +
+		`\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@` +
+		`|\b(?:token|api[_-]?key)\s*[:=]\s*\S+` +
+		`|sk_live_[a-z0-9]+` +
+		`)`)
 )
 
 // transcriptSnapshotDoc is the versioned wire shape. It never carries raw tool
@@ -74,19 +83,19 @@ func transcriptSnapshot(report agentrun.Report, outcome, proposalID, proposalTyp
 		truncated = true
 	}
 	for _, step := range steps {
-		refs := tools.SortedUnique(step.Refs)
+		refs := sanitizeTranscriptRefs(step.Refs)
 		if len(refs) > transcriptMaxRefsPerStep {
 			refs = refs[:transcriptMaxRefsPerStep]
 			truncated = true
 		}
-		errorCode := step.ErrorCode
+		errorCode := redactTranscriptText(step.ErrorCode)
 		if runes := []rune(errorCode); len(runes) > transcriptMaxErrorRunes {
 			errorCode = string(runes[:transcriptMaxErrorRunes])
 			truncated = true
 		}
 		doc.ToolSteps = append(doc.ToolSteps, transcriptStepDoc{
 			Seq:       step.Seq,
-			Tool:      step.Tool,
+			Tool:      redactTranscriptText(step.Tool),
 			Refs:      refs,
 			ErrorCode: errorCode,
 			Truncated: step.Truncated,
@@ -164,4 +173,35 @@ func redactTranscriptText(value string) string {
 	value = postgresDSNPattern.ReplaceAllString(value, transcriptRedacted)
 	value = passwordPattern.ReplaceAllString(value, "password${1}"+transcriptRedacted)
 	return value
+}
+
+// refCarriesSecret reports whether a ref contains any known credential class,
+// including classes the generic text redactor handles plus URI userinfo,
+// token/api_key assignments, and live Stripe keys.
+func refCarriesSecret(ref string) bool {
+	if redactTranscriptText(ref) != ref {
+		return true
+	}
+	return refSecretPattern.MatchString(ref)
+}
+
+// sanitizeTranscriptRefs keeps only canonical evidence refs that carry no
+// secret material. A ref that needs redaction, contains control characters, or
+// fails tools.ValidateRef is dropped whole: a partially redacted ext: reference
+// would no longer identify a real record and must not look like evidence.
+func sanitizeTranscriptRefs(refs []string) []string {
+	safe := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref == "" || controlCharPattern.MatchString(ref) {
+			continue
+		}
+		if refCarriesSecret(ref) {
+			continue
+		}
+		if err := tools.ValidateRef(ref); err != nil {
+			continue
+		}
+		safe = append(safe, ref)
+	}
+	return tools.SortedUnique(safe)
 }
