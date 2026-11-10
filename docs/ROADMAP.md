@@ -161,7 +161,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M3-07 | Run comparison | S | M3-04 |
 | ☑ | M3-08 | Prompt versions and second model | M | M2-02, M3-04 |
 | ☑ | M3-09 | Baseline, thresholds, gate command | M | M3-05, M3-06, M3-07, M3-08 |
-| ☐ | M4-01 | Approval, executor, and outbox schema | S | M2-01 |
+| ☑ | M4-01 | Approval, executor, and outbox schema | S | M2-01 |
 | ☐ | M4-02 | API server skeleton | M | M1-07, M2-01 |
 | ☐ | M4-03 | Proposal state machine | M | M2-01, M1-05 |
 | ☐ | M4-04 | Policy engine | M | M2-01 |
