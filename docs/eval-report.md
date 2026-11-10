@@ -314,6 +314,12 @@ file is the source of truth and must be committed before the first held-out
 - T0 is `applicable: false`, `deferred_to: M4-14`; injection keeps
   `min_rate: 1.0`; calibration is `gated: false`.
 
+The recorded `thresholds.path` is the path exactly as resolved: the default is
+absolute, so committed `gate.json` / `gate.md` embed the generating machine's
+filesystem path (including its home directory). Treat that field as provenance,
+not as a portable path; pass an explicit relative `--thresholds` path if the
+recorded path must stay clone-relative.
+
 Evaluation order and semantics:
 
 1. `t0_false_fix` — **not applicable until M4-14** (deterministic verifiers and

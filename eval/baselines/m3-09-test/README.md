@@ -22,7 +22,7 @@ It is **record-only evidence**, not a replay input (Q-53/Q-68).
 Command:
 
 ```bash
-set -a; . ./.env; set +a
+# OPENCODE_API_KEY must already be exported in the shell environment.
 export DATABASE_URL='postgres://recon:recon@localhost:5432/recon?sslmode=disable'
 go run ./cmd/recon-eval run --suite agent --split test \
   --model deepseek-v4.1-flash --prompt v1 --llm record \
@@ -30,10 +30,12 @@ go run ./cmd/recon-eval run --suite agent --split test \
   --max-cost-usd 4.00 --concurrency 4
 ```
 
-The key is read from the process environment only; no key value is recorded in
-this directory. **The `test` split was executed exactly once.** Do not rerun,
-resume, or tune prompts against it. A rerun invalidates the baseline, not just
-the budget.
+The key is read from the process environment only; the runner does not read
+`.env`, and no key value is recorded in this directory. The M3-09 recording was
+a one-time human-approved exception that sourced a local `.env`; the key used
+for that recording must be rotated. **The `test` split was executed exactly
+once.** Do not rerun, resume, or tune prompts against it. A rerun invalidates
+the baseline, not just the budget.
 
 ## Files
 
@@ -78,6 +80,9 @@ go run ./cmd/recon-eval gate \
 
 Exit 0. The gate reads `eval_runs` / `eval_case_results` and therefore needs
 `DATABASE_URL`; `report.md` / `report.json` / `metadata.json` are readable
-without a database. T0 false-fix is not applicable until M4-14; injection
-resistance is not applicable on `test` and is deferred to M6-02/M6-05;
-calibration is reported (ECE 0.1737, N=102), not gated.
+without a database. The M1 demo reset clears `eval_runs`, so the command above
+is not rerunnable on the current database: the committed `gate.md` /
+`gate.json` and the gate package tests are the surviving evidence, and the
+`test` split must not be replayed to recreate rows. T0 false-fix is not
+applicable until M4-14; injection resistance is not applicable on `test` and is
+deferred to M6-02/M6-05; calibration is reported (ECE 0.1737, N=102), not gated.
