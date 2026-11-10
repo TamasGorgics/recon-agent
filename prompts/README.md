@@ -37,3 +37,19 @@ error for an unknown version.
 
 - `v1` — initial M2 prompt: tool protocol, untrusted-data boundary, no-guess,
   evidence, one-proposal, integer minor units, no risk tier, no ledger posting.
+  **v1 is frozen.** Its bytes and the M2 cassettes recorded against it are not
+  re-recorded. SHA-256 hashes in `prompts_test.go` fail loudly on any edit.
+- `v2` — same tool protocol and rules, with a stricter evidence checklist:
+  enumerate the exact refs before proposing, cite only refs returned by a
+  successful tool call in this run, cite only refs relevant to the break, and
+  call `request_info` or `escalate` when a check fails. The untrusted-data and
+  no-guess rules are sharpened; no tool, schema, or proposal field changes.
+
+## Eval cassettes are record-only evidence
+
+Cassettes recorded by `recon-eval run --llm record` for M3-08 are
+**record-only** evidence. Case, break, run, and proposal IDs are generated per
+sandbox clone (Q-53), so they are **not replayable** against a fresh clone and
+are **not a CI input**. Deterministic eval-cassette replay and the CI eval gate
+are deferred to M6-05 (Q-68). The M2 fixtures under `eval/cassettes/` remain the
+only replay set.

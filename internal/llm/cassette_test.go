@@ -638,3 +638,85 @@ func TestNormalizeCassetteResponseEmptyRaw(t *testing.T) {
 		t.Fatalf("marshal normalized response: %v", err)
 	}
 }
+
+// TestCassetteRecordInvalidToolArguments covers a live model returning tool
+// arguments that are not valid JSON. The agent loop repairs this output, so
+// record mode must keep the live response but store the unrepresentable raw
+// arguments as null in the cassette (request history and response).
+func TestCassetteRecordInvalidToolArguments(t *testing.T) {
+	dir := t.TempDir()
+	req := cassetteRequest()
+	malformed := json.RawMessage(`{"case_id":`)
+	inner := &countingClient{fn: func(Request) (Response, error) {
+		response := cassetteResponse()
+		response.StopReason = StopToolCalls
+		response.Message = Message{Role: RoleAssistant, ToolCalls: []ToolCall{{
+			ID: "call_1", Name: "get_case", Arguments: malformed,
+		}}}
+		return response, nil
+	}}
+	recorder, err := NewCassette(inner, CassetteOptions{
+		Mode:     CassetteRecord,
+		Dir:      dir,
+		Provider: ProviderOpenCodeGo,
+		BaseURL:  DefaultBaseURL,
+		Now:      func() time.Time { return time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("NewCassette(record): %v", err)
+	}
+	recorded, err := recorder.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("record malformed arguments: %v", err)
+	}
+	recordedArgs := string(recorded.Message.ToolCalls[0].Arguments)
+	if recordedArgs != "" && recordedArgs != "null" {
+		t.Fatalf("recorded arguments = %q, want null (unrepresentable arguments are stored as null)", recordedArgs)
+	}
+
+	// The next agent step sends the malformed assistant tool call back in the
+	// request history; recording that request must also succeed.
+	followUp := req
+	followUp.Messages = append(append([]Message(nil), req.Messages...), recorded.Message,
+		Message{Role: RoleTool, ToolCallID: "call_1", Content: `{"error":{"code":"invalid_arguments"}}`})
+	if _, err := recorder.Complete(context.Background(), followUp); err != nil {
+		t.Fatalf("record follow-up with malformed history: %v", err)
+	}
+
+	path, err := recorder.path(req, mustCassetteKey(t, recorder, req))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read cassette: %v", err)
+	}
+	var stored cassetteFile
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("decode cassette: %v", err)
+	}
+	if len(stored.Response.Message.ToolCalls) != 1 {
+		t.Fatalf("stored tool calls = %d, want 1", len(stored.Response.Message.ToolCalls))
+	}
+	storedArgs := string(stored.Response.Message.ToolCalls[0].Arguments)
+	if storedArgs != "" && storedArgs != "null" {
+		t.Fatalf("stored malformed arguments = %q, want null", storedArgs)
+	}
+
+	replay, err := NewCassette(nil, CassetteOptions{
+		Mode:     CassetteReplay,
+		Dir:      dir,
+		Provider: ProviderOpenCodeGo,
+		BaseURL:  DefaultBaseURL,
+	})
+	if err != nil {
+		t.Fatalf("NewCassette(replay): %v", err)
+	}
+	replayed, err := replay.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("replay recorded malformed response: %v", err)
+	}
+	if !reflect.DeepEqual(recorded, replayed) {
+		t.Fatalf("replay differs\nrecorded: %#v\nreplayed: %#v", recorded, replayed)
+	}
+}

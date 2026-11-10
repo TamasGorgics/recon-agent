@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ type RunSummary struct {
 	Aborted     bool
 	SpentUSD    decimal.Decimal
 	CapUSD      decimal.Decimal
+	CassetteDir string
 	Note        string
 }
 
@@ -230,6 +232,15 @@ func applyResumeOptions(opts *Options, stored runRow) error {
 	if !opts.PromptSet {
 		opts.Prompt = stored.PromptVersion
 	}
+	if stored.CassetteKnown {
+		switch {
+		case opts.CassetteDirSet && filepath.Clean(opts.CassetteDir) != filepath.Clean(stored.CassetteDir):
+			return usagef("--cassette-dir %q conflicts with stored run cassette dir %q",
+				opts.CassetteDir, stored.CassetteDir)
+		case !opts.CassetteDirSet:
+			opts.CassetteDir = stored.CassetteDir
+		}
+	}
 	if opts.Seed == nil {
 		seed := stored.Seed
 		opts.Seed = &seed
@@ -305,6 +316,7 @@ func executeRun(ctx context.Context, row runRow, opts Options, rd *resolvedDatas
 		RunID:       row.ID,
 		RepeatIndex: row.RepeatIndex,
 		CapUSD:      opts.MaxCostUSD,
+		CassetteDir: resolveCassetteDir(opts, deps),
 	}
 
 	completed, err := loadCompletedScenarios(ctx, results, row.ID)
@@ -314,6 +326,17 @@ func executeRun(ctx context.Context, row runRow, opts Options, rd *resolvedDatas
 	spent, _, err := loadSpent(ctx, results, row.ID)
 	if err != nil {
 		return summary, err
+	}
+
+	var recordClient llm.Client
+	if opts.LLM == LLMRecord {
+		client, err := newRecordClient(runtimeCfg.LLM, summary.CassetteDir, opts.UpdateCassettes,
+			llm.Options{Clock: runClock, Logger: logger})
+		if err != nil {
+			return summary, markRunError(ctx, results, row, runClock, spent, opts.MaxCostUSD,
+				fmt.Errorf("eval/runner: build recording client: %w", err), logger)
+		}
+		recordClient = client
 	}
 
 	actor, err := loadLoadActor()
@@ -372,17 +395,19 @@ func executeRun(ctx context.Context, row runRow, opts Options, rd *resolvedDatas
 	}
 
 	execution := &runExecution{
-		run:        row,
-		opts:       opts,
-		rd:         rd,
-		sandbox:    sb,
-		results:    results,
-		deps:       deps,
-		runtimeCfg: runtimeCfg,
-		logger:     logger,
-		truth:      truthByScenario,
-		costs:      newCostState(spent),
-		resumed:    opts.Resume != "",
+		run:          row,
+		opts:         opts,
+		rd:           rd,
+		sandbox:      sb,
+		results:      results,
+		deps:         deps,
+		runtimeCfg:   runtimeCfg,
+		logger:       logger,
+		truth:        truthByScenario,
+		costs:        newCostState(spent),
+		resumed:      opts.Resume != "",
+		cassetteDir:  summary.CassetteDir,
+		recordClient: recordClient,
 	}
 	executed, aborted, poolErr := executePool(ctx, execution, pending)
 	closeErr := sb.Close(context.WithoutCancel(ctx))
@@ -523,6 +548,9 @@ func (s Summary) String() string {
 			run.SpentUSD.String(), capLabel(run.CapUSD))
 		if run.Aborted {
 			builder.WriteString(" — aborted at cost cap")
+		}
+		if run.CassetteDir != "" {
+			builder.WriteString(" — cassettes " + run.CassetteDir)
 		}
 		if run.Note != "" {
 			builder.WriteString(" — " + run.Note)

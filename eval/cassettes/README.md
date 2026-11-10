@@ -29,12 +29,40 @@ version, system prompt, messages, tools, tool choice, temperature (including
 
 - Synthetic prompts and responses only: no real case data, names, account
   numbers, memos, API keys, Authorization headers, or session IDs.
-- Files are pretty-printed JSON with a trailing newline. The hard cap is 1 MiB;
-  M3-09 owns the committed-size budget.
+- Files are pretty-printed JSON with a trailing newline. The hard cap is
+  **1 MiB per file**. Total committed cassette evidence has a **10 MiB
+  (10,485,760-byte)** budget across `eval/cassettes/`,
+  `eval/cassette-evidence/`, and every `eval/baselines/*/cassettes/` root.
+  `TestCommittedEvalCassetteBudget` enforces the per-file cap, the total budget,
+  schema 1, filename == key, path model/prompt consistency, `stream: false`,
+  `temperature: 0`, and empty `redactions`.
 - The `redactions` array names any redaction class applied while writing
   (`api_key`, `bearer`, `authorization`, `session_id`); it is empty for clean
   synthetic data.
 - Do not commit a cassette generated from a live call that used real data.
+
+## Replay fixtures vs record-only evidence
+
+Two kinds of cassette files exist in this repository:
+
+- **Replay fixtures** live under `eval/cassettes/` and are the only cassettes
+  any test replays. They are the 12 M2 fixture cassettes described below.
+- **Record-only evidence** lives under `eval/cassette-evidence/` and
+  `eval/baselines/`. It records what an eval run actually requested and
+  received; nothing loads it as a replay set, and no test replays it.
+
+M3-08/M3-09 eval-run cassettes are record-only evidence. Q-53 random
+IDs/timestamps prevent byte-identical replay on another clone. They live under
+`eval/cassette-evidence/` and `eval/baselines/*/cassettes/`, are not loaded by
+`TestCommittedCassettes` or any replay path, and are not CI inputs.
+Deterministic replay and the CI eval gate remain M6-05 and require a pinned
+world (Q-68).
+
+The selected `test` baseline used prompt v1. Dev comparison evidence includes
+both v1 and v2 runs; `v2` was recorded only as dev evidence for the stricter
+evidence checklist and was never run on `test`. **v1 is frozen.** Its M2
+cassettes are never re-recorded; v2 recordings are new files under the `v2`
+prompt path and do not alter released v1 files.
 
 ## M2 fixture cassettes
 
@@ -45,11 +73,11 @@ The M2 smoke scenarios are recorded once against the eval-only fixture in
 eval/cassettes/opencode/deepseek-v4.1-flash/v1/
 ```
 
-The M2-11 commit contains **11 cassette files** covering the three scenarios
-(`fee_variance`, `reference_typo`, `duplicate_charge`). A scenario can take
-several model steps, so the invariant is one hit per request, not a fixed file
-count. `TestCommittedCassettes` pins the count and the no-secret rules; the M2
-gate fails loudly with a re-record hint on any miss.
+The M2-11 commit contains **exactly 12 cassette files** covering the three
+scenarios (`fee_variance`, `reference_typo`, `duplicate_charge`). A scenario can
+take several model steps, so the invariant is one hit per request, not a fixed
+file count. `TestCommittedCassettes` pins the count at 12 and enforces the
+no-secret rules; the M2 gate fails loudly with a re-record hint on any miss.
 
 Re-record only when the request shape changes: prompts (`prompts/v1/*`), tool
 schemas or descriptions, the fixture, the seed message, repair strings, or

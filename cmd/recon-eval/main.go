@@ -20,9 +20,12 @@ Commands:
   run              run the M3 agent eval on one committed dataset split
                    usage: recon-eval run --suite agent --split dev|test|injection
                           --model <id> --prompt <version> --seed <n> --repeat <k>
-                          --concurrency <n> --llm live|cassette
-                          --max-cost-usd <decimal> [--resume <eval_run_id>]
-                          [--dataset-dir <path>]
+                          --concurrency <n> --llm live|record|cassette
+                          --max-cost-usd <decimal>
+                          [--cassette-dir <path>] [--update-cassettes]
+                          [--resume <eval_run_id>] [--dataset-dir <path>]
+                   record = live execution plus cassette recording under
+                          <cassette-dir>/<provider>/<model>/<prompt>/<sha256>.json
   report           render a Markdown + JSON eval report from durable results
                    usage: recon-eval report --run <eval_run_id>
                           [--dataset-dir <path>] [--json <path>|--out-dir <dir>]
@@ -38,7 +41,7 @@ Commands:
 Environment:
   DATABASE_URL       durable results database (eval_runs, eval_case_results)
   TEST_DATABASE_URL  optional sandbox maintenance DSN; falls back to DATABASE_URL
-  OPENCODE_API_KEY   required only for --llm live; never read from .env
+  OPENCODE_API_KEY   required only for --llm live or --llm record; never read from .env
   CONFIG_FILE        optional YAML config path (defaults < environment)
 
 Exit codes: 0 completed or cost-cap stop, 1 failure, 2 usage error.

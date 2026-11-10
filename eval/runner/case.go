@@ -25,17 +25,19 @@ import (
 )
 
 type runExecution struct {
-	run        runRow
-	opts       Options
-	rd         *resolvedDataset
-	sandbox    *sandbox.Sandbox
-	results    *pgxpool.Pool
-	deps       Deps
-	runtimeCfg config.Config
-	logger     *slog.Logger
-	truth      map[string]dataset.ScenarioTruth
-	costs      *costState
-	resumed    bool
+	run          runRow
+	opts         Options
+	rd           *resolvedDataset
+	sandbox      *sandbox.Sandbox
+	results      *pgxpool.Pool
+	deps         Deps
+	runtimeCfg   config.Config
+	logger       *slog.Logger
+	truth        map[string]dataset.ScenarioTruth
+	costs        *costState
+	resumed      bool
+	cassetteDir  string
+	recordClient llm.Client
 }
 
 // caseResultRow is one eval_case_results insert.
@@ -93,18 +95,24 @@ func (e *runExecution) executeCase(ctx context.Context, ref sandbox.CaseRef) err
 		if err != nil {
 			return fmt.Errorf("eval/runner: build client for scenario %s: %w", ref.ScenarioID, err)
 		}
+	} else if e.opts.LLM == LLMRecord {
+		client = e.recordClient
 	}
 
 	mode := agentrun.ModeScripted
-	if e.opts.LLM == LLMLive {
+	if e.opts.LLM == LLMLive || e.opts.LLM == LLMRecord {
 		mode = agentrun.ModeOpencode
+	}
+	cassetteDir := e.cassetteDir
+	if cassetteDir == "" {
+		cassetteDir = resolveCassetteDir(e.opts, e.deps)
 	}
 	report, runErr := agentrun.Run(ctx, agentrun.Options{
 		CaseID:        ref.CaseID,
 		Mode:          mode,
 		PromptVersion: e.opts.Prompt,
 		Model:         e.opts.Model,
-		CassetteDir:   e.deps.CassetteDir,
+		CassetteDir:   cassetteDir,
 	}, agentrun.Deps{
 		Config:    e.runtimeCfg,
 		App:       e.sandbox.App,

@@ -1,0 +1,12 @@
+schema_version: 1
+source: internal/llm/pricing.yaml
+models:
+  - id: deepseek-v4.1-flash
+    role: primary
+    allowed_fallback: false
+  - id: glm-5.3-flash
+    role: second
+    allowed_fallback: false
+eval:
+  default_model: deepseek-v4.1-flash
+  default_prompt: v1
