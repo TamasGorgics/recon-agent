@@ -261,6 +261,40 @@ func validateCassetteComponent(value string) error {
 	return nil
 }
 
+// sanitizeCassetteRequest replaces raw JSON fields that cannot be represented
+// in a JSON document with null. The request slices are already copies from
+// requestFor; nested tool-call slices are copied here.
+func sanitizeCassetteRequest(request *canonicalRequest) {
+	for i := range request.Tools {
+		sanitizeCassetteRaw(&request.Tools[i].Parameters)
+	}
+	for i := range request.Messages {
+		if request.Messages[i].ToolCalls == nil {
+			continue
+		}
+		request.Messages[i].ToolCalls = append([]ToolCall(nil), request.Messages[i].ToolCalls...)
+		for j := range request.Messages[i].ToolCalls {
+			sanitizeCassetteRaw(&request.Messages[i].ToolCalls[j].Arguments)
+		}
+	}
+}
+
+// sanitizeCassetteResponse copies the response's tool-call slice and nulls raw
+// arguments that are not valid JSON.
+func sanitizeCassetteResponse(response Response) Response {
+	response.Message.ToolCalls = append([]ToolCall(nil), response.Message.ToolCalls...)
+	for i := range response.Message.ToolCalls {
+		sanitizeCassetteRaw(&response.Message.ToolCalls[i].Arguments)
+	}
+	return response
+}
+
+func sanitizeCassetteRaw(raw *json.RawMessage) {
+	if len(*raw) == 0 || !json.Valid(*raw) {
+		*raw = nil
+	}
+}
+
 // record writes the cassette and returns the response exactly as replay will
 // read it. Redaction happens before the file is written, so a recorded response
 // and its replay remain deep-equal even when content contained a secret.
@@ -273,6 +307,12 @@ func (c *Cassette) record(req Request, response Response) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+	request := requestFor(req)
+	sanitizeCassetteRequest(&request)
+	// A model may return tool arguments that are not valid JSON. The agent loop
+	// handles that with its repair path, but the cassette file is JSON and
+	// cannot represent an invalid raw value. Store those arguments as null so
+	// the run keeps the same repair path instead of aborting the recording.
 	file := cassetteFile{
 		Schema:         cassetteSchema,
 		Key:            key,
@@ -282,8 +322,8 @@ func (c *Cassette) record(req Request, response Response) (Response, error) {
 		PromptVersion:  req.PromptVersion,
 		RequestedModel: APIID(req.Model),
 		ActualModel:    response.ActualModel,
-		Request:        requestFor(req),
-		Response:       response,
+		Request:        request,
+		Response:       sanitizeCassetteResponse(response),
 		DurationMS:     response.Latency.Milliseconds(),
 	}
 	probe, err := json.Marshal(file)

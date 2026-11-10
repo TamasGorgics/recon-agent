@@ -33,8 +33,10 @@ type runRow struct {
 	Config         []byte
 	LLM            string
 	MaxCostUSD     decimal.Decimal
+	CassetteDir    string
 	LLMKnown       bool
 	CapKnown       bool
+	CassetteKnown  bool
 	StartedAt      time.Time
 	EndedAt        *time.Time
 	RepeatGroup    string
@@ -54,6 +56,7 @@ type evalSettings struct {
 	Concurrency int    `json:"concurrency"`
 	LLM         string `json:"llm"`
 	MaxCostUSD  string `json:"max_cost_usd"`
+	CassetteDir string `json:"cassette_dir,omitempty"`
 }
 
 func buildRunConfig(opts Options, repeatIndex int) ([]byte, error) {
@@ -66,6 +69,7 @@ func buildRunConfig(opts Options, repeatIndex int) ([]byte, error) {
 			Concurrency: opts.Concurrency,
 			LLM:         opts.LLM,
 			MaxCostUSD:  opts.MaxCostUSD.String(),
+			CassetteDir: opts.CassetteDir,
 		},
 		Pricing: llm.PricingSnapshot(),
 	}
@@ -159,6 +163,12 @@ func loadRun(ctx context.Context, pool *pgxpool.Pool, id string) (runRow, error)
 	row.MaxCostUSD = maxCost
 	row.LLMKnown = llmKnown
 	row.CapKnown = capKnown
+	cassetteDir, cassetteKnown, err := parseStoredCassetteDir(configJSON)
+	if err != nil {
+		return runRow{}, fmt.Errorf("eval/runner: parse config for run %s: %w", id, err)
+	}
+	row.CassetteDir = cassetteDir
+	row.CassetteKnown = cassetteKnown
 	return row, nil
 }
 
@@ -167,8 +177,9 @@ func loadRun(ctx context.Context, pool *pgxpool.Pool, id string) (runRow, error)
 // explicit zero.
 type storedRunSettings struct {
 	Eval struct {
-		LLM        string  `json:"llm"`
-		MaxCostUSD *string `json:"max_cost_usd"`
+		LLM         string  `json:"llm"`
+		MaxCostUSD  *string `json:"max_cost_usd"`
+		CassetteDir *string `json:"cassette_dir"`
 	} `json:"eval"`
 }
 
@@ -200,6 +211,27 @@ func parseStoredRunSettings(data []byte) (llmMode string, maxCost decimal.Decima
 		return "", decimal.Zero, false, false, fmt.Errorf("stored max_cost_usd %q is negative", raw)
 	}
 	return llmMode, parsed, llmKnown, true, nil
+}
+
+// parseStoredCassetteDir reads the recorded cassette directory without
+// rewriting any other config key. It is empty and unknown for runs created
+// before record mode or by a caller that did not set a root.
+func parseStoredCassetteDir(data []byte) (string, bool, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return "", false, nil
+	}
+	var settings storedRunSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return "", false, fmt.Errorf("decode stored eval settings: %w", err)
+	}
+	if settings.Eval.CassetteDir == nil {
+		return "", false, nil
+	}
+	dir := strings.TrimSpace(*settings.Eval.CassetteDir)
+	if dir == "" {
+		return "", false, nil
+	}
+	return dir, true, nil
 }
 
 // finishRun sets ended_at, merges a top-level patch into eval_runs.config, and

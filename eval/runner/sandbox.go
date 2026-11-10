@@ -115,7 +115,7 @@ func resolveRuntimeConfig(deps Deps, opts Options) (config.Config, error) {
 	cfg.LLM.Model = opts.Model
 	cfg.Agent.Model = opts.Model
 	cfg.Agent.PromptVersion = opts.Prompt
-	if opts.LLM == LLMLive && strings.TrimSpace(cfg.LLM.APIKey) == "" {
+	if (opts.LLM == LLMLive || opts.LLM == LLMRecord) && strings.TrimSpace(cfg.LLM.APIKey) == "" {
 		cfg.LLM.APIKey = os.Getenv(config.EnvOpenCodeAPIKey)
 	}
 	if err := cfg.LLM.Validate(); err != nil {

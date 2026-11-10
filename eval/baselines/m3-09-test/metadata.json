@@ -1,0 +1,66 @@
+{
+  "schema": "eval-baseline/v1",
+  "created_date": "2026-11-10",
+  "run_id": "8931b06c-a6b3-4049-a602-70ec69cbab0d",
+  "suite": "agent",
+  "split": "test",
+  "dataset_version": "247bcf9e80dc5638cbb693da7a0a111f986b011144f2abb30f1383e47161ce04",
+  "dataset_manifest_sha256": "45d5fa37db2a6b286f31744a80da57d4ffdb3c5fcc23c2919d444f4d37ec2bc1",
+  "seed": 2,
+  "model": "deepseek-v4.1-flash",
+  "prompt_version": "v1",
+  "prompt_frozen": true,
+  "git_sha": "defcd98eaa3a0e6ad9050f09bbd2ee5c1620b753",
+  "started_at_utc": "2026-11-10T15:39:23.488243Z",
+  "ended_at_utc": "2026-11-10T17:00:12.796861Z",
+  "exit_code": 0,
+  "aborted": false,
+  "abort_reason": "",
+  "cases_total": 360,
+  "cases_completed": 360,
+  "cases_skipped": 0,
+  "repeat": 1,
+  "concurrency": 4,
+  "llm_mode": "record",
+  "spend_usd": "1.319247",
+  "cost_cap_usd": "4.000000",
+  "thresholds_path": "eval/thresholds.yaml",
+  "thresholds_sha256": "9724d621503b67afe24ef835f4a9cc70189ac92cc8f530881f699bf8b79b14bf",
+  "command": "OPENCODE_API_KEY=<process-env-only> DATABASE_URL=<redacted> go run ./cmd/recon-eval run --suite agent --split test --model deepseek-v4.1-flash --prompt v1 --llm record --cassette-dir eval/baselines/m3-09-test/cassettes --max-cost-usd 4.00 --concurrency 4",
+  "test_set_once": {
+    "ordinal": 1,
+    "rerun": false,
+    "note": "The M3 held-out test split was executed exactly once. No resume, rerun, or test-driven tuning followed."
+  },
+  "cassettes": {
+    "mode": "record-only evidence (Q-53/Q-68); not a replay input",
+    "recorded_files": 1840,
+    "recorded_bytes": 88733159,
+    "committed_files": 12,
+    "committed_bytes": 623701,
+    "max_committed_file_bytes": 111014,
+    "sampled": true,
+    "sample_policy": "One cassette per failure mode: the lexicographically smallest SHA-256 cassette filename among that mode's recorded calls. A cassette's mode is resolved from the first user message scenario case id, mapped to failure_mode through the durable eval_case_results transcript case:<uuid> ref. All 12 test-split modes are represented; no file exceeds 1 MiB.",
+    "committed_evidence_total_bytes": 2608523,
+    "committed_evidence_budget_bytes": 10485760
+  },
+  "gate": {
+    "command": "go run ./cmd/recon-eval gate --run 8931b06c-a6b3-4049-a602-70ec69cbab0d --baseline 8931b06c-a6b3-4049-a602-70ec69cbab0d --out-dir eval/baselines/m3-09-test",
+    "exit_code": 0,
+    "passed_ids": [
+      "overall_false_fix",
+      "resolution_accuracy"
+    ],
+    "not_applicable_ids": [
+      "t0_false_fix",
+      "injection_resistance",
+      "calibration"
+    ]
+  },
+  "notes": [
+    "Record-only cassettes: Q-53 database-generated ids and timestamps prevent byte-identical replay; deterministic replay and the CI gate remain M6-05.",
+    "The gate reads durable eval_runs/eval_case_results rows and therefore needs DATABASE_URL; the committed report and metadata are readable without a database.",
+    "T0 false-fix is not applicable until M4-14. Injection resistance is not applicable on the test split; it is gated only on the dedicated injection split (M6-02/M6-05).",
+    "No API key, session id, Authorization header, DSN, or real data is stored in this file or the committed cassette sample."
+  ]
+}

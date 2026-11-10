@@ -28,6 +28,7 @@ const (
 	DefaultLLMMode     = "cassette"
 	LLMLive            = "live"
 	LLMCassette        = "cassette"
+	LLMRecord          = "record"
 )
 
 // UsageError is a flag or usage problem. The CLI maps it to exit code 2.
@@ -65,12 +66,18 @@ type Options struct {
 	MaxCostUSD  decimal.Decimal
 	Resume      string
 	DatasetDir  string
+	CassetteDir string
+
+	// UpdateCassettes allows record mode to overwrite an existing cassette.
+	// It is rejected for every other LLM mode.
+	UpdateCassettes bool
 
 	// The Set fields tell resume whether a flag was explicit. The CLI parser
 	// populates them; programmatic callers may leave them false so stored run
-	// values win where the stored fingerprint is authoritative. LLMSet and
-	// MaxCostUSDSet are required to distinguish an explicit `--llm cassette`
-	// or `--max-cost-usd 0` from an omitted flag.
+	// values win where the stored fingerprint is authoritative. LLMSet,
+	// MaxCostUSDSet, and CassetteDirSet are required to distinguish an explicit
+	// `--llm cassette`, `--max-cost-usd 0`, or `--cassette-dir` from an omitted
+	// flag.
 	SuiteSet       bool
 	SplitSet       bool
 	ModelSet       bool
@@ -79,6 +86,7 @@ type Options struct {
 	ConcurrencySet bool
 	LLMSet         bool
 	MaxCostUSDSet  bool
+	CassetteDirSet bool
 }
 
 // ParseOptions parses the `run` subcommand flags. Flag syntax errors and
@@ -100,6 +108,8 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 		maxCost     string
 		resume      string
 		datasetDir  string
+		cassetteDir string
+		update      bool
 	)
 	fs.StringVar(&suite, "suite", DefaultSuite, "eval suite (only agent in M3-04)")
 	fs.StringVar(&split, "split", string(dataset.Dev), "dataset split: dev, test, or injection")
@@ -108,10 +118,14 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 	fs.StringVar(&seed, "seed", "", "dataset seed; must equal the committed manifest seed")
 	fs.IntVar(&repeat, "repeat", DefaultRepeat, "number of linked repeats (>=1)")
 	fs.IntVar(&concurrency, "concurrency", DefaultConcurrency, "scenario worker count (1..32)")
-	fs.StringVar(&llmMode, "llm", DefaultLLMMode, "LLM mode: live or cassette")
-	fs.StringVar(&maxCost, "max-cost-usd", "0", "run cost cap in USD; 0 is unlimited for cassette")
+	fs.StringVar(&llmMode, "llm", DefaultLLMMode, "LLM mode: live, record, or cassette")
+	fs.StringVar(&maxCost, "max-cost-usd", "0", "run cost cap in USD; required > 0 for live/record")
 	fs.StringVar(&resume, "resume", "", "existing eval_run id to resume")
 	fs.StringVar(&datasetDir, "dataset-dir", "", "dataset directory (default: eval/datasets/<split>)")
+	fs.StringVar(&cassetteDir, "cassette-dir", "",
+		"cassette root for record/replay (default: eval/cassettes)")
+	fs.BoolVar(&update, "update-cassettes", false,
+		"with --llm record, overwrite existing cassette files")
 	if err := fs.Parse(args); err != nil {
 		return Options{}, err
 	}
@@ -120,15 +134,17 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 	}
 
 	opts := Options{
-		Suite:       suite,
-		Split:       dataset.Split(strings.TrimSpace(split)),
-		Model:       strings.TrimSpace(model),
-		Prompt:      strings.TrimSpace(prompt),
-		Repeat:      repeat,
-		Concurrency: concurrency,
-		LLM:         strings.TrimSpace(llmMode),
-		Resume:      strings.TrimSpace(resume),
-		DatasetDir:  strings.TrimSpace(datasetDir),
+		Suite:           suite,
+		Split:           dataset.Split(strings.TrimSpace(split)),
+		Model:           strings.TrimSpace(model),
+		Prompt:          strings.TrimSpace(prompt),
+		Repeat:          repeat,
+		Concurrency:     concurrency,
+		LLM:             strings.TrimSpace(llmMode),
+		Resume:          strings.TrimSpace(resume),
+		DatasetDir:      strings.TrimSpace(datasetDir),
+		CassetteDir:     strings.TrimSpace(cassetteDir),
+		UpdateCassettes: update,
 	}
 	if seed != "" {
 		parsed, err := parseSeed(seed)
@@ -155,6 +171,7 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 	opts.ConcurrencySet = seen["concurrency"]
 	opts.LLMSet = seen["llm"]
 	opts.MaxCostUSDSet = seen["max-cost-usd"]
+	opts.CassetteDirSet = seen["cassette-dir"]
 	return opts, nil
 }
 
@@ -162,8 +179,9 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 const RunUsage = `usage: recon-eval run [flags]
 
 Runs the M3 agent eval on one committed dataset split. Results are written to
-DATABASE_URL; sandbox databases are disposable. Public LLM modes are live and
-cassette; scripted is an internal test seam only.
+DATABASE_URL; sandbox databases are disposable. Public LLM modes are live,
+record (live execution plus cassette recording), and cassette (replay only);
+scripted is an internal test seam only.
 
 Flags:
   --suite string         eval suite (only "agent" in M3-04) (default "agent")
@@ -173,10 +191,16 @@ Flags:
   --seed int             dataset seed; must equal the committed manifest seed
   --repeat int           linked repeats; each is a separate run (default 1)
   --concurrency int      scenario workers within one run, 1..32 (default 4)
-  --llm string           live or cassette (default "cassette")
-  --max-cost-usd string  run cost cap; 0 is unlimited for cassette (default "0")
+  --llm string           live, record, or cassette (default "cassette")
+  --max-cost-usd string  run cost cap; > 0 required for live and record (default "0")
+  --cassette-dir string  cassette root for record/replay evidence (default: eval/cassettes)
+  --update-cassettes     with --llm record, overwrite existing cassette files
   --resume string        existing eval_run id to resume
   --dataset-dir string   dataset directory (default: eval/datasets/<split>)
+
+Record mode requires OPENCODE_API_KEY in the process environment (never .env,
+never a flag), refuses to overwrite an existing cassette unless
+--update-cassettes is set, and writes <cassette-dir>/<provider>/<model>/<prompt>/<sha256>.json.
 
 Exit codes:
   0  run completed, or intentionally stopped by the cost cap
@@ -202,16 +226,23 @@ func ApplyDefaults(opts *Options) {
 	if opts.Prompt == "" {
 		opts.Prompt = config.DefaultAgentPromptVersion
 	}
-	if opts.Repeat == 0 && !opts.RepeatSet {
-		opts.Repeat = DefaultRepeat
-	}
-	if opts.Concurrency == 0 && !opts.ConcurrencySet {
-		opts.Concurrency = DefaultConcurrency
-	}
+	opts.Repeat = defaultInt(opts.Repeat, opts.RepeatSet, DefaultRepeat)
+	opts.Concurrency = defaultInt(opts.Concurrency, opts.ConcurrencySet, DefaultConcurrency)
 	opts.LLM = strings.ToLower(strings.TrimSpace(opts.LLM))
 	if opts.LLM == "" {
 		opts.LLM = DefaultLLMMode
 	}
+	opts.CassetteDir = strings.TrimSpace(opts.CassetteDir)
+	if opts.CassetteDir == "" {
+		opts.CassetteDir = llm.DefaultCassetteDir
+	}
+}
+
+func defaultInt(value int, set bool, fallback int) int {
+	if value == 0 && !set {
+		return fallback
+	}
+	return value
 }
 
 // Validate checks every flag-level contract before any database or network
@@ -242,18 +273,24 @@ func Validate(opts Options) error {
 		return usagef("--concurrency must be between %d and %d, got %d",
 			MinConcurrency, MaxConcurrency, opts.Concurrency)
 	}
+	if opts.UpdateCassettes && opts.LLM != LLMRecord {
+		return usagef("--update-cassettes is only valid with --llm record")
+	}
+	if opts.LLM == LLMLive && opts.CassetteDirSet {
+		return usagef("--cassette-dir is not valid with --llm live; live runs do not read or write cassettes")
+	}
 	switch opts.LLM {
-	case LLMLive:
+	case LLMLive, LLMRecord:
 		if strings.TrimSpace(os.Getenv(config.EnvOpenCodeAPIKey)) == "" {
-			return usagef("--llm live requires OPENCODE_API_KEY in the process environment")
+			return usagef("--llm %s requires OPENCODE_API_KEY in the process environment", opts.LLM)
 		}
 		if opts.MaxCostUSD.IsNegative() || opts.MaxCostUSD.IsZero() {
-			return usagef("--llm live requires --max-cost-usd > 0")
+			return usagef("--llm %s requires --max-cost-usd > 0", opts.LLM)
 		}
 	case LLMCassette:
 		// No key and no network. A zero cap means unlimited.
 	default:
-		return usagef("--llm %q is not live or cassette", opts.LLM)
+		return usagef("--llm %q is not live, record, or cassette", opts.LLM)
 	}
 	if opts.MaxCostUSD.IsNegative() {
 		return usagef("--max-cost-usd must not be negative")

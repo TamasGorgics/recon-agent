@@ -150,3 +150,65 @@ func TestLiveOpenCode(t *testing.T) {
 		t.Error("captured logs contain the session ID")
 	}
 }
+
+// TestLiveModelBAutoToolCall is the one tiny live smoke for model B before the
+// full B dev eval. It uses the agent's actual tool-choice mode (auto) and a
+// reasoning-safe max_tokens. It skips without a process-environment key and in
+// CI, and never logs the key.
+func TestLiveModelBAutoToolCall(t *testing.T) {
+	key := strings.TrimSpace(os.Getenv("OPENCODE_API_KEY"))
+	if key == "" || os.Getenv("CI") != "" {
+		t.Skip("live test requires OPENCODE_API_KEY and no CI")
+	}
+	baseURL := strings.TrimSpace(os.Getenv("OPENCODE_BASE_URL"))
+	client, err := llm.NewOpenCode(llm.OpenCodeOptions{
+		BaseURL:      baseURL,
+		APIKey:       key,
+		Clock:        clock.Real{},
+		UserAgent:    "recon-agent/live-test",
+		ClientHeader: "recon-agent/live-test",
+	})
+	if err != nil {
+		t.Fatalf("NewOpenCode: %v", err)
+	}
+	response, err := client.Complete(context.Background(), llm.Request{
+		Model:  "glm-5.3-flash",
+		System: "You are a deterministic tool-call smoke test.",
+		Messages: []llm.Message{{
+			Role:    llm.RoleUser,
+			Content: "Call the get_ping tool now with no arguments. Do not reply with text.",
+		}},
+		Tools: []llm.ToolDef{{
+			Name:        "get_ping",
+			Description: "Return pong.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
+		ToolChoice:    &llm.ToolChoice{Mode: llm.ToolChoiceAuto},
+		Temperature:   liveTemperatureZero(),
+		MaxTokens:     256, // reasoning tokens count against this budget
+		SessionID:     liveSessionID(t),
+		PromptVersion: "live",
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	t.Logf("model B smoke: model=%q stop=%q prompt_tokens=%d completion_tokens=%d cost_usd=%s",
+		response.ActualModel, response.StopReason, response.Usage.PromptTokens,
+		response.Usage.CompletionTokens, response.Usage.CostUSD)
+	if response.ActualModel != "glm-5.3-flash" {
+		t.Errorf("actual model = %q, want glm-5.3-flash", response.ActualModel)
+	}
+	if response.StopReason != llm.StopToolCalls || len(response.Message.ToolCalls) == 0 {
+		t.Fatalf("model B did not return a tool call: stop=%q tool_calls=%d content=%q",
+			response.StopReason, len(response.Message.ToolCalls), response.Message.Content)
+	}
+	if response.Message.ToolCalls[0].Name != "get_ping" {
+		t.Errorf("tool name = %q, want get_ping", response.Message.ToolCalls[0].Name)
+	}
+	if response.Usage.CostUSD.IsZero() && !response.Usage.ListCostReported {
+		t.Error("provider reported no cost; spend cannot be accounted")
+	}
+	if strings.Contains(string(response.Raw), "oc_sk_") {
+		t.Error("raw response contains a key prefix")
+	}
+}

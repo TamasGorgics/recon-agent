@@ -1,0 +1,317 @@
+{
+  "schema": "eval-gate/v1",
+  "generated_at": "2026-11-10T17:06:35.731597Z",
+  "baseline": {
+    "run_id": "8931b06c-a6b3-4049-a602-70ec69cbab0d",
+    "suite": "agent",
+    "split": "test",
+    "dataset_version": "247bcf9e80dc5638cbb693da7a0a111f986b011144f2abb30f1383e47161ce04",
+    "seed": 2,
+    "model": "deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "git_sha": "defcd98eaa3a0e6ad9050f09bbd2ee5c1620b753",
+    "cases": 360,
+    "complete": true,
+    "missing_scoreable": 0,
+    "missing_modes": []
+  },
+  "candidate": {
+    "run_id": "8931b06c-a6b3-4049-a602-70ec69cbab0d",
+    "suite": "agent",
+    "split": "test",
+    "dataset_version": "247bcf9e80dc5638cbb693da7a0a111f986b011144f2abb30f1383e47161ce04",
+    "seed": 2,
+    "model": "deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "git_sha": "defcd98eaa3a0e6ad9050f09bbd2ee5c1620b753",
+    "cases": 360,
+    "complete": true,
+    "missing_scoreable": 0,
+    "missing_modes": []
+  },
+  "thresholds": {
+    "path": "/Users/tamas/projects/recon-agent/eval/thresholds.yaml",
+    "schema_version": 1,
+    "baseline_split": "test",
+    "confidence": 0.95,
+    "min_sample": 30
+  },
+  "results": [
+    {
+      "id": "t0_false_fix",
+      "metric": "false_fix",
+      "status": "not_applicable",
+      "applicable": false,
+      "baseline": null,
+      "candidate": null,
+      "baseline_n": null,
+      "candidate_n": null,
+      "delta": null,
+      "delta_pp": null,
+      "baseline_ci": null,
+      "candidate_ci": null,
+      "reason": "not applicable until M4-14: deterministic verifiers and policy tiers land in M4-14; T0 false-fix is not measurable yet"
+    },
+    {
+      "id": "overall_false_fix",
+      "metric": "false_fix",
+      "status": "pass",
+      "applicable": true,
+      "baseline": 0,
+      "candidate": 0,
+      "baseline_n": 360,
+      "candidate_n": 360,
+      "delta": 0,
+      "delta_pp": 0,
+      "baseline_ci": [
+        0,
+        0.010558056889
+      ],
+      "candidate_ci": [
+        0,
+        0.010558056889
+      ],
+      "classification": "no_change",
+      "reason": "candidate false-fix 0.0000 vs baseline 0.0000: no increase beyond the disjoint 95% Wilson interval"
+    },
+    {
+      "id": "resolution_accuracy",
+      "metric": "accuracy",
+      "status": "pass",
+      "applicable": true,
+      "baseline": 0.522222222222,
+      "candidate": 0.522222222222,
+      "baseline_n": 360,
+      "candidate_n": 360,
+      "delta": 0,
+      "delta_pp": 0,
+      "baseline_ci": [
+        0.470661626606,
+        0.573313570866
+      ],
+      "candidate_ci": [
+        0.470661626606,
+        0.573313570866
+      ],
+      "reason": "accuracy delta 0.00 pp is within the maximum allowed drop of 2.00 pp"
+    },
+    {
+      "id": "injection_resistance",
+      "metric": "injection_resistance",
+      "status": "not_applicable",
+      "applicable": false,
+      "baseline": null,
+      "candidate": null,
+      "baseline_n": 0,
+      "candidate_n": 0,
+      "delta": null,
+      "delta_pp": null,
+      "baseline_ci": null,
+      "candidate_ci": null,
+      "reason": "dedicated injection split required (M6-02/M6-05)"
+    },
+    {
+      "id": "calibration",
+      "metric": "calibration",
+      "status": "not_applicable",
+      "applicable": false,
+      "baseline": null,
+      "candidate": null,
+      "baseline_n": null,
+      "candidate_n": null,
+      "delta": null,
+      "delta_pp": null,
+      "baseline_ci": null,
+      "candidate_ci": null,
+      "reason": "reported, not gated"
+    }
+  ],
+  "calibration": {
+    "gated": false,
+    "baseline": {
+      "applicable": true,
+      "target": "correct",
+      "bins": 10,
+      "n": 102,
+      "ece": 0.173725490196,
+      "non_empty_bins": 6,
+      "reliability": [
+        {
+          "bin": "[0.0,0.1)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.1,0.2)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.2,0.3)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.3,0.4)",
+          "count": 2,
+          "mean_confidence": 0.32,
+          "accuracy": 0.5,
+          "gap": 0.18
+        },
+        {
+          "bin": "[0.4,0.5)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.5,0.6)",
+          "count": 7,
+          "mean_confidence": 0.542857142857,
+          "accuracy": 0.142857142857,
+          "gap": 0.4
+        },
+        {
+          "bin": "[0.6,0.7)",
+          "count": 10,
+          "mean_confidence": 0.61,
+          "accuracy": 0.1,
+          "gap": 0.51
+        },
+        {
+          "bin": "[0.7,0.8)",
+          "count": 6,
+          "mean_confidence": 0.72,
+          "accuracy": 0,
+          "gap": 0.72
+        },
+        {
+          "bin": "[0.8,0.9)",
+          "count": 18,
+          "mean_confidence": 0.856666666667,
+          "accuracy": 0.833333333333,
+          "gap": 0.023333333334
+        },
+        {
+          "bin": "[0.9,1.0]",
+          "count": 59,
+          "mean_confidence": 0.92,
+          "accuracy": 1,
+          "gap": 0.08
+        }
+      ]
+    },
+    "candidate": {
+      "applicable": true,
+      "target": "correct",
+      "bins": 10,
+      "n": 102,
+      "ece": 0.173725490196,
+      "non_empty_bins": 6,
+      "reliability": [
+        {
+          "bin": "[0.0,0.1)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.1,0.2)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.2,0.3)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.3,0.4)",
+          "count": 2,
+          "mean_confidence": 0.32,
+          "accuracy": 0.5,
+          "gap": 0.18
+        },
+        {
+          "bin": "[0.4,0.5)",
+          "count": 0,
+          "mean_confidence": null,
+          "accuracy": null,
+          "gap": null
+        },
+        {
+          "bin": "[0.5,0.6)",
+          "count": 7,
+          "mean_confidence": 0.542857142857,
+          "accuracy": 0.142857142857,
+          "gap": 0.4
+        },
+        {
+          "bin": "[0.6,0.7)",
+          "count": 10,
+          "mean_confidence": 0.61,
+          "accuracy": 0.1,
+          "gap": 0.51
+        },
+        {
+          "bin": "[0.7,0.8)",
+          "count": 6,
+          "mean_confidence": 0.72,
+          "accuracy": 0,
+          "gap": 0.72
+        },
+        {
+          "bin": "[0.8,0.9)",
+          "count": 18,
+          "mean_confidence": 0.856666666667,
+          "accuracy": 0.833333333333,
+          "gap": 0.023333333334
+        },
+        {
+          "bin": "[0.9,1.0]",
+          "count": 59,
+          "mean_confidence": 0.92,
+          "accuracy": 1,
+          "gap": 0.08
+        }
+      ]
+    }
+  },
+  "exit": {
+    "code": 0,
+    "failed_ids": [],
+    "passed_ids": [
+      "overall_false_fix",
+      "resolution_accuracy"
+    ],
+    "not_applicable_ids": [
+      "t0_false_fix",
+      "injection_resistance",
+      "calibration"
+    ],
+    "error_ids": [],
+    "incomplete": false,
+    "incomplete_runs": [],
+    "report_only": false,
+    "reasons": [
+      "all applicable thresholds passed on complete runs"
+    ]
+  },
+  "warnings": [
+    "comparing a run to itself",
+    "injection_resistance: baseline n=0 is below min_sample=30",
+    "injection_resistance: candidate n=0 is below min_sample=30"
+  ]
+}
