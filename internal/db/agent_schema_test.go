@@ -613,6 +613,12 @@ func TestM2ProposalActiveIndex(t *testing.T) {
 
 // TestM2ExecutorAuditNoGrants pins that M2-01 adds no privileges to the
 // executor or audit roles (spec section 3.3).
+//
+// M4-01 deliberately evolves this contract (Q-71): recon_executor gets table
+// SELECT on proposals plus column-level UPDATE(status, version) for the atomic
+// apply path. Table-level UPDATE stays false here; TestM401ExecutorGrants proves
+// the column grant and the exact lock/update statements through the real login.
+// Every other M2 object and every audit object stays at zero.
 func TestM2ExecutorAuditNoGrants(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
@@ -622,14 +628,18 @@ func TestM2ExecutorAuditNoGrants(t *testing.T) {
 		for _, object := range objects {
 			t.Run(role+"/"+object, func(t *testing.T) {
 				for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+					want := false
+					if role == db.RoleExecutor && object == "proposals" && privilege == "SELECT" {
+						want = true // M4-01/Q-71
+					}
 					var allowed bool
 					if err := d.Pool.QueryRow(ctx,
 						`SELECT has_table_privilege($1::text, $2::text, $3::text)`,
 						role, object, privilege).Scan(&allowed); err != nil {
 						t.Fatalf("read %s %s privilege: %v", role, object, err)
 					}
-					if allowed {
-						t.Fatalf("%s has %s on %s, want none", role, privilege, object)
+					if allowed != want {
+						t.Fatalf("%s %s on %s = %t, want %t", role, privilege, object, allowed, want)
 					}
 				}
 			})
