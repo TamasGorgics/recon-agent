@@ -22,24 +22,26 @@ const (
 	EnvOpenCodeAPIKey   = "OPENCODE_API_KEY"
 	EnvOpenCodeBaseURL  = "OPENCODE_BASE_URL"
 	EnvOpenCodeModel    = "OPENCODE_MODEL"
+	EnvAPIKeys          = "API_KEYS"
 )
 
 type envBinding struct {
 	name string
-	set  func(*Config, string)
+	set  func(*Config, string) error
 }
 
 // envBindings lists every environment variable that overrides Config. It is
 // the source of truth for the .env.example parity test.
 var envBindings = []envBinding{
-	{EnvDatabaseURL, func(c *Config, v string) { c.Database.URL = v }},
-	{EnvDatabaseTestURL, func(c *Config, v string) { c.Database.TestURL = v }},
-	{EnvDatabaseAppURL, func(c *Config, v string) { c.Database.AppURL = v }},
-	{EnvDatabaseAgentURL, func(c *Config, v string) { c.Database.AgentURL = v }},
-	{EnvLogLevel, func(c *Config, v string) { c.Log.Level = v }},
-	{EnvOpenCodeAPIKey, func(c *Config, v string) { c.LLM.APIKey = v }},
-	{EnvOpenCodeBaseURL, func(c *Config, v string) { c.LLM.BaseURL = v }},
-	{EnvOpenCodeModel, func(c *Config, v string) { c.LLM.Model = v }},
+	{EnvDatabaseURL, func(c *Config, v string) error { c.Database.URL = v; return nil }},
+	{EnvDatabaseTestURL, func(c *Config, v string) error { c.Database.TestURL = v; return nil }},
+	{EnvDatabaseAppURL, func(c *Config, v string) error { c.Database.AppURL = v; return nil }},
+	{EnvDatabaseAgentURL, func(c *Config, v string) error { c.Database.AgentURL = v; return nil }},
+	{EnvLogLevel, func(c *Config, v string) error { c.Log.Level = v; return nil }},
+	{EnvOpenCodeAPIKey, func(c *Config, v string) error { c.LLM.APIKey = v; return nil }},
+	{EnvOpenCodeBaseURL, func(c *Config, v string) error { c.LLM.BaseURL = v; return nil }},
+	{EnvOpenCodeModel, func(c *Config, v string) error { c.LLM.Model = v; return nil }},
+	{EnvAPIKeys, applyAPIKeysEnv},
 }
 
 // DefaultLogLevel is used when neither YAML nor the environment sets a level.
@@ -56,6 +58,38 @@ type Config struct {
 	Ingest   IngestConfig   `yaml:"ingest"`
 	Match    MatchConfig    `yaml:"match"`
 	Synth    SynthConfig    `yaml:"synth"`
+	API      APIConfig      `yaml:"api"`
+}
+
+// String renders Config without credentials: database DSNs and the LLM API key
+// are replaced, and API key digests are summarized by count. This keeps
+// accidental %v/%+v logging from exposing secrets.
+func (c Config) String() string {
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API)
+}
+
+// Format implements fmt.Formatter so every verb, including %#v, uses the
+// redacted representation.
+func (c Config) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, c.String())
+}
+
+func redactedDatabase(d DatabaseConfig) string {
+	return fmt.Sprintf("DatabaseConfig{URL:%s, TestURL:%s, AppURL:%s, AgentURL:%s}",
+		redactSecret(d.URL), redactSecret(d.TestURL), redactSecret(d.AppURL), redactSecret(d.AgentURL))
+}
+
+func redactedLLM(l LLMConfig) string {
+	return fmt.Sprintf("LLMConfig{Provider:%q, BaseURL:%q, APIKey:%s, Model:%q, Timeout:%s, MaxAttempts:%d}",
+		l.Provider, l.BaseURL, redactSecret(l.APIKey), l.Model, l.Timeout, l.MaxAttempts)
+}
+
+func redactSecret(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "<redacted>"
 }
 
 // DatabaseConfig holds the Postgres DSNs. AppURL and AgentURL are the
@@ -94,7 +128,9 @@ func LoadFile(path string) (Config, error) {
 			return Config{}, fmt.Errorf("parse config file %q: %w", path, err)
 		}
 	}
-	applyEnv(&cfg)
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
 	cfg.LLM = normalizeLLMConfig(cfg.LLM)
 	cfg.Agent = normalizeAgentConfig(cfg.Agent, cfg.LLM.Model)
 	cfg.Worker = normalizeWorkerConfig(cfg.Worker)
@@ -125,6 +161,9 @@ func (c Config) Validate() error {
 	if err := c.Worker.Validate(); err != nil {
 		return err
 	}
+	if err := c.API.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -137,13 +176,17 @@ func defaults() Config {
 		Ledger: DefaultLedgerConfig(),
 		Match:  DefaultMatchConfig(),
 		Synth:  DefaultSynthConfig(),
+		API:    DefaultAPIConfig(),
 	}
 }
 
-func applyEnv(cfg *Config) {
+func applyEnv(cfg *Config) error {
 	for _, binding := range envBindings {
 		if v := os.Getenv(binding.name); v != "" {
-			binding.set(cfg, v)
+			if err := binding.set(cfg, v); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
