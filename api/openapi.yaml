@@ -1,0 +1,808 @@
+openapi: 3.1.0
+info:
+  title: Recon Agent API
+  version: 0.1.0
+  description: |
+    Hand-written OpenAPI 3.1 contract for the M4-02 reconciliation API.
+    Protected operations require a static bearer key configured through the
+    API_KEYS environment variable. Roles are viewer < approver < admin.
+servers:
+  - url: /
+tags:
+  - name: health
+  - name: ingest
+  - name: reconcile
+  - name: cases
+  - name: proposals
+  - name: admin
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: getHealthz
+      summary: Liveness probe
+      security: []
+      x-required-role: none
+      responses:
+        "200":
+          description: Process is alive. No dependency check is performed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /metrics:
+    get:
+      tags: [health]
+      operationId: getMetrics
+      summary: Prometheus text stub
+      security: []
+      x-required-role: none
+      responses:
+        "200":
+          description: Static build information in Prometheus text format.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /v1/ingest/files:
+    post:
+      tags: [ingest]
+      operationId: ingestFile
+      summary: Upload one settlement file
+      security:
+        - bearerAuth: []
+      x-required-role: admin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [source, file]
+              properties:
+                source:
+                  type: string
+                  description: Configured source name (psp_a or bank_x).
+                format:
+                  type: string
+                  description: File format; defaults to source.
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Ingested, quarantined, or an identical-bytes no-op.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/reconcile/run:
+    post:
+      tags: [reconcile]
+      operationId: runReconcile
+      summary: Run the matcher for a scope and persist breaks/cases
+      description: |
+        The matcher run and break/case persistence are separate transactions.
+        A failure after a committed matcher run returns 500; retrying is safe
+        because matcher runs are incremental and breaks dedupe on signature.
+      security:
+        - bearerAuth: []
+      x-required-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileRequest"
+      responses:
+        "200":
+          description: Matcher statistics and persisted break/case counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/cases:
+    get:
+      tags: [cases]
+      operationId: listCases
+      summary: List case summaries with keyset pagination
+      security:
+        - bearerAuth: []
+      x-required-role: viewer
+      parameters:
+        - $ref: "#/components/parameters/CaseStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of case summaries, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/cases/{id}:
+    get:
+      tags: [cases]
+      operationId: getCaseFile
+      summary: Read one case file
+      security:
+        - bearerAuth: []
+      x-required-role: viewer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Versioned case-file document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaseFile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/proposals:
+    get:
+      tags: [proposals]
+      operationId: listProposals
+      summary: List proposal summaries with keyset pagination
+      security:
+        - bearerAuth: []
+      x-required-role: viewer
+      parameters:
+        - $ref: "#/components/parameters/ProposalStatus"
+        - $ref: "#/components/parameters/CaseID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of proposal summaries, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/admin/switches:
+    post:
+      tags: [admin]
+      operationId: setSwitch
+      summary: Update one seeded system switch
+      description: |
+        The switch update and its audit entry commit in one transaction.
+        Setting the current value returns changed=false and writes no audit row.
+      security:
+        - bearerAuth: []
+      x-required-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchRequest"
+      responses:
+        "200":
+          description: The switch state after the request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque base64url keyset cursor from next_cursor.
+      schema:
+        type: string
+    CaseStatus:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [open, in_agent, proposal_pending, waiting_info, escalated, resolved]
+    ProposalStatus:
+      name: status
+      in: query
+      required: false
+      description: pending is accepted as an alias of pending_approval.
+      schema:
+        type: string
+        enum:
+          - pending
+          - proposed
+          - pending_approval
+          - approved
+          - auto_approved
+          - applied
+          - apply_failed
+          - rejected
+          - expired
+          - superseded
+    CaseID:
+      name: case_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: Invalid JSON, query, date range, scope ID, or request field.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthenticated:
+      description: Missing, malformed, or unknown bearer key.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: Bearer realm="recon"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Valid key without the required role.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Body exceeded max_json_bytes or max_upload_bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description: Content type is not application/json or multipart/form-data.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Generic internal failure; no internal detail is returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_json
+                - invalid_request
+                - invalid_query
+                - unsupported_filter
+                - unsupported_source
+                - invalid_scope_id
+                - invalid_date_range
+                - unauthenticated
+                - forbidden
+                - not_found
+                - method_not_allowed
+                - conflict
+                - replay
+                - payload_too_large
+                - unsupported_media_type
+                - internal_error
+            message:
+              type: string
+        request_id:
+          type: string
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    IngestResult:
+      type: object
+      required: [batch_id, status, no_op, parsed, inserted, skipped, quarantine_reason]
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ingested, quarantined]
+        no_op:
+          type: boolean
+        parsed:
+          type: integer
+        inserted:
+          type: integer
+        skipped:
+          type: integer
+        quarantine_reason:
+          type: string
+    ReconcileRequest:
+      type: object
+      additionalProperties: false
+      required: [scope_id, from, to]
+      properties:
+        scope_id:
+          type: string
+          format: uuid
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+    ReconcileResult:
+      type: object
+      required: [run_id, scope_id, stats, breaks, breaks_created, breaks_existing, cases_created]
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        scope_id:
+          type: string
+          format: uuid
+        stats:
+          $ref: "#/components/schemas/MatchStats"
+        breaks:
+          type: integer
+        breaks_created:
+          type: integer
+        breaks_existing:
+          type: integer
+        cases_created:
+          type: integer
+    MatchStats:
+      type: object
+      required:
+        - external_candidates
+        - ledger_candidates
+        - matched
+        - unmatched_external
+        - unmatched_ledger
+        - breaks
+        - breaks_by_side
+        - by_pass
+      properties:
+        external_candidates:
+          type: integer
+        ledger_candidates:
+          type: integer
+        matched:
+          type: integer
+        unmatched_external:
+          type: integer
+        unmatched_ledger:
+          type: integer
+        breaks:
+          type: integer
+        breaks_by_side:
+          type: object
+          additionalProperties:
+            type: integer
+        by_pass:
+          type: object
+          additionalProperties:
+            type: integer
+    CaseSummary:
+      type: object
+      required: [id, priority, value_minor, currency, status, version, attempts, created_at, break_ids]
+      properties:
+        id:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+        value_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+        version:
+          type: integer
+        attempts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        break_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    CaseList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CaseSummary"
+        next_cursor:
+          type: string
+    CaseFile:
+      type: object
+      description: |
+        Version 1 of the case document. Later tasks may add top-level sections;
+        clients must ignore unknown fields. Rationale is sanitized and truncated
+        to 4000 characters; raw evidence and external payloads are not returned.
+      required: [schema_version, case, breaks, proposals, agent_runs]
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        case:
+          $ref: "#/components/schemas/Case"
+        breaks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Break"
+        proposals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProposalDetail"
+        agent_runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentRun"
+    Case:
+      type: object
+      required:
+        - id
+        - priority
+        - value_minor
+        - currency
+        - status
+        - version
+        - attempts
+        - escalation_reason
+        - created_at
+        - resolved_at
+        - resolution_type
+        - break_ids
+      properties:
+        id:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+        value_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+        version:
+          type: integer
+        attempts:
+          type: integer
+        escalation_reason:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+        resolution_type:
+          type: [string, "null"]
+        break_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+    Break:
+      type: object
+      required:
+        - id
+        - signature
+        - scope_id
+        - match_run_id
+        - side
+        - ledger_txn_ids
+        - external_refs
+        - delta_minor
+        - currency
+        - status
+        - detected_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        signature:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        scope_id:
+          type: string
+          format: uuid
+        match_run_id:
+          type: string
+          format: uuid
+        side:
+          type: string
+          enum: [ledger_only, external_only, amount_mismatch, duplicate]
+        ledger_txn_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        external_refs:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordRef"
+        delta_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [open, in_case, resolved, superseded, void]
+        detected_at:
+          type: string
+          format: date-time
+    RecordRef:
+      type: object
+      required: [source, source_record_id]
+      properties:
+        source:
+          type: string
+        source_record_id:
+          type: string
+    ProposalDetail:
+      type: object
+      required:
+        - id
+        - type
+        - status
+        - risk_tier
+        - confidence
+        - pattern_claimed
+        - pattern_verified
+        - rationale
+        - evidence_refs
+        - created_at
+        - expires_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        status:
+          type: string
+        risk_tier:
+          type: [string, "null"]
+        confidence:
+          type: number
+        pattern_claimed:
+          type: [string, "null"]
+        pattern_verified:
+          type: [string, "null"]
+        rationale:
+          type: string
+          maxLength: 4000
+        evidence_refs:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+    ProposalSummary:
+      type: object
+      required:
+        - id
+        - case_id
+        - type
+        - status
+        - risk_tier
+        - confidence
+        - pattern_claimed
+        - pattern_verified
+        - created_at
+        - expires_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        status:
+          type: string
+        risk_tier:
+          type: [string, "null"]
+        confidence:
+          type: number
+        pattern_claimed:
+          type: [string, "null"]
+        pattern_verified:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+    ProposalList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProposalSummary"
+        next_cursor:
+          type: string
+    AgentRun:
+      type: object
+      required:
+        - id
+        - model
+        - prompt_version
+        - started_at
+        - ended_at
+        - outcome
+        - tokens_in
+        - tokens_out
+        - cost_usd
+        - trace_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        model:
+          type: string
+        prompt_version:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+        outcome:
+          type: [string, "null"]
+        tokens_in:
+          type: integer
+          format: int64
+        tokens_out:
+          type: integer
+          format: int64
+        cost_usd:
+          type: string
+          description: Decimal USD string; money never crosses JSON as a float.
+        trace_id:
+          type: [string, "null"]
+    SwitchRequest:
+      type: object
+      additionalProperties: false
+      required: [name, enabled, reason]
+      properties:
+        name:
+          type: string
+          enum: [agent_enabled, auto_apply_enabled]
+        enabled:
+          type: boolean
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    SwitchResult:
+      type: object
+      required: [name, enabled, changed, updated_by, updated_at]
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        changed:
+          type: boolean
+        updated_by:
+          type: string
+          description: Canonical human:<key-id> actor string.
+        updated_at:
+          type: string
+          format: date-time

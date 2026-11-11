@@ -68,7 +68,7 @@ func OpenRole(ctx context.Context, name, dsn string) (*RolePool, error) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownRole, name)
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := parsePoolConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: parse %s dsn: %w", name, err)
 	}
