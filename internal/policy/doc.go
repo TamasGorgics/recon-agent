@@ -12,8 +12,8 @@
 // Policy input is one committed YAML document (root policy.yaml by default)
 // loaded through LoadFile or LoadBytes. The raw bytes are content-addressed with
 // SHA-256; EnsureVersion stores that exact document once in
-// policy_config_versions and verifies the stored bytes on every later load.
-// Comments and whitespace are therefore content, not formatting.
+// policy_config_versions and verifies the stored bytes on later EnsureVersion
+// calls. Comments and whitespace are therefore content, not formatting.
 //
 // # Tiers and precedence
 //
