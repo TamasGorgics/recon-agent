@@ -42,6 +42,7 @@ var envBindings = []envBinding{
 	{EnvOpenCodeBaseURL, func(c *Config, v string) error { c.LLM.BaseURL = v; return nil }},
 	{EnvOpenCodeModel, func(c *Config, v string) error { c.LLM.Model = v; return nil }},
 	{EnvAPIKeys, applyAPIKeysEnv},
+	{EnvPolicyFile, func(c *Config, v string) error { c.Policy.File = v; return nil }},
 }
 
 // DefaultLogLevel is used when neither YAML nor the environment sets a level.
@@ -59,14 +60,15 @@ type Config struct {
 	Match    MatchConfig    `yaml:"match"`
 	Synth    SynthConfig    `yaml:"synth"`
 	API      APIConfig      `yaml:"api"`
+	Policy   PolicyConfig   `yaml:"policy"`
 }
 
 // String renders Config without credentials: database DSNs and the LLM API key
 // are replaced, and API key digests are summarized by count. This keeps
 // accidental %v/%+v logging from exposing secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s}",
-		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API)
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy)
 }
 
 // Format implements fmt.Formatter so every verb, including %#v, uses the
@@ -164,6 +166,9 @@ func (c Config) Validate() error {
 	if err := c.API.Validate(); err != nil {
 		return err
 	}
+	if strings.TrimSpace(c.Policy.File) == "" {
+		return errors.New("config: policy.file is required (set POLICY_FILE or policy.file in CONFIG_FILE)")
+	}
 	return nil
 }
 
@@ -177,6 +182,7 @@ func defaults() Config {
 		Match:  DefaultMatchConfig(),
 		Synth:  DefaultSynthConfig(),
 		API:    DefaultAPIConfig(),
+		Policy: PolicyConfig{File: DefaultPolicyFile},
 	}
 }
 

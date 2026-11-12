@@ -1,0 +1,31 @@
+schema_version: 1
+
+auto_apply:
+  max_value_minor:
+    USD: 500
+    EUR: 500
+    SEK: 5000
+    JPY: 500
+  require_verifier: true
+  allowed_types: [link, adjustment]
+  allowed_patterns: [fee_variance, rounding, fx_rounding, reference_typo]
+
+confidence:
+  downgrade_below: 0.8
+
+single_approval:
+  max_value_minor:
+    USD: 50000
+    EUR: 50000
+    SEK: 500000
+    JPY: 50000
+
+write_off:
+  max_value_minor:
+    USD: 500
+    EUR: 500
+    SEK: 5000
+    JPY: 500
+
+proposal_ttl_hours: 48
+four_eyes: true
