@@ -874,7 +874,8 @@ func TestM401ExecutorGrants(t *testing.T) {
 
 // TestM401AppGrants proves the application role surface: approvals are
 // append-only, outbox is the worker path, policy config is content-addressed,
-// applied rows and approvers are read-only, and proposals stay SELECT-only.
+// applied rows and approvers are read-only, and proposals are SELECT plus the
+// M4-03 column-level UPDATE(status, version) grant.
 func TestM401AppGrants(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
@@ -978,9 +979,16 @@ func TestM401AppGrants(t *testing.T) {
 		requirePgError(t, err, sqlStateInsufficientPrivilege)
 	}
 
+	// M4-03 adds the column-level UPDATE(status, version) grant the approval
+	// service needs (Q-84); other proposal columns stay denied.
 	if _, err := app.Exec(ctx,
-		`UPDATE proposals SET status = 'rejected' WHERE id = $1::uuid`, proposalID); err == nil {
-		t.Fatal("app UPDATE proposals succeeded, want permission denied")
+		`UPDATE proposals SET status = 'rejected', version = version + 1
+		  WHERE id = $1::uuid`, proposalID); err != nil {
+		t.Fatalf("app status/version update: %v", err)
+	}
+	if _, err := app.Exec(ctx,
+		`UPDATE proposals SET rationale = 'tampered' WHERE id = $1::uuid`, proposalID); err == nil {
+		t.Fatal("app UPDATE proposals.rationale succeeded, want permission denied")
 	} else {
 		requirePgError(t, err, sqlStateInsufficientPrivilege)
 	}
