@@ -304,33 +304,3 @@ func TestBuildCalibrationNotApplicable(t *testing.T) {
 		t.Fatalf("zero-case calibration rendered a table:\n%s", markdown)
 	}
 }
-
-func TestVerifierScorecardPlaceholder(t *testing.T) {
-	source := goldenFixture(t)
-	built, err := Build(context.Background(), source, fixtureRun1, Options{
-		DatasetDir: devDatasetDir(t),
-		Clock:      fixtureClock(t),
-	})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if len(built.Scorecards) != 1 {
-		t.Fatalf("scorecards = %+v", built.Scorecards)
-	}
-	card := built.Scorecards[0]
-	if card.Name != "verifier" || card.Applicable ||
-		card.DeferredTo != "M4-05" || card.Cases != 0 ||
-		card.Reason != "deterministic verifiers land in M4-05" {
-		t.Fatalf("verifier scorecard = %+v", card)
-	}
-	if card.Metrics == nil {
-		t.Fatal("scorecard metrics is nil, want an empty array")
-	}
-	markdown, err := RenderMarkdown(built)
-	if err != nil {
-		t.Fatalf("RenderMarkdown: %v", err)
-	}
-	if !bytes.Contains(markdown, []byte("verifier: not applicable until M4-05")) {
-		t.Fatalf("markdown missing verifier placeholder:\n%s", markdown)
-	}
-}

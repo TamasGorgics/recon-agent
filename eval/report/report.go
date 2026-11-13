@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,6 +101,11 @@ type Options struct {
 	// AppendixLimit caps the failure appendix. <= 0 means
 	// DefaultAppendixLimit.
 	AppendixLimit int
+	// VerifierSummary is the explicit verifier scorecard input supplied by the
+	// eval harness. nil means no verifier outcomes were recorded for this run;
+	// a non-nil empty summary means zero cases were evaluated and is still an
+	// applicable scorecard.
+	VerifierSummary *VerifierSummary
 }
 
 // Report is the eval-report/v1 document. Markdown and JSON render from this
@@ -328,7 +334,8 @@ type RepeatRun struct {
 	StepsMean    string `json:"steps_mean"`
 }
 
-// Scorecard is the generic component-scorecard shape filled by M3-06/M4-05.
+// Scorecard is the generic component-scorecard shape. The verifier card is
+// filled from Options.VerifierSummary; other components may add cards later.
 type Scorecard struct {
 	Name       string            `json:"name"`
 	Applicable bool              `json:"applicable"`
@@ -346,17 +353,152 @@ type ScorecardMetric struct {
 	Note  string `json:"note"`
 }
 
-// verifierScorecard is the M3-06 placeholder filled by M4-05. M3-06 does not
-// import or create internal/policy/verify.
-func verifierScorecard() Scorecard {
+// VerifierCounts is one verifier scorecard bucket. Evaluated is the number of
+// verifier outcomes compared with ground truth; Passed is the number the
+// verifier accepted; FalsePasses are accepted outcomes whose ground truth was a
+// failure; FalseNegatives are rejected outcomes whose ground truth was a pass.
+type VerifierCounts struct {
+	Evaluated      int
+	Passed         int
+	FalsePasses    int
+	FalseNegatives int
+}
+
+// VerifierSummary is the eval harness's explicit verifier scorecard input.
+// ByPattern may be empty for a run with no verifier outcomes; Total must equal
+// the sum of ByPattern and is validated by Build. The report sorts pattern
+// names, so map iteration order never affects output.
+type VerifierSummary struct {
+	Total     VerifierCounts
+	ByPattern map[string]VerifierCounts
+}
+
+// validate fails closed on impossible counts or a total that does not match
+// the per-pattern breakdown.
+func (s *VerifierSummary) validate() error {
+	if s == nil {
+		return nil
+	}
+	if err := s.Total.validate("total"); err != nil {
+		return err
+	}
+	var sum VerifierCounts
+	for pattern, counts := range s.ByPattern {
+		if strings.TrimSpace(pattern) == "" {
+			return errors.New("verifier summary: pattern name is empty")
+		}
+		if pattern != strings.TrimSpace(pattern) {
+			return fmt.Errorf("verifier summary: pattern %q has surrounding whitespace", pattern)
+		}
+		if err := counts.validate(pattern); err != nil {
+			return err
+		}
+		sum.add(counts)
+	}
+	if sum != s.Total {
+		return fmt.Errorf("verifier summary: total counts %+v do not match per-pattern sum %+v",
+			s.Total, sum)
+	}
+	return nil
+}
+
+func (c VerifierCounts) validate(label string) error {
+	if c.Evaluated < 0 || c.Passed < 0 || c.FalsePasses < 0 || c.FalseNegatives < 0 {
+		return fmt.Errorf("verifier summary: %s counts must be non-negative: %+v", label, c)
+	}
+	if c.Passed > c.Evaluated {
+		return fmt.Errorf("verifier summary: %s passed %d exceeds evaluated %d",
+			label, c.Passed, c.Evaluated)
+	}
+	if c.FalsePasses > c.Passed {
+		return fmt.Errorf("verifier summary: %s false passes %d exceed passed %d",
+			label, c.FalsePasses, c.Passed)
+	}
+	if c.FalseNegatives > c.Evaluated-c.Passed {
+		return fmt.Errorf("verifier summary: %s false negatives %d exceed failed %d",
+			label, c.FalseNegatives, c.Evaluated-c.Passed)
+	}
+	return nil
+}
+
+func (c *VerifierCounts) add(other VerifierCounts) {
+	c.Evaluated += other.Evaluated
+	c.Passed += other.Passed
+	c.FalsePasses += other.FalsePasses
+	c.FalseNegatives += other.FalseNegatives
+}
+
+// verifierScorecard renders the report-owned verifier card. It deliberately
+// takes an explicit summary and never imports internal/policy/verify or the DB
+// service.
+func verifierScorecard(summary *VerifierSummary) (Scorecard, error) {
+	if summary == nil {
+		return Scorecard{
+			Name:       "verifier",
+			Applicable: false,
+			Reason:     "no verifier outcomes in this run",
+			Cases:      0,
+			Metrics:    []ScorecardMetric{},
+		}, nil
+	}
+	if err := summary.validate(); err != nil {
+		return Scorecard{}, err
+	}
+
+	metrics := appendVerifierMetrics(nil, "", summary.Total)
+	patterns := make([]string, 0, len(summary.ByPattern))
+	for pattern := range summary.ByPattern {
+		patterns = append(patterns, pattern)
+	}
+	sort.Strings(patterns)
+	for _, pattern := range patterns {
+		metrics = appendVerifierMetrics(metrics, pattern+".", summary.ByPattern[pattern])
+	}
 	return Scorecard{
 		Name:       "verifier",
-		Applicable: false,
-		DeferredTo: "M4-05",
-		Reason:     "deterministic verifiers land in M4-05",
-		Cases:      0,
-		Metrics:    []ScorecardMetric{},
+		Applicable: true,
+		Cases:      summary.Total.Evaluated,
+		Metrics:    metrics,
+	}, nil
+}
+
+func appendVerifierMetrics(dst []ScorecardMetric, prefix string, counts VerifierCounts) []ScorecardMetric {
+	return append(dst,
+		ScorecardMetric{
+			Name:  prefix + "cases",
+			Value: strconv.Itoa(counts.Evaluated),
+			Unit:  "cases",
+			Note:  "evaluated verifier outcomes",
+		},
+		ScorecardMetric{
+			Name:  prefix + "pass_rate",
+			Value: verifierPassRate(counts),
+			Unit:  "ratio",
+			Note:  "passed / evaluated",
+		},
+		ScorecardMetric{
+			Name:  prefix + "false_passes",
+			Value: strconv.Itoa(counts.FalsePasses),
+			Unit:  "cases",
+			Note:  "verified pass, ground-truth fail",
+		},
+		ScorecardMetric{
+			Name:  prefix + "false_negatives",
+			Value: strconv.Itoa(counts.FalseNegatives),
+			Unit:  "cases",
+			Note:  "verified fail, ground-truth pass",
+		},
+	)
+}
+
+func verifierPassRate(counts VerifierCounts) string {
+	if counts.Evaluated <= 0 {
+		return "n/a"
 	}
+	rate := decimal.NewFromInt(int64(counts.Passed)).
+		Div(decimal.NewFromInt(int64(counts.Evaluated))).
+		RoundBank(4)
+	return rate.StringFixed(4)
 }
 
 // Build loads one run (or its complete repeat group), rebuilds and verifies
@@ -371,6 +513,10 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 		return Report{}, errors.New("eval/report: run id is required")
 	}
 	opts = normalizeOptions(opts)
+	verifierCard, err := verifierScorecard(opts.VerifierSummary)
+	if err != nil {
+		return Report{}, fmt.Errorf("eval/report: %w", err)
+	}
 
 	requested, err := src.LoadRun(ctx, runID)
 	if err != nil {
@@ -431,11 +577,10 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 			EvalDatasetVersion: resolved.Manifest.EvalDatasetVersion,
 			Matched:            true,
 		},
-		ByMode:       map[string]MetricBlock{},
-		ByDifficulty: map[string]MetricBlock{},
-		// M3-06 fills calibration and the verifier scorecard placeholder.
+		ByMode:          map[string]MetricBlock{},
+		ByDifficulty:    map[string]MetricBlock{},
 		Calibration:     nil,
-		Scorecards:      []Scorecard{verifierScorecard()},
+		Scorecards:      []Scorecard{verifierCard},
 		FailureAppendix: []AppendixCase{},
 	}
 	if len(runData) > 1 || (len(runData) == 1 && runs[0].RepeatGroup != "") {

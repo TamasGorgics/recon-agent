@@ -165,7 +165,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M4-02 | API server skeleton | M | M1-07, M2-01 |
 | ☑ | M4-03 | Proposal state machine | M | M2-01, M1-05 |
 | ☑ | M4-04 | Policy engine | M | M2-01 |
-| ☐ | M4-05 | Deterministic verifiers | M | M1-01, M1-09, M2-08 |
+| ☑ | M4-05 | Deterministic verifiers | M | M1-01, M1-09, M2-08 |
 | ☐ | M4-06 | Executor | L | M4-01, M4-03, M1-06, M2-08 |
 | ☐ | M4-07 | Outbox worker | M | M4-01 |
 | ☐ | M4-08 | Concurrency and fault-injection tests | M | M4-06, M4-07 |

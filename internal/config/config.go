@@ -61,14 +61,15 @@ type Config struct {
 	Synth    SynthConfig    `yaml:"synth"`
 	API      APIConfig      `yaml:"api"`
 	Policy   PolicyConfig   `yaml:"policy"`
+	Verifier VerifierConfig `yaml:"verifier"`
 }
 
 // String renders Config without credentials: database DSNs and the LLM API key
 // are replaced, and API key digests are summarized by count. This keeps
 // accidental %v/%+v logging from exposing secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v}",
-		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy)
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier)
 }
 
 // Format implements fmt.Formatter so every verb, including %#v, uses the
@@ -136,6 +137,7 @@ func LoadFile(path string) (Config, error) {
 	cfg.LLM = normalizeLLMConfig(cfg.LLM)
 	cfg.Agent = normalizeAgentConfig(cfg.Agent, cfg.LLM.Model)
 	cfg.Worker = normalizeWorkerConfig(cfg.Worker)
+	cfg.Verifier = cfg.Verifier.WithDefaults()
 	return cfg, nil
 }
 
@@ -149,6 +151,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Match.Validate(); err != nil {
+		return err
+	}
+	if err := c.Verifier.Validate(); err != nil {
 		return err
 	}
 	if err := c.Synth.Validate(); err != nil {
@@ -174,15 +179,16 @@ func (c Config) Validate() error {
 
 func defaults() Config {
 	return Config{
-		Log:    LogConfig{Level: DefaultLogLevel},
-		LLM:    DefaultLLMConfig(),
-		Agent:  DefaultAgentConfig(),
-		Worker: DefaultWorkerConfig(),
-		Ledger: DefaultLedgerConfig(),
-		Match:  DefaultMatchConfig(),
-		Synth:  DefaultSynthConfig(),
-		API:    DefaultAPIConfig(),
-		Policy: PolicyConfig{File: DefaultPolicyFile},
+		Log:      LogConfig{Level: DefaultLogLevel},
+		LLM:      DefaultLLMConfig(),
+		Agent:    DefaultAgentConfig(),
+		Worker:   DefaultWorkerConfig(),
+		Ledger:   DefaultLedgerConfig(),
+		Match:    DefaultMatchConfig(),
+		Synth:    DefaultSynthConfig(),
+		API:      DefaultAPIConfig(),
+		Policy:   PolicyConfig{File: DefaultPolicyFile},
+		Verifier: DefaultVerifierConfig(),
 	}
 }
 

@@ -112,7 +112,11 @@ func TestBuildReportShape(t *testing.T) {
 		t.Fatalf("calibration = %+v, want an applicable M3-06 section", built.Calibration)
 	}
 	if len(built.Scorecards) != 1 || built.Scorecards[0].Name != "verifier" {
-		t.Fatalf("scorecards = %v, want only the verifier placeholder", built.Scorecards)
+		t.Fatalf("scorecards = %v, want only the verifier card", built.Scorecards)
+	}
+	if built.Scorecards[0].Applicable ||
+		built.Scorecards[0].Reason != "no verifier outcomes in this run" {
+		t.Fatalf("verifier scorecard = %+v", built.Scorecards[0])
 	}
 	if len(built.FailureAppendix) != 4 {
 		t.Fatalf("appendix = %d, want 4", len(built.FailureAppendix))
