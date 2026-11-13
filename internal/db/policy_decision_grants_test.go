@@ -14,7 +14,8 @@ import (
 // TestM404PolicyDecisionAppGrant proves the additive M4-04 grant through the
 // real recon_app login: risk_tier and policy_decision are writable, M4-03's
 // status/version stay writable, and every other proposal column, INSERT, and
-// DELETE stay denied.
+// DELETE stay denied. (M4-05 later adds verification/pattern_verified; the
+// matrix here tracks that additive grant without taking ownership of it.)
 func TestM404PolicyDecisionAppGrant(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
@@ -74,8 +75,6 @@ func TestM404PolicyDecisionAppGrant(t *testing.T) {
 		{"evidence", `UPDATE proposals SET evidence = '[]'::jsonb WHERE id = $1::uuid`, []any{proposalID}},
 		{"state_hash", `UPDATE proposals SET state_hash = 'tampered' WHERE id = $1::uuid`, []any{proposalID}},
 		{"expires_at", `UPDATE proposals SET expires_at = now() WHERE id = $1::uuid`, []any{proposalID}},
-		{"verification", `UPDATE proposals SET verification = '{}'::jsonb WHERE id = $1::uuid`, []any{proposalID}},
-		{"pattern_verified", `UPDATE proposals SET pattern_verified = 'fee_variance' WHERE id = $1::uuid`, []any{proposalID}},
 		{"type", `UPDATE proposals SET type = 'adjustment' WHERE id = $1::uuid`, []any{proposalID}},
 		{"confidence", `UPDATE proposals SET confidence = 0.5 WHERE id = $1::uuid`, []any{proposalID}},
 		{"case_id", `UPDATE proposals SET case_id = $2::uuid WHERE id = $1::uuid`, []any{proposalID, secondCase}},
@@ -130,6 +129,19 @@ func TestM404PolicyDecisionAppGrant(t *testing.T) {
 		}
 		if !allowed {
 			t.Errorf("app lacks UPDATE on proposals.%s, want granted", column)
+		}
+	}
+	// verification/pattern_verified became writable in the additive M4-05 grant;
+	// their positive matrix lives in verifier_grants_test.go.
+	for _, column := range []string{"verification", "pattern_verified"} {
+		var allowed bool
+		if err := d.Pool.QueryRow(ctx,
+			`SELECT has_column_privilege($1::name, 'public.proposals', $2::text, 'UPDATE')`,
+			db.RoleApp, column).Scan(&allowed); err != nil {
+			t.Fatalf("read app UPDATE on proposals.%s: %v", column, err)
+		}
+		if !allowed {
+			t.Errorf("app lacks UPDATE on proposals.%s, want granted by M4-05", column)
 		}
 	}
 

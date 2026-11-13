@@ -111,7 +111,7 @@ Per-run ECE: r0=0.4000 (n=3); r1=0.1500 (n=2); r2=0.3667 (n=3)
 
 ## Component scorecards
 
-- verifier: not applicable until M4-05 (deterministic verifiers land in M4-05)
+- verifier: not applicable (no verifier outcomes in this run)
 
 ## Failure appendix
 

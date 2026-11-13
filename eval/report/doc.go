@@ -38,9 +38,12 @@
 // group pools observations for the reliability table and lists per-run ECE.
 // Calibration is descriptive and never gates.
 //
-// Every report carries a generic verifier scorecard placeholder
-// (applicable=false, deferred_to=M4-05). M3-06 does not import or create
-// internal/policy/verify; M4-05 fills the same report-owned shape.
+// Every report carries one report-owned verifier scorecard. Options supplies an
+// explicit VerifierSummary; when it is non-nil the card is applicable and
+// reports total and per-pattern evaluated/passed/false-pass/false-negative
+// counts plus pass rates. When the summary is nil the card is not applicable
+// with reason "no verifier outcomes in this run". The report never imports
+// internal/policy/verify or the DB service: the eval harness owns population.
 //
 // # Run comparison
 //

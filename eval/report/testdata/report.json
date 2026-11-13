@@ -2904,8 +2904,7 @@
     {
       "name": "verifier",
       "applicable": false,
-      "deferred_to": "M4-05",
-      "reason": "deterministic verifiers land in M4-05",
+      "reason": "no verifier outcomes in this run",
       "cases": 0,
       "metrics": []
     }
