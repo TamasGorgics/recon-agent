@@ -1,4 +1,4 @@
-# Eval reports, component evals, and run comparison (M3-05/M3-06/M3-07)
+# Eval reports, component evals, and run comparison (M3-05/M3-06/M3-07/M4-05)
 
 `recon-eval report` renders M3 agent evaluation results as Markdown and
 `eval-report/v1` JSON. `recon-eval matcher` renders the standalone matcher
@@ -201,21 +201,48 @@ and `gap = |accuracy − mean_confidence|`; empty bins carry `null`, never zero.
 
 ## Component scorecards
 
-Every M3-06 agent report contains one generic verifier placeholder:
+Every report carries one report-owned verifier card, filled from
+`report.Options.VerifierSummary`. The summary is explicit harness input:
+`eval/report` imports neither `internal/policy/verify` nor the DB service, so
+building a report never runs a verifier and never reads proposal rows.
 
-```json
-{
-  "name": "verifier",
-  "applicable": false,
-  "deferred_to": "M4-05",
-  "reason": "deterministic verifiers land in M4-05",
-  "cases": 0,
-  "metrics": []
-}
-```
+`VerifierSummary` has `Total` and per-pattern `ByPattern` buckets of
+`VerifierCounts`:
 
-Markdown renders "not applicable until M4-05". M3-06 does not import or create
-`internal/policy/verify`; M4-05 fills the same report-owned scorecard shape.
+- `Evaluated` — verifier outcomes compared with ground truth;
+- `Passed` — outcomes the verifier accepted;
+- `FalsePasses` — accepted outcomes whose ground truth was a failure;
+- `FalseNegatives` — rejected outcomes whose ground truth was a pass.
+
+`Build` validates the summary before loading the run and fails closed on
+negative counts, `passed > evaluated`, `false_passes > passed`,
+`false_negatives > evaluated − passed`, empty or whitespace-padded pattern
+names, or a total that is not the exact sum of the per-pattern buckets.
+Invalid input is a hard error, never a clamped card.
+
+- **nil summary** (no outcomes recorded for this run): `applicable: false`,
+  no `deferred_to`, reason `no verifier outcomes in this run`, `cases: 0`,
+  `metrics: []`. Markdown renders
+  `- verifier: not applicable (no verifier outcomes in this run)`.
+- **non-nil summary**: `applicable: true` with no `deferred_to` and no reason.
+  `cases` is the total evaluated count. Metrics are, in fixed order, the total
+  `cases`, `pass_rate`, `false_passes`, `false_negatives`, then the same four
+  prefixed with `<pattern>.` for each pattern in sorted name order (for
+  example `fee_variance.false_passes`). `pass_rate` is `passed / evaluated` as
+  four-decimal text, or `n/a` when nothing was evaluated.
+- **non-nil empty summary** (`&VerifierSummary{}`): applicable with zero
+  cases — `cases: 0`, `pass_rate: n/a`, zero false passes and false negatives.
+  This is deliberately different from nil.
+
+The card no longer defers: the M3-06 `deferred_to: "M4-05"` placeholder is
+retired for newly built reports. Historical M3-era reports and committed
+baseline snapshots keep the bytes they were generated with. The report goldens
+(`eval/report/testdata/report.{md,json}`) pin the nil-summary card.
+
+`recon-eval report` has no flag for verifier outcomes, so a report built by the
+CLI currently always renders the nil-summary card. Populating the summary from
+`proposals.verification` / `pattern_verified` is eval-harness work and remains
+a documented residual (Q-89); no live per-run population is claimed here.
 
 ## Run comparison (`compare/v1`)
 
@@ -322,8 +349,9 @@ recorded path must stay clone-relative.
 
 Evaluation order and semantics:
 
-1. `t0_false_fix` — **not applicable until M4-14** (deterministic verifiers and
-   policy tiers do not exist yet). It is never counted as a pass.
+1. `t0_false_fix` — **not applicable until M4-14** (the `recon-eval run
+   --e2e` auto-resolve/T0 scoring path lands there). It is never counted as a
+   pass.
 2. `overall_false_fix` — reuses the compare classification. The candidate
    fails only when the overall false-fix comparison is `regression` under
    disjoint 95% Wilson intervals.
@@ -379,8 +407,9 @@ Top level: `schema` (`eval-report/v1`), `generated_at`, `run`, `runs[]`,
   prompt version, seed, git SHA, timestamps, repeat fields, aborted/reason and
   cost cap. Arbitrary `eval_runs.config` keys and DSNs are never dumped.
 - `calibration` is always present from M3-06, with `applicable=false` when
-  there are no confidence observations. `scorecards` contains the verifier
-  placeholder.
+  there are no confidence observations. `scorecards` always contains the
+  report-owned verifier card; it is not applicable when no
+  `Options.VerifierSummary` was supplied (see Component scorecards above).
 - `auto_resolve_precision` is deferred to M4-14.
 
 ## Matcher report (`matcher-report/v1`)

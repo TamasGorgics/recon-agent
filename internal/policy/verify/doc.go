@@ -27,9 +27,11 @@
 // pattern_verified, every failure stores NULL. A break that is not unique
 // returns break_unresolved and writes nothing.
 //
-// fx_rounding derives the base/quote pair from a single fx evidence ref when
-// present, otherwise from the unique rate-table base for the external's source
-// and quote, and loads every rate at or before the occurrence instant.
+// fx_rounding derives the base/quote pair from the unique rate-table base for
+// the external's source and quote; proposal evidence refs are never trusted to
+// choose a pair. It loads every rate at or before the occurrence instant and
+// fails closed on zero bases (missing_rate) or more than one base
+// (ambiguous_rate).
 // reference_typo binds the payload's external_ref to the break's single
 // external ref, loads the scope-account candidates with the external business
 // value date as its window anchor, and requires a break that names ledger txns
