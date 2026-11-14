@@ -17,8 +17,9 @@
 // with exactly one of state_changed, break_resolved, or expired. A recorded
 // failure is a successful Apply: the error is nil and Result.Status is
 // apply_failed. Invalid ids, unknown proposals, and non-appliable statuses
-// return typed sentinels; infrastructure database errors are returned
-// unchanged. Both leave the status approved for a later retry.
+// return typed sentinels without a state change; an already-applied proposal
+// returns a replayed result. Infrastructure database errors are returned
+// unchanged and leave an approved proposal approved for a later retry.
 //
 // # State-hash reconstruction
 //
