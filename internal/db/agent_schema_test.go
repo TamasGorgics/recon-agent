@@ -618,10 +618,24 @@ func TestM2ProposalActiveIndex(t *testing.T) {
 // SELECT on proposals plus column-level UPDATE(status, version) for the atomic
 // apply path. Table-level UPDATE stays false here; TestM401ExecutorGrants proves
 // the column grant and the exact lock/update statements through the real login.
-// Every other M2 object and every audit object stays at zero.
+// M4-06 adds read-only SELECT on the nine agent views needed to reconstruct the
+// proposal state hash; every other M2 object and every audit object stays at
+// zero.
 func TestM2ExecutorAuditNoGrants(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
+
+	m4ExecutorViews := map[string]bool{
+		"v_agent_cases":              true,
+		"v_agent_case_breaks":        true,
+		"v_agent_breaks":             true,
+		"v_agent_ledger_txns":        true,
+		"v_agent_ledger_entries":     true,
+		"v_agent_external_records":   true,
+		"v_agent_settlement_batches": true,
+		"v_agent_fx_rates":           true,
+		"v_agent_fee_schedules":      true,
+	}
 
 	objects := append(append([]string{}, m2NewTables...), m2AgentViews...)
 	for _, role := range []string{db.RoleExecutor, db.RoleAuditRO} {
@@ -629,8 +643,9 @@ func TestM2ExecutorAuditNoGrants(t *testing.T) {
 			t.Run(role+"/"+object, func(t *testing.T) {
 				for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 					want := false
-					if role == db.RoleExecutor && object == "proposals" && privilege == "SELECT" {
-						want = true // M4-01/Q-71
+					if role == db.RoleExecutor && privilege == "SELECT" &&
+						(object == "proposals" || m4ExecutorViews[object]) {
+						want = true // M4-01/Q-71, M4-06 read surface
 					}
 					var allowed bool
 					if err := d.Pool.QueryRow(ctx,

@@ -319,23 +319,47 @@ func TestM405VerifierReadViewsGrant(t *testing.T) {
 		}
 	}
 
-	// Executor and audit keep no view privileges; the agent role keeps its M2
+	// M4-06 adds executor SELECT on the verifier read surface plus the case and
+	// settlement views needed for state-hash reconstruction. Executor still has
+	// no writes, and audit keeps no view privileges; the agent keeps its M2
 	// SELECT-only grant.
-	for _, view := range m405VerifierViews {
-		for _, role := range []string{db.RoleExecutor, db.RoleAuditRO} {
-			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
-				if m405ViewPrivilege(t, d, role, view, privilege) {
-					t.Errorf("%s gained %s on %s", role, privilege, view)
-				}
+	m406ExecutorViews := map[string]bool{
+		"v_agent_cases":              true,
+		"v_agent_case_breaks":        true,
+		"v_agent_breaks":             true,
+		"v_agent_ledger_txns":        true,
+		"v_agent_ledger_entries":     true,
+		"v_agent_external_records":   true,
+		"v_agent_settlement_batches": true,
+		"v_agent_fx_rates":           true,
+		"v_agent_fee_schedules":      true,
+	}
+	for _, view := range append(append([]string{}, m405VerifierViews...),
+		"v_agent_cases", "v_agent_settlement_batches") {
+		for _, privilege := range []string{"INSERT", "UPDATE", "DELETE"} {
+			if m405ViewPrivilege(t, d, db.RoleExecutor, view, privilege) {
+				t.Errorf("executor gained %s on %s", privilege, view)
 			}
+			if m405ViewPrivilege(t, d, db.RoleAuditRO, view, privilege) {
+				t.Errorf("audit gained %s on %s", privilege, view)
+			}
+		}
+		if !m406ExecutorViews[view] {
+			t.Fatalf("test view %s is not in the M4-06 executor set", view)
+		}
+		if !m405ViewPrivilege(t, d, db.RoleExecutor, view, "SELECT") {
+			t.Errorf("executor lacks M4-06 SELECT on %s", view)
+		}
+		if m405ViewPrivilege(t, d, db.RoleAuditRO, view, "SELECT") {
+			t.Errorf("audit gained SELECT on %s", view)
 		}
 		if !m405ViewPrivilege(t, d, db.RoleAgentRO, view, "SELECT") {
 			t.Errorf("agent lost SELECT on %s", view)
 		}
-		for _, privilege := range []string{"INSERT", "UPDATE", "DELETE"} {
-			if m405ViewPrivilege(t, d, db.RoleAgentRO, view, privilege) {
-				t.Errorf("agent gained %s on %s", privilege, view)
-			}
+		if m405ViewPrivilege(t, d, db.RoleAgentRO, view, "INSERT") ||
+			m405ViewPrivilege(t, d, db.RoleAgentRO, view, "UPDATE") ||
+			m405ViewPrivilege(t, d, db.RoleAgentRO, view, "DELETE") {
+			t.Errorf("agent gained a write privilege on %s", view)
 		}
 	}
 }
@@ -369,13 +393,37 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		t.Fatalf("configure goose: %v", err)
 	}
 
-	// Down 1: the M4-05 read grant (20261113091000) only.
+	// Down 1: the M4-06 executor read grant (20261114120000). It must not
+	// touch the M4-05 app grant or the agent role.
+	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("apply M4-06 executor read-grant Down: %v", err)
+	}
+	var version int64
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
+		t.Fatalf("read version after M4-06 read-grant Down: %v", err)
+	}
+	if version != m405ReadGrantMigrationVersion {
+		t.Fatalf("version after M4-06 read-grant Down = %d, want %d", version, m405ReadGrantMigrationVersion)
+	}
+	for _, view := range append(append([]string{}, m405VerifierViews...),
+		"v_agent_cases", "v_agent_settlement_batches") {
+		if m405ViewPrivilege(t, d, db.RoleExecutor, view, "SELECT") {
+			t.Errorf("executor still has SELECT on %s after M4-06 read-grant Down", view)
+		}
+	}
+	for _, view := range m405VerifierViews {
+		if !m405ViewPrivilege(t, d, db.RoleApp, view, "SELECT") {
+			t.Errorf("M4-06 read-grant Down revoked app SELECT on %s", view)
+		}
+	}
+
+	// Down 2: the M4-05 read grant (20261113091000) only.
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-05 read-grant Down: %v", err)
 	}
-
-	var version int64
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("read version after read-grant Down: %v", err)
@@ -400,7 +448,7 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		}
 	}
 
-	// Down 2: the M4-05 column grant (20261113090000) only.
+	// Down 3: the M4-05 column grant (20261113090000) only.
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-05 column-grant Down: %v", err)
