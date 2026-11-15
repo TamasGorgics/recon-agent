@@ -16,6 +16,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/db"
+	"github.com/TamasGorgics/recon-agent/internal/fault"
 )
 
 // Apply applies one approved proposal exactly once.
@@ -39,6 +40,7 @@ func (s *Service) Apply(ctx context.Context, proposalID string) (Result, error) 
 			if err != nil {
 				return err
 			}
+			fault.Hit(fault.ExecutorBeforeCommit)
 			result = outcome
 			return nil
 		})
@@ -65,6 +67,7 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, proposalID string) (Re
 	if err != nil {
 		return Result{}, err
 	}
+	fault.Hit(fault.ExecutorAfterProposalLock)
 	if locked.Status == state.StatusApplied {
 		ledgerTxnID, err := loadApplied(ctx, tx, proposalID)
 		if err != nil {
@@ -90,6 +93,7 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, proposalID string) (Re
 	if err != nil {
 		return Result{}, err
 	}
+	fault.Hit(fault.ExecutorAfterRevalidation)
 
 	switch locked.Type {
 	case "adjustment", "write_off":
@@ -97,9 +101,11 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, proposalID string) (Re
 		if err != nil {
 			return Result{}, err
 		}
+		fault.Hit(fault.ExecutorAfterLedgerInsert)
 		if err := s.insertApplied(ctx, tx, locked.ID, ledgerTxnID, now); err != nil {
 			return Result{}, err
 		}
+		fault.Hit(fault.ExecutorAfterAppliedInsert)
 		if err := s.resolveTargets(ctx, tx, locked, resolved, now); err != nil {
 			return Result{}, err
 		}
@@ -118,6 +124,7 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, proposalID string) (Re
 		if err := s.insertApplied(ctx, tx, locked.ID, "", now); err != nil {
 			return Result{}, err
 		}
+		fault.Hit(fault.ExecutorAfterAppliedInsert)
 		if err := s.resolveTargets(ctx, tx, locked, resolved, now); err != nil {
 			return Result{}, err
 		}
@@ -132,6 +139,7 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, proposalID string) (Re
 		if err := s.insertApplied(ctx, tx, locked.ID, "", now); err != nil {
 			return Result{}, err
 		}
+		fault.Hit(fault.ExecutorAfterAppliedInsert)
 		if err := s.resolveTargets(ctx, tx, locked, resolved, now); err != nil {
 			return Result{}, err
 		}
@@ -229,6 +237,7 @@ func (s *Service) resolveTargets(ctx context.Context, tx pgx.Tx, locked lockedPr
 			return err
 		}
 	}
+	fault.Hit(fault.ExecutorAfterBreakResolve)
 
 	var (
 		caseStatus     string
@@ -281,6 +290,7 @@ func (s *Service) resolveTargets(ctx context.Context, tx pgx.Tx, locked lockedPr
 			cause:  fmt.Errorf("case %s changed while applying", locked.CaseID),
 		}
 	}
+	fault.Hit(fault.ExecutorAfterCaseResolve)
 	return s.appendAudit(ctx, tx, audit.Entry{
 		Actor:      s.actor,
 		Action:     ActionCaseResolved,
@@ -308,6 +318,7 @@ func (s *Service) markApplied(ctx context.Context, tx pgx.Tx, locked lockedPropo
 	}); err != nil {
 		return fmt.Errorf("executor: transition proposal applied: %w", err)
 	}
+	fault.Hit(fault.ExecutorAfterTransition)
 
 	if err := s.appendAudit(ctx, tx, audit.Entry{
 		Actor:      s.actor,
@@ -325,8 +336,13 @@ func (s *Service) markApplied(ctx context.Context, tx pgx.Tx, locked lockedPropo
 	}); err != nil {
 		return err
 	}
+	fault.Hit(fault.ExecutorAfterAudit)
 
-	return s.enqueueApplied(ctx, tx, locked, ledgerTxnID, now)
+	if err := s.enqueueApplied(ctx, tx, locked, ledgerTxnID, now); err != nil {
+		return err
+	}
+	fault.Hit(fault.ExecutorAfterOutboxInsert)
+	return nil
 }
 
 // insertApplied writes the FIN-23 exactly-once record. A unique violation means

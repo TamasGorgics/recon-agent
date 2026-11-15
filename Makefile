@@ -18,7 +18,7 @@ help:
 	@printf '  %-16s %s\n' 'test' 'go test -race ./...'
 	@printf '  %-16s %s\n' 'test-integration' 'go test -race -tags=integration -parallel=4 -p 1 ./...'
 	@printf '  %-16s %s\n' 'test-live' 'manual live LLM test; requires OPENCODE_API_KEY'
-	@printf '  %-16s %s\n' 'test-fault' 'stub until M4-08'
+	@printf '  %-16s %s\n' 'test-fault' 'fault/invariant/concurrency subset (integration+faultinject, -p 1)'
 	@printf '  %-16s %s\n' 'db-up' 'docker compose up -d --wait postgres'
 	@printf '  %-16s %s\n' 'db-down' 'docker compose down'
 	@printf '  %-16s %s\n' 'migrate' 'go run ./cmd/recon migrate up'
@@ -57,8 +57,7 @@ test-live:
 	go test -tags=live -run 'TestLive|TestRecordM2Cassettes' -v -count=1 ./internal/llm ./internal/agent
 
 test-fault:
-	@printf '%s\n' 'target test-fault: not implemented until M4-08' >&2
-	@exit 1
+	go test -race -count=1 -tags='integration faultinject' -p 1 ./internal/fault ./internal/invariants ./internal/executor -run 'Fault|Invariants|Check|Concurrency'
 
 db-up:
 	docker compose up -d --wait postgres
