@@ -167,7 +167,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M4-04 | Policy engine | M | M2-01 |
 | ☑ | M4-05 | Deterministic verifiers | M | M1-01, M1-09, M2-08 |
 | ☑ | M4-06 | Executor | L | M4-01, M4-03, M1-06, M2-08 |
-| ☐ | M4-07 | Outbox worker | M | M4-01 |
+| ☑ | M4-07 | Outbox worker | M | M4-01 |
 | ☐ | M4-08 | Concurrency and fault-injection tests | M | M4-06, M4-07 |
 | ☐ | M4-09 | Auto-apply limits and circuit breaker | S | M4-04, M4-06 |
 | ☐ | M4-10 | Case lifecycle | L | M4-03, M4-06, M4-07, M1-12, M1-14 |
