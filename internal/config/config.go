@@ -50,26 +50,27 @@ const DefaultLogLevel = "info"
 
 // Config is the complete runtime configuration.
 type Config struct {
-	Database DatabaseConfig `yaml:"database"`
-	Log      LogConfig      `yaml:"log"`
-	LLM      LLMConfig      `yaml:"llm"`
-	Agent    AgentConfig    `yaml:"agent"`
-	Worker   WorkerConfig   `yaml:"worker"`
-	Ledger   LedgerConfig   `yaml:"ledger"`
-	Ingest   IngestConfig   `yaml:"ingest"`
-	Match    MatchConfig    `yaml:"match"`
-	Synth    SynthConfig    `yaml:"synth"`
-	API      APIConfig      `yaml:"api"`
-	Policy   PolicyConfig   `yaml:"policy"`
-	Verifier VerifierConfig `yaml:"verifier"`
+	Database        DatabaseConfig        `yaml:"database"`
+	Log             LogConfig             `yaml:"log"`
+	LLM             LLMConfig             `yaml:"llm"`
+	Agent           AgentConfig           `yaml:"agent"`
+	Worker          WorkerConfig          `yaml:"worker"`
+	Ledger          LedgerConfig          `yaml:"ledger"`
+	Ingest          IngestConfig          `yaml:"ingest"`
+	Match           MatchConfig           `yaml:"match"`
+	Synth           SynthConfig           `yaml:"synth"`
+	API             APIConfig             `yaml:"api"`
+	Policy          PolicyConfig          `yaml:"policy"`
+	Verifier        VerifierConfig        `yaml:"verifier"`
+	AutoApplyLimits AutoApplyLimitsConfig `yaml:"auto_apply_limits"`
 }
 
 // String renders Config without credentials: database DSNs and the LLM API key
 // are replaced, and API key digests are summarized by count. This keeps
 // accidental %v/%+v logging from exposing secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s}",
-		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier)
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits)
 }
 
 // Format implements fmt.Formatter so every verb, including %#v, uses the
@@ -138,6 +139,7 @@ func LoadFile(path string) (Config, error) {
 	cfg.Agent = normalizeAgentConfig(cfg.Agent, cfg.LLM.Model)
 	cfg.Worker = normalizeWorkerConfig(cfg.Worker)
 	cfg.Verifier = cfg.Verifier.WithDefaults()
+	cfg.AutoApplyLimits = cfg.AutoApplyLimits.WithDefaults()
 	return cfg, nil
 }
 
@@ -154,6 +156,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Verifier.Validate(); err != nil {
+		return err
+	}
+	if err := c.AutoApplyLimits.Validate(); err != nil {
 		return err
 	}
 	if err := c.Synth.Validate(); err != nil {
@@ -179,16 +184,17 @@ func (c Config) Validate() error {
 
 func defaults() Config {
 	return Config{
-		Log:      LogConfig{Level: DefaultLogLevel},
-		LLM:      DefaultLLMConfig(),
-		Agent:    DefaultAgentConfig(),
-		Worker:   DefaultWorkerConfig(),
-		Ledger:   DefaultLedgerConfig(),
-		Match:    DefaultMatchConfig(),
-		Synth:    DefaultSynthConfig(),
-		API:      DefaultAPIConfig(),
-		Policy:   PolicyConfig{File: DefaultPolicyFile},
-		Verifier: DefaultVerifierConfig(),
+		Log:             LogConfig{Level: DefaultLogLevel},
+		LLM:             DefaultLLMConfig(),
+		Agent:           DefaultAgentConfig(),
+		Worker:          DefaultWorkerConfig(),
+		Ledger:          DefaultLedgerConfig(),
+		Match:           DefaultMatchConfig(),
+		Synth:           DefaultSynthConfig(),
+		API:             DefaultAPIConfig(),
+		Policy:          PolicyConfig{File: DefaultPolicyFile},
+		Verifier:        DefaultVerifierConfig(),
+		AutoApplyLimits: DefaultAutoApplyLimitsConfig(),
 	}
 }
 
