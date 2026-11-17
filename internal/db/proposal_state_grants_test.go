@@ -12,8 +12,9 @@ import (
 )
 
 // TestProposalStateAppGrant proves the M4-03 grant through the real ephemeral
-// recon_app login: it can lock a proposal and update only status/version, while
-// rationale, payload, state_hash, expires_at, INSERT, and DELETE stay denied.
+// recon_app login: it can lock a proposal and update only status/version plus
+// the additive M4-11 expires_at grant, while rationale, payload, state_hash,
+// INSERT, and DELETE stay denied.
 func TestProposalStateAppGrant(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
@@ -69,7 +70,6 @@ func TestProposalStateAppGrant(t *testing.T) {
 		{"rationale", `UPDATE proposals SET rationale = 'tampered' WHERE id = $1::uuid`},
 		{"payload", `UPDATE proposals SET payload = '{}'::jsonb WHERE id = $1::uuid`},
 		{"state_hash", `UPDATE proposals SET state_hash = 'tampered' WHERE id = $1::uuid`},
-		{"expires_at", `UPDATE proposals SET expires_at = now() WHERE id = $1::uuid`},
 	} {
 		tc := tc
 		t.Run("deny_update_"+tc.name, func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestProposalStateAppGrant(t *testing.T) {
 	if tableUpdate {
 		t.Fatal("app has table-level UPDATE on proposals, want column-level only")
 	}
-	for _, column := range []string{"status", "version"} {
+	for _, column := range []string{"status", "version", "expires_at"} {
 		var allowed bool
 		if err := d.Pool.QueryRow(ctx,
 			`SELECT has_column_privilege($1::name, 'public.proposals', $2::text, 'UPDATE')`,
@@ -120,7 +120,7 @@ func TestProposalStateAppGrant(t *testing.T) {
 			t.Errorf("app lacks UPDATE on proposals.%s, want granted", column)
 		}
 	}
-	for _, column := range []string{"payload", "rationale", "evidence", "expires_at"} {
+	for _, column := range []string{"payload", "rationale", "evidence"} {
 		var allowed bool
 		if err := d.Pool.QueryRow(ctx,
 			`SELECT has_column_privilege($1::name, 'public.proposals', $2::text, 'UPDATE')`,

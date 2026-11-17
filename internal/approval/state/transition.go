@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
@@ -174,12 +175,21 @@ func scanProposal(row pgx.Row) (Proposal, error) {
 	var (
 		p          Proposal
 		status     string
+		expiresAt  pgtype.Timestamptz
 		supersedes *string
 	)
-	if err := row.Scan(&p.ID, &p.CaseID, &status, &p.Version, &p.ExpiresAt, &supersedes); err != nil {
+	if err := row.Scan(&p.ID, &p.CaseID, &status, &p.Version, &expiresAt, &supersedes); err != nil {
 		return Proposal{}, err
 	}
 	p.Status = Status(status)
+	if expiresAt.Valid {
+		if expiresAt.InfinityModifier != pgtype.Finite {
+			return Proposal{}, fmt.Errorf("%w: proposal %s expires_at is %s",
+				ErrNonFiniteExpiry, p.ID, expiresAt.InfinityModifier)
+		}
+		at := expiresAt.Time
+		p.ExpiresAt = &at
+	}
 	p.SupersedesProposalID = supersedes
 	return p, nil
 }

@@ -214,6 +214,57 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/proposals/{id}/decision:
+    post:
+      tags: [proposals]
+      operationId: decideProposal
+      summary: Approve or reject one pending proposal
+      description: |
+        The authenticated API key is mapped to an approvers row, so the key
+        value never appears in the request or response. The decision, approvals
+        row, proposal transition, and audit entries commit in one transaction.
+        Repeating the same decision as the same approver is a replay (200 with
+        replayed=true). reason is optional and bounded; M4-11 validates it but
+        the frozen decision service has no reason parameter yet.
+      security:
+        - bearerAuth: []
+      x-required-role: approver
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposalDecisionRequest"
+      responses:
+        "200":
+          description: The recorded decision, or a same-approver replay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/admin/switches:
     post:
       tags: [admin]
@@ -330,6 +381,12 @@ components:
             $ref: "#/components/schemas/Error"
     NotFound:
       description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: The proposal is not pending, has expired, or conflicts with an existing decision.
       content:
         application/json:
           schema:
@@ -806,3 +863,37 @@ components:
         updated_at:
           type: string
           format: date-time
+    ProposalDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approved, rejected]
+        reason:
+          type: string
+          maxLength: 2000
+          description: Optional audit reason. Reserved until the decision service carries a reason.
+    ProposalDecisionResult:
+      type: object
+      required: [proposal_id, status, decision, approver_id, decided_at, replayed]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [approved, rejected]
+        decision:
+          type: string
+          enum: [approved, rejected]
+        approver_id:
+          type: string
+          format: uuid
+        decided_at:
+          type: string
+          format: date-time
+        replayed:
+          type: boolean
+          description: True when the same approver repeated the same decision and nothing was written.

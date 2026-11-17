@@ -81,6 +81,8 @@ func TestM401Schema(t *testing.T) {
 			"slack_user_id":  {"text", "YES", ""},
 			"ticket_user_id": {"text", "YES", ""},
 			"active":         {"boolean", "NO", "true"},
+			// M4-11's additive API-principal mapping column.
+			"api_key_id": {"text", "YES", ""},
 		},
 		"approvals": {
 			"id":              {"uuid", "NO", "gen_random_uuid()"},

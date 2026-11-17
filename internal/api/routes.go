@@ -20,14 +20,15 @@ type Route struct {
 // Route patterns. They are exported constants so the OpenAPI contract test and
 // handler tests share the same spelling, including "{id}".
 const (
-	RouteHealthz   = "/healthz"
-	RouteMetrics   = "/metrics"
-	RouteIngest    = "/v1/ingest/files"
-	RouteReconcile = "/v1/reconcile/run"
-	RouteCases     = "/v1/cases"
-	RouteCaseFile  = "/v1/cases/{id}"
-	RouteProposals = "/v1/proposals"
-	RouteSwitches  = "/v1/admin/switches"
+	RouteHealthz          = "/healthz"
+	RouteMetrics          = "/metrics"
+	RouteIngest           = "/v1/ingest/files"
+	RouteReconcile        = "/v1/reconcile/run"
+	RouteCases            = "/v1/cases"
+	RouteCaseFile         = "/v1/cases/{id}"
+	RouteProposals        = "/v1/proposals"
+	RouteProposalDecision = "/v1/proposals/{id}/decision"
+	RouteSwitches         = "/v1/admin/switches"
 )
 
 // routeTable is the single source of truth for method, path, required role,
@@ -41,6 +42,7 @@ func (a *API) routeTable() []Route {
 		{Method: http.MethodGet, Pattern: RouteCases, Role: config.RoleViewer, Handler: a.handleListCases},
 		{Method: http.MethodGet, Pattern: RouteCaseFile, Role: config.RoleViewer, Handler: a.handleCaseFile},
 		{Method: http.MethodGet, Pattern: RouteProposals, Role: config.RoleViewer, Handler: a.handleListProposals},
+		{Method: http.MethodPost, Pattern: RouteProposalDecision, Role: config.RoleApprover, Handler: a.handleProposalDecision},
 		{Method: http.MethodPost, Pattern: RouteSwitches, Role: config.RoleAdmin, Handler: a.handleSetSwitch},
 	}
 }

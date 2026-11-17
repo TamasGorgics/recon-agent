@@ -147,7 +147,6 @@ func TestM405VerifierAppGrant(t *testing.T) {
 		{"rationale", `UPDATE proposals SET rationale = 'tampered' WHERE id = $1::uuid`, []any{proposalID}},
 		{"evidence", `UPDATE proposals SET evidence = '[]'::jsonb WHERE id = $1::uuid`, []any{proposalID}},
 		{"state_hash", `UPDATE proposals SET state_hash = 'tampered' WHERE id = $1::uuid`, []any{proposalID}},
-		{"expires_at", `UPDATE proposals SET expires_at = now() WHERE id = $1::uuid`, []any{proposalID}},
 		{"type", `UPDATE proposals SET type = 'adjustment' WHERE id = $1::uuid`, []any{proposalID}},
 		{"confidence", `UPDATE proposals SET confidence = 0.5 WHERE id = $1::uuid`, []any{proposalID}},
 		{"case_id", `UPDATE proposals SET case_id = $2::uuid WHERE id = $1::uuid`, []any{proposalID, secondCase}},
@@ -191,14 +190,14 @@ func TestM405VerifierAppGrant(t *testing.T) {
 	// risk_tier/policy_decision remain M4-04.
 	for _, column := range []string{
 		"verification", "pattern_verified", "status", "version",
-		"risk_tier", "policy_decision",
+		"risk_tier", "policy_decision", "expires_at",
 	} {
 		if !m405ColumnUpdate(t, d, db.RoleApp, column) {
 			t.Errorf("app lacks UPDATE on proposals.%s, want granted", column)
 		}
 	}
 	for _, column := range []string{
-		"payload", "rationale", "evidence", "state_hash", "expires_at",
+		"payload", "rationale", "evidence", "state_hash",
 		"type", "confidence", "case_id", "agent_run_id", "idempotency_key",
 		"created_at", "supersedes_proposal_id",
 	} {
@@ -393,13 +392,32 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		t.Fatalf("configure goose: %v", err)
 	}
 
+	// Down 0: the M4-11 approval migration (20261117120000), so the M4-06/M4-05
+	// Down assertions below start from the version they were written for.
+	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("apply M4-11 approval Down: %v", err)
+	}
+	var version int64
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
+		t.Fatalf("read version after M4-11 Down: %v", err)
+	}
+	if version != m406MigrationVersion {
+		t.Fatalf("version after M4-11 Down = %d, want %d", version, m406MigrationVersion)
+	}
+	for _, column := range []string{"expires_at"} {
+		if m405ColumnUpdate(t, d, db.RoleApp, column) {
+			t.Errorf("M4-11 Down left UPDATE on proposals.%s", column)
+		}
+	}
+
 	// Down 1: the M4-06 executor read grant (20261114120000). It must not
 	// touch the M4-05 app grant or the agent role.
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-06 executor read-grant Down: %v", err)
 	}
-	var version int64
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("read version after M4-06 read-grant Down: %v", err)

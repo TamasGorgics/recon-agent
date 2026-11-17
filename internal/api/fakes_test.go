@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TamasGorgics/recon-agent/internal/approval"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
@@ -129,6 +130,25 @@ func (f *fakeSwitches) SetSwitch(_ context.Context, req SwitchSetRequest) (Switc
 	return f.result, f.err
 }
 
+type fakeDecisions struct {
+	result        approval.DecisionResult
+	err           error
+	gotProposalID string
+	gotDecision   approval.Decision
+	gotAPIKeyID   string
+	gotSource     string
+	calls         int
+}
+
+func (f *fakeDecisions) DecideByAPIKey(_ context.Context, proposalID string, decision approval.Decision, apiKeyID, source string) (approval.DecisionResult, error) {
+	f.calls++
+	f.gotProposalID = proposalID
+	f.gotDecision = decision
+	f.gotAPIKeyID = apiKeyID
+	f.gotSource = source
+	return f.result, f.err
+}
+
 type harness struct {
 	api       *API
 	ingest    *fakeIngest
@@ -138,6 +158,7 @@ type harness struct {
 	caseFile  *fakeCaseFile
 	proposals *fakeProposalReader
 	switches  *fakeSwitches
+	decisions *fakeDecisions
 	logs      *bytes.Buffer
 }
 
@@ -156,6 +177,7 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 		CaseFile:   &fakeCaseFile{},
 		Proposals:  &fakeProposalReader{page: ProposalListPage{Items: []ProposalSummary{}}},
 		Switches:   &fakeSwitches{},
+		Decisions:  &fakeDecisions{},
 	}
 	if mutate != nil {
 		mutate(&opts)
@@ -172,6 +194,7 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 	h.caseFile, _ = opts.CaseFile.(*fakeCaseFile)
 	h.proposals, _ = opts.Proposals.(*fakeProposalReader)
 	h.switches, _ = opts.Switches.(*fakeSwitches)
+	h.decisions, _ = opts.Decisions.(*fakeDecisions)
 	return h
 }
 
