@@ -74,7 +74,6 @@ func TestM404PolicyDecisionAppGrant(t *testing.T) {
 		{"rationale", `UPDATE proposals SET rationale = 'tampered' WHERE id = $1::uuid`, []any{proposalID}},
 		{"evidence", `UPDATE proposals SET evidence = '[]'::jsonb WHERE id = $1::uuid`, []any{proposalID}},
 		{"state_hash", `UPDATE proposals SET state_hash = 'tampered' WHERE id = $1::uuid`, []any{proposalID}},
-		{"expires_at", `UPDATE proposals SET expires_at = now() WHERE id = $1::uuid`, []any{proposalID}},
 		{"type", `UPDATE proposals SET type = 'adjustment' WHERE id = $1::uuid`, []any{proposalID}},
 		{"confidence", `UPDATE proposals SET confidence = 0.5 WHERE id = $1::uuid`, []any{proposalID}},
 		{"case_id", `UPDATE proposals SET case_id = $2::uuid WHERE id = $1::uuid`, []any{proposalID, secondCase}},
@@ -120,7 +119,7 @@ func TestM404PolicyDecisionAppGrant(t *testing.T) {
 	if tableUpdate {
 		t.Fatal("app has table-level UPDATE on proposals, want column-level only")
 	}
-	for _, column := range []string{"risk_tier", "policy_decision", "status", "version"} {
+	for _, column := range []string{"risk_tier", "policy_decision", "status", "version", "expires_at"} {
 		var allowed bool
 		if err := d.Pool.QueryRow(ctx,
 			`SELECT has_column_privilege($1::name, 'public.proposals', $2::text, 'UPDATE')`,

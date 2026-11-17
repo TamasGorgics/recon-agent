@@ -153,6 +153,18 @@ type SwitchResult struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ProposalDecisionResult is the POST /v1/proposals/{id}/decision response.
+// Replayed is true when the same approver repeated the same decision and the
+// service wrote nothing.
+type ProposalDecisionResult struct {
+	ProposalID string    `json:"proposal_id"`
+	Status     string    `json:"status"`
+	Decision   string    `json:"decision"`
+	ApproverID string    `json:"approver_id"`
+	DecidedAt  time.Time `json:"decided_at"`
+	Replayed   bool      `json:"replayed"`
+}
+
 // CaseListQuery is the validated case-list filter.
 type CaseListQuery struct {
 	Status string

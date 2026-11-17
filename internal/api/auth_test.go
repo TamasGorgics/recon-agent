@@ -55,6 +55,7 @@ func protectedCases(t *testing.T) []protectedCase {
 		{http.MethodGet, RouteCases, "", "", config.RoleViewer},
 		{http.MethodGet, "/v1/cases/" + testCaseID, "", "", config.RoleViewer},
 		{http.MethodGet, RouteProposals, "", "", config.RoleViewer},
+		{http.MethodPost, "/v1/proposals/" + testDecisionProposalID + "/decision", `{"decision":"approved"}`, "application/json", config.RoleApprover},
 		{http.MethodPost, RouteSwitches, `{"name":"agent_enabled","enabled":false,"reason":"pause"}`, "application/json", config.RoleAdmin},
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/TamasGorgics/recon-agent/internal/approval"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
@@ -57,6 +58,13 @@ type SwitchService interface {
 	SetSwitch(ctx context.Context, req SwitchSetRequest) (SwitchResult, error)
 }
 
+// DecisionService records one human approval decision. It is satisfied by
+// *approval.Service; the API key id is the authenticated principal, never a
+// secret in the request body.
+type DecisionService interface {
+	DecideByAPIKey(ctx context.Context, proposalID string, decision approval.Decision, apiKeyID, source string) (approval.DecisionResult, error)
+}
+
 // Options wires the API. Config and Keys come from the validated runtime
 // configuration; Keys holds digests only. All services are required.
 type Options struct {
@@ -72,6 +80,7 @@ type Options struct {
 	CaseFile   CaseFileReader
 	Proposals  ProposalReader
 	Switches   SwitchService
+	Decisions  DecisionService
 }
 
 // API owns the router and its dependencies. It is immutable after New.
@@ -88,6 +97,7 @@ type API struct {
 	caseFile  CaseFileReader
 	proposals ProposalReader
 	switches  SwitchService
+	decisions DecisionService
 
 	handler http.Handler
 }
@@ -136,6 +146,9 @@ func New(opts Options) (*API, error) {
 	if opts.Switches == nil {
 		return nil, errors.New("api: switch service is required")
 	}
+	if opts.Decisions == nil {
+		return nil, errors.New("api: decision service is required")
+	}
 
 	logger := opts.Logger
 	if logger == nil {
@@ -158,6 +171,7 @@ func New(opts Options) (*API, error) {
 		caseFile:  opts.CaseFile,
 		proposals: opts.Proposals,
 		switches:  opts.Switches,
+		decisions: opts.Decisions,
 	}
 	a.handler = a.buildRouter()
 	return a, nil

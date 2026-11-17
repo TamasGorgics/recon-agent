@@ -10,13 +10,19 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/TamasGorgics/recon-agent/internal/approval"
+	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
+	"github.com/TamasGorgics/recon-agent/internal/limits"
+	"github.com/TamasGorgics/recon-agent/internal/policy"
+	"github.com/TamasGorgics/recon-agent/internal/policy/verify"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 	"github.com/TamasGorgics/recon-agent/internal/testdb"
 )
@@ -53,13 +59,53 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		t.Fatalf("open recon_app pool: %v", err)
 	}
 	t.Cleanup(app.Close)
+	clk := clock.NewFake(time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC))
 	store := NewPostgresStore(app.Pool)
-	switchWriter := NewSwitchWriter(app.Pool, clock.NewFake(time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)))
+	switchWriter := NewSwitchWriter(app.Pool, clk)
+
+	loadedPolicy, err := policy.LoadFile(filepath.Join("..", "..", "policy.yaml"))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	policyEngine, err := policy.NewEngine(loadedPolicy, policy.Options{
+		CustomerFundsAccounts: config.DefaultLedgerConfig().CustomerFundsAccounts,
+	})
+	if err != nil {
+		t.Fatalf("build policy engine: %v", err)
+	}
+	verificationService, err := verify.NewService(app.Pool, verify.OptionsFromConfig(config.DefaultVerifierConfig()))
+	if err != nil {
+		t.Fatalf("build verifier: %v", err)
+	}
+	limitService, err := limits.NewService(limits.Options{
+		Pool:   app.Pool,
+		Clock:  clk,
+		Config: config.DefaultAutoApplyLimitsConfig(),
+	})
+	if err != nil {
+		t.Fatalf("build limits service: %v", err)
+	}
+	stateService, err := state.NewService(app.Pool, clk)
+	if err != nil {
+		t.Fatalf("build proposal state service: %v", err)
+	}
+	approvalService, err := approval.NewService(approval.Options{
+		Pool:     app.Pool,
+		Clock:    clk,
+		State:    stateService,
+		Verifier: approval.VerifierAdapter{Service: verificationService},
+		Limits:   limitService,
+		Policy:   approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+	})
+	if err != nil {
+		t.Fatalf("build approval service: %v", err)
+	}
+
 	a, err := New(Options{
 		Config:     config.DefaultAPIConfig(),
 		Keys:       testKeys(),
 		Logger:     telemetry.NewLogger(io.Discard, slog.LevelError),
-		Clock:      clock.NewFake(time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)),
+		Clock:      clk,
 		Ingest:     &fakeIngest{},
 		Matcher:    &fakeMatcher{},
 		Cases:      &fakeCases{},
@@ -67,6 +113,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		CaseFile:   store,
 		Proposals:  store,
 		Switches:   switchWriter,
+		Decisions:  approvalService,
 	})
 	if err != nil {
 		t.Fatalf("build api: %v", err)

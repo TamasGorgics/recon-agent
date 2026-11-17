@@ -1,5 +1,5 @@
 // Command api runs the reconciliation HTTP API. It opens only the recon_app
-// role pool, serves the eight documented routes, and shuts down gracefully on
+// role pool, serves the nine documented routes, and shuts down gracefully on
 // SIGINT/SIGTERM.
 package main
 
@@ -14,13 +14,18 @@ import (
 	"syscall"
 
 	"github.com/TamasGorgics/recon-agent/internal/api"
+	"github.com/TamasGorgics/recon-agent/internal/approval"
+	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/ingest"
+	"github.com/TamasGorgics/recon-agent/internal/limits"
 	"github.com/TamasGorgics/recon-agent/internal/match"
+	"github.com/TamasGorgics/recon-agent/internal/policy"
+	"github.com/TamasGorgics/recon-agent/internal/policy/verify"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
@@ -88,6 +93,44 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("build case service: %w", err)
 	}
 
+	loadedPolicy, err := policy.LoadFile(cfg.Policy.File)
+	if err != nil {
+		return fmt.Errorf("load policy: %w", err)
+	}
+	policyEngine, err := policy.NewEngine(loadedPolicy, policy.Options{
+		CustomerFundsAccounts: cfg.Ledger.CustomerFundsAccounts,
+	})
+	if err != nil {
+		return fmt.Errorf("build policy engine: %w", err)
+	}
+	verificationService, err := verify.NewService(app.Pool, verify.OptionsFromConfig(cfg.Verifier))
+	if err != nil {
+		return fmt.Errorf("build verifier: %w", err)
+	}
+	limitService, err := limits.NewService(limits.Options{
+		Pool:   app.Pool,
+		Clock:  clk,
+		Config: cfg.AutoApplyLimits,
+	})
+	if err != nil {
+		return fmt.Errorf("build limits service: %w", err)
+	}
+	stateService, err := state.NewService(app.Pool, clk)
+	if err != nil {
+		return fmt.Errorf("build proposal state service: %w", err)
+	}
+	approvalService, err := approval.NewService(approval.Options{
+		Pool:     app.Pool,
+		Clock:    clk,
+		State:    stateService,
+		Verifier: approval.VerifierAdapter{Service: verificationService},
+		Limits:   limitService,
+		Policy:   approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+	})
+	if err != nil {
+		return fmt.Errorf("build approval service: %w", err)
+	}
+
 	store := api.NewPostgresStore(app.Pool)
 	handler, err := api.New(api.Options{
 		Config:     cfg.API,
@@ -101,6 +144,7 @@ func run(ctx context.Context) error {
 		CaseFile:   store,
 		Proposals:  store,
 		Switches:   api.NewSwitchWriter(app.Pool, clk),
+		Decisions:  approvalService,
 	})
 	if err != nil {
 		return fmt.Errorf("build api: %w", err)

@@ -35,7 +35,11 @@ func skippableExpiryError(err error) bool {
 //
 // approved and auto_approved proposals are never expired here: M4-06 refuses
 // them at apply time and records apply_failed with reason expired. expires_at
-// is set by M4-04/M4-11; NULL means no expiry.
+// is set by M4-04/M4-11; NULL means no expiry. Non-finite expires_at values
+// (+/-infinity) are excluded from the candidate query: they cannot be compared
+// with the clock, and a -infinity row would otherwise sort first and starve
+// every healthy due row. A direct Transition on such a row fails closed with
+// ErrNonFiniteExpiry.
 func (s *Service) ExpireDue(ctx context.Context) (int, error) {
 	now := s.clock.Now().UTC()
 	expired := 0
@@ -52,6 +56,7 @@ func (s *Service) ExpireDue(ctx context.Context) (int, error) {
 				   FROM proposals
 				  WHERE status IN ('proposed', 'pending_approval')
 				    AND expires_at IS NOT NULL
+				    AND isfinite(expires_at)
 				    AND expires_at <= $1
 				  ORDER BY expires_at, id
 				  FOR UPDATE SKIP LOCKED

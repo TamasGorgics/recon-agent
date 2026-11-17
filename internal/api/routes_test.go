@@ -17,6 +17,7 @@ func TestRouteTable(t *testing.T) {
 		{Method: http.MethodGet, Pattern: RouteCases, Role: config.RoleViewer},
 		{Method: http.MethodGet, Pattern: RouteCaseFile, Role: config.RoleViewer},
 		{Method: http.MethodGet, Pattern: RouteProposals, Role: config.RoleViewer},
+		{Method: http.MethodPost, Pattern: RouteProposalDecision, Role: config.RoleApprover},
 		{Method: http.MethodPost, Pattern: RouteSwitches, Role: config.RoleAdmin},
 	}
 	got := h.api.routeTable()

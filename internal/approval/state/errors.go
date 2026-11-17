@@ -40,4 +40,10 @@ var (
 	// ErrInvalidActor means the supplied audit.Actor is malformed. It wraps
 	// audit.ErrInvalidActor.
 	ErrInvalidActor = fmt.Errorf("approval/state: invalid actor: %w", audit.ErrInvalidActor)
+	// ErrNonFiniteExpiry means a proposal's expires_at is +infinity or
+	// -infinity. Such a row is outside the TTL contract: it cannot be
+	// classified as due or not due, so Transition fails closed with this typed
+	// error instead of leaking a pgx "cannot scan Infinity into *time.Time"
+	// error. ExpireDue excludes non-finite rows from its candidate query.
+	ErrNonFiniteExpiry = errors.New("approval/state: non-finite proposal expiry")
 )

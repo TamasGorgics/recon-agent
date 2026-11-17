@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/TamasGorgics/recon-agent/internal/approval"
 )
 
 type openAPIOperation struct {
@@ -37,14 +40,15 @@ var httpMethods = map[string]struct{}{
 // contributes 400/413/415 where a body is read, and service failures contribute
 // 500. Public health handlers have no failure path and never return 500.
 var openAPIStatusSets = map[string][]string{
-	"GET " + RouteHealthz:    {"200"},
-	"GET " + RouteMetrics:    {"200"},
-	"POST " + RouteIngest:    {"200", "400", "401", "403", "413", "415", "500"},
-	"POST " + RouteReconcile: {"200", "400", "401", "403", "404", "413", "415", "500"},
-	"GET " + RouteCases:      {"200", "400", "401", "403", "500"},
-	"GET " + RouteCaseFile:   {"200", "400", "401", "403", "404", "500"},
-	"GET " + RouteProposals:  {"200", "400", "401", "403", "500"},
-	"POST " + RouteSwitches:  {"200", "400", "401", "403", "413", "415", "500"},
+	"GET " + RouteHealthz:           {"200"},
+	"GET " + RouteMetrics:           {"200"},
+	"POST " + RouteIngest:           {"200", "400", "401", "403", "413", "415", "500"},
+	"POST " + RouteReconcile:        {"200", "400", "401", "403", "404", "413", "415", "500"},
+	"GET " + RouteCases:             {"200", "400", "401", "403", "500"},
+	"GET " + RouteCaseFile:          {"200", "400", "401", "403", "404", "500"},
+	"GET " + RouteProposals:         {"200", "400", "401", "403", "500"},
+	"POST " + RouteProposalDecision: {"200", "400", "401", "403", "404", "409", "413", "415", "500"},
+	"POST " + RouteSwitches:         {"200", "400", "401", "403", "413", "415", "500"},
 }
 
 func loadOpenAPI(t *testing.T) openAPIDocument {
@@ -185,6 +189,36 @@ func TestOpenAPIStatusSetsAreReachable(t *testing.T) {
 		response = small.expectStatus(http.MethodPost, path, strings.Repeat("x", 64), "application/json", testAdminKey, http.StatusRequestEntityTooLarge)
 		_ = response.Body.Close()
 	}
+
+	decisionPath := "/v1/proposals/" + testDecisionProposalID + "/decision"
+	response := h.expectStatus(http.MethodPost, decisionPath, "", "text/plain", testApproverKey, http.StatusUnsupportedMediaType)
+	_ = response.Body.Close()
+	small := newHarness(t, func(opts *Options) { opts.Config.MaxJSONBytes = 8 })
+	response = small.expectStatus(http.MethodPost, decisionPath, strings.Repeat("x", 64), "application/json", testApproverKey, http.StatusRequestEntityTooLarge)
+	_ = response.Body.Close()
+
+	decisionStatuses := []struct {
+		name   string
+		body   string
+		err    error
+		status int
+	}{
+		{"invalid decision", `{"decision":"maybe"}`, nil, http.StatusBadRequest},
+		{"proposal not found", `{"decision":"approved"}`, approval.ErrProposalNotFound, http.StatusNotFound},
+		{"decision conflict", `{"decision":"approved"}`, approval.ErrDecisionConflict, http.StatusConflict},
+		{"success", `{"decision":"approved"}`, nil, http.StatusOK},
+		{"internal", `{"decision":"approved"}`, errors.New("decision backend unavailable"), http.StatusInternalServerError},
+	}
+	for _, test := range decisionStatuses {
+		t.Run(test.name, func(t *testing.T) {
+			decisionHarness := newHarness(t, nil)
+			decisionHarness.decisions.err = test.err
+			response := decisionHarness.expectStatus(http.MethodPost, decisionPath,
+				test.body, "application/json", testApproverKey, test.status)
+			_ = response.Body.Close()
+		})
+	}
+
 	for _, path := range []string{RouteHealthz, RouteMetrics} {
 		response := h.expectStatus(http.MethodGet, path, "", "", "", http.StatusOK)
 		_ = response.Body.Close()

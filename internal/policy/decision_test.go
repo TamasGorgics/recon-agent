@@ -91,6 +91,16 @@ func TestDecisionValidateTierRules(t *testing.T) {
 				Reasons: []string{CodeValueCap}, ConfigHash: goldenConfigHash},
 		},
 		{
+			name: "T1 daily cap limit routing code",
+			decision: Decision{SchemaVersion: 1, Tier: TierT1, Rule: CodeDailyCapExceeded,
+				Reasons: []string{CodeDailyCapExceeded}, ConfigHash: goldenConfigHash},
+		},
+		{
+			name: "T1 break rate limit routing code",
+			decision: Decision{SchemaVersion: 1, Tier: TierT1, Rule: CodeBreakRateSpike,
+				Reasons: []string{CodeBreakRateSpike}, ConfigHash: goldenConfigHash},
+		},
+		{
 			name: "T1 default single approval",
 			decision: Decision{SchemaVersion: 1, Tier: TierT1, Rule: CodeDefaultSingleApproval,
 				Reasons: []string{CodeDefaultSingleApproval}, ConfigHash: goldenConfigHash},
@@ -125,6 +135,18 @@ func TestDecisionValidateTierRules(t *testing.T) {
 			name: "T1 cannot record write_off_limit",
 			decision: Decision{SchemaVersion: 1, Tier: TierT1, Rule: CodeWriteOffLimit,
 				Reasons: []string{CodeWriteOffLimit}, ConfigHash: goldenConfigHash},
+			wantErr: true,
+		},
+		{
+			name: "T2 cannot record a limit routing code",
+			decision: Decision{SchemaVersion: 1, Tier: TierT2, Rule: CodeDailyCapExceeded,
+				Reasons: []string{CodeDailyCapExceeded}, ConfigHash: goldenConfigHash},
+			wantErr: true,
+		},
+		{
+			name: "T2 cannot record a break rate code",
+			decision: Decision{SchemaVersion: 1, Tier: TierT2, Rule: CodeBreakRateSpike,
+				Reasons: []string{CodeBreakRateSpike}, ConfigHash: goldenConfigHash},
 			wantErr: true,
 		},
 		{

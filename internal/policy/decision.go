@@ -20,20 +20,25 @@ const (
 // Rule and reason codes. This is the closed vocabulary from the policy
 // contract: reasons are machine codes only, never amounts or untrusted text.
 const (
-	CodeHighValue             = "high_value"
-	CodeWriteOffLimit         = "write_off_limit"
-	CodeCrossCurrency         = "cross_currency"
-	CodeCustomerFunds         = "customer_funds"
-	CodeRepeatedCounterparty  = "repeated_counterparty"
-	CodeTypeNotAllowed        = "type_not_allowed"
-	CodePatternNotAllowed     = "pattern_not_allowed"
-	CodeVerifierMissing       = "verifier_missing"
-	CodeVerifierFailed        = "verifier_failed"
-	CodeVerifierMismatch      = "verifier_mismatch"
-	CodeEvidenceInvalid       = "evidence_invalid"
-	CodeValueUnknown          = "value_unknown"
-	CodeValueCap              = "value_cap"
-	CodeAutoApplyDisabled     = "auto_apply_disabled"
+	CodeHighValue            = "high_value"
+	CodeWriteOffLimit        = "write_off_limit"
+	CodeCrossCurrency        = "cross_currency"
+	CodeCustomerFunds        = "customer_funds"
+	CodeRepeatedCounterparty = "repeated_counterparty"
+	CodeTypeNotAllowed       = "type_not_allowed"
+	CodePatternNotAllowed    = "pattern_not_allowed"
+	CodeVerifierMissing      = "verifier_missing"
+	CodeVerifierFailed       = "verifier_failed"
+	CodeVerifierMismatch     = "verifier_mismatch"
+	CodeEvidenceInvalid      = "evidence_invalid"
+	CodeValueUnknown         = "value_unknown"
+	CodeValueCap             = "value_cap"
+	CodeAutoApplyDisabled    = "auto_apply_disabled"
+	// CodeDailyCapExceeded and CodeBreakRateSpike are FIN-53 limit-routing
+	// codes. The engine never emits them; M4-11 maps a limits T1 result onto
+	// a valid policy T1 decision using these codes.
+	CodeDailyCapExceeded      = "daily_cap_exceeded"
+	CodeBreakRateSpike        = "break_rate_spike"
 	CodeAutoApply             = "auto_apply"
 	CodeDefaultSingleApproval = "default_single_approval"
 	CodeConfidenceDowngrade   = "confidence_downgrade"
@@ -54,6 +59,8 @@ var codeSet = map[string]struct{}{
 	CodeValueUnknown:          {},
 	CodeValueCap:              {},
 	CodeAutoApplyDisabled:     {},
+	CodeDailyCapExceeded:      {},
+	CodeBreakRateSpike:        {},
 	CodeAutoApply:             {},
 	CodeDefaultSingleApproval: {},
 	CodeConfidenceDowngrade:   {},
@@ -77,6 +84,8 @@ var (
 		CodeValueUnknown:          {},
 		CodeValueCap:              {},
 		CodeAutoApplyDisabled:     {},
+		CodeDailyCapExceeded:      {},
+		CodeBreakRateSpike:        {},
 		CodeDefaultSingleApproval: {},
 		CodeConfidenceDowngrade:   {},
 	}

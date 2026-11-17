@@ -37,6 +37,12 @@
 // shape and carries the config hash so a decision stays explainable after the
 // document changes (FIN-34).
 //
+// Two T1 codes exist only as a cross-task routing vocabulary:
+// CodeDailyCapExceeded and CodeBreakRateSpike. The engine never emits them;
+// M4-11 maps a FIN-53 limits T1 result onto a valid T1 decision using them, and
+// maps every other limits reason to CodeValueUnknown while keeping the exact
+// limits reason in audit.
+//
 // # Persistence and grants
 //
 // PersistDecision writes only proposals.risk_tier and
