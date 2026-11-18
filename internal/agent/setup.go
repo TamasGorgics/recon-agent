@@ -78,7 +78,11 @@ func NewProductionRunner(deps SetupDeps) (*Runner, error) {
 		return nil, fmt.Errorf("agent: register proposal tools: %w", err)
 	}
 
-	actor, err := audit.AgentActor(model)
+	// The loop legitimately drives case status (proposal_pending, waiting_info,
+	// escalated) and leases cases. Agent actors are rejected by the case
+	// authority, so the loop's case service is the system:agent-loop component;
+	// the proposal tools keep their model-derived agent actor.
+	actor, err := audit.SystemActor("agent-loop")
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}

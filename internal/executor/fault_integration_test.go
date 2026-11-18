@@ -253,6 +253,12 @@ func assertFaultCrashState(t *testing.T, w *world, fixture *caseFixture) {
 		t.Errorf("case.resolve audits after crash = %d, want 0", got)
 	}
 	if got := w.count(t,
+		`SELECT count(*) FROM audit_log
+		  WHERE action = 'case.transition' AND entity_id = $1`,
+		fixture.caseID); got != 0 {
+		t.Errorf("case.transition audits after crash = %d, want 0", got)
+	}
+	if got := w.count(t,
 		`SELECT count(*) FROM cases
 		  WHERE id = $1::uuid AND resolution_type IS NULL AND resolved_at IS NULL`,
 		fixture.caseID); got != 1 {

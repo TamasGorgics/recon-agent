@@ -9,18 +9,18 @@
 // leases the next open case with FOR UPDATE SKIP LOCKED and a lease TTL. The
 // second check closes the window while a poll is blocked on a full concurrency
 // slot: a flip or budget exhaustion during that wait must not start another run.
-// A case already at the attempt cap is escalated with reason agent_failed
-// without a model call. The worker id is stable per process:
+// A case already at the attempt cap is escalated with reason
+// attempts_exhausted without a model call. The worker id is stable per process:
 // worker:<hostname>:<pid>:<8 random hex>.
 //
 // # Attempts
 //
 // Attempt increments are owned by the worker except provider_error (no
 // increment) and expired-lease reclaim (cases.ReclaimExpired increments and
-// escalates agent_failed when the reclaim reaches the attempt cap).
+// escalates attempts_exhausted when the reclaim reaches the attempt cap).
 // budget_exhausted and invalid_output call cases.RecordFailedAttempt, which
 // atomically clears the lease and increments attempts; the same call escalates
-// the case agent_failed at max_attempts. Every worker-owned release and attempt
+// the case attempts_exhausted at max_attempts. Every worker-owned release and attempt
 // re-checks status='in_agent' and the same leased_by inside the transaction: a
 // worker that lost its lease logs the sentinel and no-ops instead of
 // overwriting another worker's case.

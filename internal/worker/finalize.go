@@ -15,7 +15,7 @@ import (
 // proposal, an attempt, or a release exactly once.
 //
 //	proposal / escalated        no-op (the loop transitioned); release as a safety net
-//	budget_exhausted / invalid  RecordFailedAttempt (attempt cap escalates agent_failed)
+//	budget_exhausted / invalid  RecordFailedAttempt (attempt cap escalates attempts_exhausted)
 //	provider_error              Release; no attempt increment
 //	ErrAgentDisabled            Release; no attempt increment
 //	canceled / unexpected       Release; no attempt increment
@@ -117,7 +117,7 @@ func (w *Worker) escalateExhausted(ctx context.Context, c cases.Case) error {
 		CaseID:           c.ID,
 		ExpectedVersion:  c.Version,
 		Status:           cases.StatusEscalated,
-		EscalationReason: agentFailedReason,
+		EscalationReason: attemptsExhaustedReason,
 	})
 	if err != nil {
 		if lostLease(err) {
@@ -129,7 +129,7 @@ func (w *Worker) escalateExhausted(ctx context.Context, c cases.Case) error {
 		return err
 	}
 	w.logger.Info("worker: case escalated at attempt cap",
-		"case_id", c.ID, "attempts", c.Attempts, "reason", agentFailedReason)
+		"case_id", c.ID, "attempts", c.Attempts, "reason", attemptsExhaustedReason)
 	return nil
 }
 

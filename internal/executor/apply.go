@@ -15,9 +15,15 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/agent/proposal"
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
+	casestate "github.com/TamasGorgics/recon-agent/internal/cases/state"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/fault"
 )
+
+// caseResolveReason is the reason recorded on the executor's case.transition
+// audit. The executor's own summary audit remains case.resolve (with the
+// proposal id); the authority row records who closed the case and why.
+const caseResolveReason = "apply"
 
 // Apply applies one approved proposal exactly once.
 //
@@ -271,23 +277,33 @@ func (s *Service) resolveTargets(ctx context.Context, tx pgx.Tx, locked lockedPr
 		}
 	}
 
-	tag, err := tx.Exec(ctx,
-		`UPDATE cases
-		    SET status = 'resolved',
-		        version = version + 1,
-		        resolved_at = COALESCE(resolved_at, $2),
-		        resolution_type = $3,
-		        leased_by = NULL,
-		        lease_expires_at = NULL
-		  WHERE id = $1::uuid AND version = $4 AND status = $5`,
-		locked.CaseID, now, locked.Type, caseVersion, caseStatus)
-	if err != nil {
-		return fmt.Errorf("executor: resolve case %s: %w", locked.CaseID, err)
-	}
-	if tag.RowsAffected() != 1 {
-		return &revalidationFailure{
-			reason: FailureStateChanged,
-			cause:  fmt.Errorf("case %s changed while applying", locked.CaseID),
+	// The case authority owns the status write: it re-checks the edge, actor,
+	// reason, and resolution inside the same transaction, then writes the
+	// version-guarded update and one case.transition audit. The explicit
+	// prechecks above keep their break_resolved semantics; authority errors
+	// that mean the row moved are mapped to the same state_changed outcome as
+	// the old CAS failure.
+	if _, err := casestate.Transition(ctx, tx, casestate.TransitionRequest{
+		CaseID:          locked.CaseID,
+		To:              casestate.StatusResolved,
+		ExpectedVersion: caseVersion,
+		Actor:           s.actor.String(),
+		Reason:          caseResolveReason,
+		ResolutionType:  locked.Type,
+		Now:             now,
+	}); err != nil {
+		switch {
+		case errors.Is(err, casestate.ErrCaseNotFound),
+			errors.Is(err, casestate.ErrStale),
+			errors.Is(err, casestate.ErrIllegalTransition),
+			errors.Is(err, casestate.ErrActorNotAllowed),
+			errors.Is(err, casestate.ErrAlreadyInState):
+			return &revalidationFailure{
+				reason: FailureStateChanged,
+				cause:  fmt.Errorf("case %s changed while applying: %w", locked.CaseID, err),
+			}
+		default:
+			return fmt.Errorf("executor: resolve case %s: %w", locked.CaseID, err)
 		}
 	}
 	fault.Hit(fault.ExecutorAfterCaseResolve)

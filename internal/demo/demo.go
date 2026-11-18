@@ -26,6 +26,7 @@ import (
 
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	caselifecycle "github.com/TamasGorgics/recon-agent/internal/cases/lifecycle"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
@@ -208,11 +209,19 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	if err != nil {
 		return Summary{}, fmt.Errorf("demo: matcher actor: %w", err)
 	}
+	lifecycleService, err := caselifecycle.NewService(caselifecycle.Options{
+		DB:    pool,
+		Clock: opts.Clock,
+	})
+	if err != nil {
+		return Summary{}, fmt.Errorf("demo: case lifecycle service: %w", err)
+	}
 	engine, err := match.New(match.Options{
-		DB:     pool,
-		Clock:  opts.Clock,
-		Actor:  matcherActor,
-		Config: opts.Match,
+		DB:        pool,
+		Clock:     opts.Clock,
+		Actor:     matcherActor,
+		Config:    opts.Match,
+		LateMatch: lifecycleService.ReconcileLateMatchHook,
 	})
 	if err != nil {
 		return Summary{}, err

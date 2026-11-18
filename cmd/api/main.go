@@ -17,7 +17,9 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/approval"
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
+	"github.com/TamasGorgics/recon-agent/internal/bizdays"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	caselifecycle "github.com/TamasGorgics/recon-agent/internal/cases/lifecycle"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
@@ -75,11 +77,25 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	calendars, err := bizdays.NewSources(cfg.Ingest)
+	if err != nil {
+		return fmt.Errorf("build source calendars: %w", err)
+	}
+	lifecycleService, err := caselifecycle.NewService(caselifecycle.Options{
+		DB:                               app.Pool,
+		Clock:                            clk,
+		Sources:                          calendars,
+		MissingSettlementSLABusinessDays: cfg.Cases.MissingSettlementSLABusinessDays,
+	})
+	if err != nil {
+		return fmt.Errorf("build case lifecycle service: %w", err)
+	}
 	matcher, err := match.New(match.Options{
-		DB:     app.Pool,
-		Clock:  clk,
-		Actor:  matchActor,
-		Config: cfg.Match,
+		DB:        app.Pool,
+		Clock:     clk,
+		Actor:     matchActor,
+		Config:    cfg.Match,
+		LateMatch: lifecycleService.ReconcileLateMatchHook,
 	})
 	if err != nil {
 		return fmt.Errorf("build matcher: %w", err)
@@ -88,7 +104,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	caseService, err := cases.NewService(app.Pool, clk, caseActor)
+	caseService, err := cases.NewService(app.Pool, clk, caseActor,
+		cases.WithCaseTouchedHook(lifecycleService.OnIngestTouchedCase))
 	if err != nil {
 		return fmt.Errorf("build case service: %w", err)
 	}
@@ -120,12 +137,13 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("build proposal state service: %w", err)
 	}
 	approvalService, err := approval.NewService(approval.Options{
-		Pool:     app.Pool,
-		Clock:    clk,
-		State:    stateService,
-		Verifier: approval.VerifierAdapter{Service: verificationService},
-		Limits:   limitService,
-		Policy:   approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+		Pool:             app.Pool,
+		Clock:            clk,
+		State:            stateService,
+		Verifier:         approval.VerifierAdapter{Service: verificationService},
+		Limits:           limitService,
+		Policy:           approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+		OnProposalClosed: lifecycleService.OnProposalClosed,
 	})
 	if err != nil {
 		return fmt.Errorf("build approval service: %w", err)

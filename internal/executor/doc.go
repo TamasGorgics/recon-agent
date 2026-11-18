@@ -70,7 +70,10 @@
 // The executor writes break.resolve and case.resolve audit entries for its
 // minimal resolution (FIN-30) in addition to the proposal.transition,
 // ledger.post, and executor.applied entries; one executor.applied entry is
-// written per applied proposal.
+// written per applied proposal. The case status change itself goes through
+// internal/cases/state, which writes the case.transition row (actor
+// system:executor, reason apply); case.resolve remains the executor's summary
+// row carrying the proposal id.
 //
 // # Grants
 //

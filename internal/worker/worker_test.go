@@ -595,8 +595,8 @@ func TestProcessOnceAttemptCapEscalatesWithoutRun(t *testing.T) {
 	if len(transitions) != 1 {
 		t.Fatalf("transitions = %d, want 1", len(transitions))
 	}
-	if transitions[0].Status != cases.StatusEscalated || transitions[0].EscalationReason != "agent_failed" {
-		t.Fatalf("transition = %+v, want escalated/agent_failed", transitions[0])
+	if transitions[0].Status != cases.StatusEscalated || transitions[0].EscalationReason != "attempts_exhausted" {
+		t.Fatalf("transition = %+v, want escalated/attempts_exhausted", transitions[0])
 	}
 	if state := fc.get("poison"); state.status != cases.StatusEscalated {
 		t.Fatalf("case status = %s, want escalated", state.status)

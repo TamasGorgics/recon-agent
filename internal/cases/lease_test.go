@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	casestate "github.com/TamasGorgics/recon-agent/internal/cases/state"
 )
 
 // seedOneCase creates one external-only break in its own settlement batch and
@@ -59,6 +60,9 @@ func TestLeaseOrderAndRenewRelease(t *testing.T) {
 	}
 	if got, want := f.auditCount(t, leased.ID, cases.ActionCaseLease), 1; got != want {
 		t.Fatalf("lease audit rows = %d, want %d", got, want)
+	}
+	if got, want := f.auditCount(t, leased.ID, cases.ActionCaseTransition), 1; got != want {
+		t.Fatalf("transition audit rows after lease = %d, want %d", got, want)
 	}
 
 	// The lower-priority case is next; the leased case is not handed out again.
@@ -115,6 +119,12 @@ func TestLeaseOrderAndRenewRelease(t *testing.T) {
 	if got, want := f.auditCount(t, leased.ID, cases.ActionCaseRelease), 1; got != want {
 		t.Fatalf("release audit rows = %d, want %d", got, want)
 	}
+	if got, want := f.auditCount(t, leased.ID, cases.ActionCaseTransition), 2; got != want {
+		t.Fatalf("transition audit rows after release = %d, want %d", got, want)
+	}
+	if got, want := f.auditCount(t, next.ID, cases.ActionCaseTransition), 1; got != want {
+		t.Fatalf("second case transition audit rows = %d, want %d", got, want)
+	}
 	if _, err := f.service.Release(context.Background(), leased.ID, "worker-a"); !errors.Is(err, cases.ErrNotLeased) {
 		t.Fatalf("double release error = %v, want ErrNotLeased", err)
 	}
@@ -142,6 +152,9 @@ func TestLeaseByIDClaimsTheNamedCase(t *testing.T) {
 	}
 	if got, want := f.auditCount(t, target.ID, cases.ActionCaseLease), 1; got != want {
 		t.Fatalf("lease audit rows = %d, want %d", got, want)
+	}
+	if got, want := f.auditCount(t, target.ID, cases.ActionCaseTransition), 1; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
 	}
 	if got := f.getCase(t, other.ID); got.Status != cases.StatusOpen {
 		t.Fatalf("other case status = %s, want open", got.Status)
@@ -195,6 +208,9 @@ func TestExpiredLeaseIsReclaimed(t *testing.T) {
 	if got, want := f.auditCount(t, leased.ID, cases.ActionCaseReclaim), 1; got != want {
 		t.Fatalf("reclaim audit rows = %d, want %d", got, want)
 	}
+	if got, want := f.auditCount(t, leased.ID, cases.ActionCaseTransition), 2; got != want {
+		t.Fatalf("transition audit rows after reclaim = %d, want %d", got, want)
+	}
 
 	// The reclaimed case is leaseable again and the second lease does not
 	// increment attempts; only expiry does (spec section 6.5).
@@ -211,11 +227,14 @@ func TestExpiredLeaseIsReclaimed(t *testing.T) {
 	if got, want := released.Version, 3; got != want {
 		t.Fatalf("version after second lease = %d, want %d", got, want)
 	}
+	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseTransition), 3; got != want {
+		t.Fatalf("transition audit rows after second lease = %d, want %d", got, want)
+	}
 }
 
 // TestReclaimExpiredEscalatesAtAttemptCap proves an expired lease counts as an
-// attempt and that reaching the cap escalates agent_failed instead of leaving
-// the case open for another lease.
+// attempt and that reaching the cap escalates attempts_exhausted instead of
+// leaving the case open for another lease.
 func TestReclaimExpiredEscalatesAtAttemptCap(t *testing.T) {
 	f := newFixture(t)
 	seeded := seedOneCase(t, f, "lease-reclaim-cap", 900)
@@ -265,11 +284,14 @@ func TestReclaimExpiredEscalatesAtAttemptCap(t *testing.T) {
 	if final.LeasedBy != nil || final.LeaseExpiresAt != nil {
 		t.Fatalf("escalated case still leased: %v/%v", final.LeasedBy, final.LeaseExpiresAt)
 	}
-	if final.EscalationReason == nil || *final.EscalationReason != "agent_failed" {
-		t.Fatalf("escalation reason = %v, want agent_failed", final.EscalationReason)
+	if final.EscalationReason == nil || *final.EscalationReason != casestate.EscalationAttemptsExhausted {
+		t.Fatalf("escalation reason = %v, want %s", final.EscalationReason, casestate.EscalationAttemptsExhausted)
 	}
 	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseReclaim), 3; got != want {
 		t.Fatalf("reclaim audit rows = %d, want %d", got, want)
+	}
+	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseTransition), 6; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
 	}
 
 	var afterStatus, afterReason *string
@@ -283,8 +305,8 @@ func TestReclaimExpiredEscalatesAtAttemptCap(t *testing.T) {
 	if afterStatus == nil || *afterStatus != string(cases.StatusEscalated) {
 		t.Fatalf("final reclaim audit status = %v, want escalated", afterStatus)
 	}
-	if afterReason == nil || *afterReason != "agent_failed" {
-		t.Fatalf("final reclaim audit reason = %v, want agent_failed", afterReason)
+	if afterReason == nil || *afterReason != casestate.EscalationAttemptsExhausted {
+		t.Fatalf("final reclaim audit reason = %v, want %s", afterReason, casestate.EscalationAttemptsExhausted)
 	}
 
 	if _, err := f.service.Lease(context.Background(), "worker-b", time.Minute); !errors.Is(err, cases.ErrNoCase) {
@@ -324,6 +346,9 @@ func TestLeaseReclaimsExpiredLeaseInline(t *testing.T) {
 	}
 	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseLease), 2; got != want {
 		t.Fatalf("lease audit rows = %d, want %d", got, want)
+	}
+	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseTransition), 3; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
 	}
 }
 

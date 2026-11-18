@@ -76,6 +76,9 @@ func TestConcurrentLease(t *testing.T) {
 	if got, want := f.count(t, `SELECT count(*) FROM audit_log WHERE action = $1`, cases.ActionCaseLease), workers; got != want {
 		t.Fatalf("lease audit rows = %d, want %d", got, want)
 	}
+	if got, want := f.count(t, `SELECT count(*) FROM audit_log WHERE action = $1`, cases.ActionCaseTransition), workers; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
+	}
 	if got, want := f.count(t, `SELECT count(*) FROM cases WHERE attempts <> 0 OR version <> 1`), 0; got != want {
 		t.Fatalf("cases with unexpected attempts/version = %d, want %d", got, want)
 	}

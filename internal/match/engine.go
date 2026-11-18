@@ -36,6 +36,13 @@ var (
 	ErrScopeNotFound = errors.New("match: scope not found")
 )
 
+// LateMatchHook reconciles a newly created active match with existing cases. It
+// runs inside Engine.Run's transaction, immediately after the match header and
+// its legs are inserted, so a reconciliation failure rolls the match back
+// atomically. The actor is the engine's typed actor string (normally
+// system:matcher). A nil hook disables late-match reconciliation.
+type LateMatchHook func(ctx context.Context, tx pgx.Tx, matchID, actor string) error
+
 // Options configures an Engine. Passes is optional; nil uses DefaultPasses so
 // M1-13 can append passes without changing the engine.
 type Options struct {
@@ -49,6 +56,10 @@ type Options struct {
 	Config config.MatchConfig
 	// Passes overrides the ordered pass chain. Nil means DefaultPasses(Config).
 	Passes []Pass
+	// LateMatch optionally reconciles each accepted match in the run
+	// transaction. Production wires the case-lifecycle service; nil is a no-op
+	// for older callers and tests.
+	LateMatch LateMatchHook
 }
 
 // RunRequest is one scope reconciliation over an inclusive value-date window.
@@ -90,6 +101,7 @@ type Engine struct {
 	actor      audit.Actor
 	configHash string
 	passes     []Pass
+	lateMatch  LateMatchHook
 }
 
 // New validates options and builds an engine.
@@ -118,12 +130,15 @@ func New(opts Options) (*Engine, error) {
 		actor:      opts.Actor,
 		configHash: ConfigHash(cfg),
 		passes:     append([]Pass(nil), passes...),
+		lateMatch:  opts.LateMatch,
 	}, nil
 }
 
 // Run reconciles one scope. It records exactly one match_runs row, inserts the
 // accepted match headers and legs, and appends exactly one system:matcher audit
-// summary in the same transaction. A failed run rolls back completely.
+// summary in the same transaction. When a LateMatch hook is configured it runs
+// inside that transaction after each match is inserted; a hook failure rolls
+// the whole run back. A failed run rolls back completely.
 func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if req.ScopeID == "" {
 		return RunResult{}, fmt.Errorf("%w: ScopeID is required", ErrInvalidRequest)
@@ -167,8 +182,14 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			return err
 		}
 		for _, candidate := range candidates {
-			if err := insertCandidate(ctx, tx, scope.ID, runID, candidate); err != nil {
+			matchID, err := insertCandidate(ctx, tx, scope.ID, runID, candidate)
+			if err != nil {
 				return err
+			}
+			if e.lateMatch != nil {
+				if err := e.lateMatch(ctx, tx, matchID, e.actor.String()); err != nil {
+					return fmt.Errorf("match: late-match reconcile %s: %w", matchID, err)
+				}
 			}
 		}
 

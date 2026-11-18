@@ -63,14 +63,15 @@ type Config struct {
 	Policy          PolicyConfig          `yaml:"policy"`
 	Verifier        VerifierConfig        `yaml:"verifier"`
 	AutoApplyLimits AutoApplyLimitsConfig `yaml:"auto_apply_limits"`
+	Cases           CasesConfig           `yaml:"cases"`
 }
 
 // String renders Config without credentials: database DSNs and the LLM API key
 // are replaced, and API key digests are summarized by count. This keeps
 // accidental %v/%+v logging from exposing secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s}",
-		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits)
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s, Cases:%+v}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits, c.Cases)
 }
 
 // Format implements fmt.Formatter so every verb, including %#v, uses the
@@ -152,6 +153,9 @@ func (c Config) Validate() error {
 	if err := c.Ingest.Validate(); err != nil {
 		return err
 	}
+	if err := c.Cases.Validate(); err != nil {
+		return err
+	}
 	if err := c.Match.Validate(); err != nil {
 		return err
 	}
@@ -195,6 +199,7 @@ func defaults() Config {
 		Policy:          PolicyConfig{File: DefaultPolicyFile},
 		Verifier:        DefaultVerifierConfig(),
 		AutoApplyLimits: DefaultAutoApplyLimitsConfig(),
+		Cases:           DefaultCasesConfig(),
 	}
 }
 

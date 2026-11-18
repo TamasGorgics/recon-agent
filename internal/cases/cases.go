@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/TamasGorgics/recon-agent/internal/audit"
+	"github.com/TamasGorgics/recon-agent/internal/cases/state"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 )
@@ -24,6 +25,7 @@ type Service struct {
 	clock       clock.Clock
 	actor       audit.Actor
 	maxAttempts int
+	caseTouched CaseTouchedHook
 }
 
 // ServiceOption configures a case service at construction.
@@ -31,7 +33,7 @@ type ServiceOption func(*Service) error
 
 // WithMaxAttempts sets the attempt cap used when an expired lease is reclaimed
 // (including the inline reclaim in Lease). Reclaim increments attempts once and
-// escalates the case agent_failed when the new count reaches the cap. The
+// escalates the case attempts_exhausted when the new count reaches the cap. The
 // default is DefaultMaxAttempts.
 func WithMaxAttempts(maxAttempts int) ServiceOption {
 	return func(s *Service) error {
@@ -68,13 +70,20 @@ func NewService(pool db.Beginner, clk clock.Clock, actor audit.Actor, opts ...Se
 
 // TransitionRequest is an optimistic-concurrency case status change. The caller
 // passes the version it read; a mismatch is ErrStale and changes nothing.
+//
+// This is the legacy request shape kept for existing callers; Service.Transition
+// adapts it to the internal/cases/state authority. EscalationReason is the
+// authority's Reason and is only applied when Status is escalated, where it is
+// validated free text (1..500 bytes). The lifecycle services pass the canonical
+// state.EscalationAttemptsExhausted/MissingSettlementSLA/Manual constants, while
+// the agent loop keeps its model/tool-derived escalation reasons.
 type TransitionRequest struct {
 	CaseID          string
 	ExpectedVersion int
 	Status          Status
-	// EscalationReason is applied when non-empty.
+	// EscalationReason is applied when Status is escalated.
 	EscalationReason string
-	// ResolutionType is applied when non-empty.
+	// ResolutionType is applied when Status is resolved.
 	ResolutionType string
 }
 
@@ -293,9 +302,12 @@ func (s *Service) createCaseTx(ctx context.Context, tx pgx.Tx, breakIDs []string
 	return s.getCaseTx(ctx, tx, caseID)
 }
 
-// Transition moves one case to a new status with optimistic concurrency. The
-// update is guarded by both the row lock and WHERE version = expected; a stale
-// caller gets ErrStale and no audit row is written.
+// Transition moves one case to a new status. It is a thin wrapper over the
+// internal/cases/state authority: the authority owns the edge table, actor and
+// reason rules, the FOR UPDATE + version CAS update, exactly one
+// case.transition audit, and the lease/escalation/resolution field rules. This
+// wrapper keeps the existing request shape, clock, and typed error contract for
+// callers and maps the authority's Snapshot back to Case.
 func (s *Service) Transition(ctx context.Context, req TransitionRequest) (Case, error) {
 	if req.CaseID == "" {
 		return Case{}, fmt.Errorf("%w: case id is required", ErrInvalidRequest)
@@ -306,63 +318,24 @@ func (s *Service) Transition(ctx context.Context, req TransitionRequest) (Case, 
 	if !req.Status.Valid() {
 		return Case{}, fmt.Errorf("%w: %q", ErrInvalidStatus, req.Status)
 	}
+	reason := ""
+	if req.Status == StatusEscalated {
+		reason = req.EscalationReason
+	}
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 
 	var result Case
 	err := db.WithTx(ctx, s.db, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
-		before, err := scanCase(tx.QueryRow(ctx,
-			`SELECT `+caseColumns+` FROM cases WHERE id = $1::uuid FOR UPDATE`, req.CaseID))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrCaseNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("cases: lock case: %w", err)
-		}
-		if before.Version != req.ExpectedVersion {
-			return fmt.Errorf("%w: have %d, caller expected %d",
-				ErrStale, before.Version, req.ExpectedVersion)
-		}
-
-		tag, err := tx.Exec(ctx,
-			`UPDATE cases
-			    SET status = $2,
-			        version = version + 1,
-			        leased_by = CASE WHEN $2 = 'in_agent' THEN leased_by ELSE NULL END,
-			        lease_expires_at = CASE WHEN $2 = 'in_agent' THEN lease_expires_at ELSE NULL END,
-			        escalation_reason = COALESCE(NULLIF($3, ''), escalation_reason),
-			        resolved_at = CASE WHEN $2 = 'resolved'
-			                           THEN COALESCE(resolved_at, $4) ELSE resolved_at END,
-			        resolution_type = COALESCE(NULLIF($5, ''), resolution_type)
-			  WHERE id = $1::uuid AND version = $6`,
-			req.CaseID, string(req.Status), req.EscalationReason, now,
-			req.ResolutionType, req.ExpectedVersion)
-		if err != nil {
-			return fmt.Errorf("cases: transition case: %w", err)
-		}
-		if tag.RowsAffected() == 0 {
-			return ErrStale
-		}
-
-		afterPayload := map[string]any{
-			"status":  string(req.Status),
-			"version": before.Version + 1,
-		}
-		if req.EscalationReason != "" {
-			afterPayload["escalation_reason"] = req.EscalationReason
-		}
-		if req.ResolutionType != "" {
-			afterPayload["resolution_type"] = req.ResolutionType
-		}
-		if _, err := audit.Append(ctx, tx, audit.Entry{
-			Actor:      s.actor,
-			Action:     ActionCaseTransition,
-			EntityType: EntityCase,
-			EntityID:   req.CaseID,
-			Before:     map[string]any{"status": string(before.Status), "version": before.Version},
-			After:      afterPayload,
-			Timestamp:  now,
+		if _, err := state.Transition(ctx, tx, state.TransitionRequest{
+			CaseID:          req.CaseID,
+			To:              state.Status(req.Status),
+			ExpectedVersion: req.ExpectedVersion,
+			Actor:           s.actor.String(),
+			Reason:          reason,
+			ResolutionType:  req.ResolutionType,
+			Now:             now,
 		}); err != nil {
-			return err
+			return caseStateError(err)
 		}
 		c, err := s.getCaseTx(ctx, tx, req.CaseID)
 		if err != nil {
@@ -372,6 +345,28 @@ func (s *Service) Transition(ctx context.Context, req TransitionRequest) (Case, 
 		return nil
 	})
 	return result, err
+}
+
+// caseStateError adapts authority sentinels to the case service's existing
+// typed errors so callers keep using errors.Is with the cases package. The
+// authority's detail is preserved in the message. Sentinels without a legacy
+// equivalent (illegal edge, actor, reason, resolution, already-in-state,
+// terminal) are returned unchanged.
+func caseStateError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, state.ErrCaseNotFound):
+		return fmt.Errorf("%w: %v", ErrCaseNotFound, err)
+	case errors.Is(err, state.ErrStale):
+		return fmt.Errorf("%w: %v", ErrStale, err)
+	case errors.Is(err, state.ErrInvalidStatus):
+		return fmt.Errorf("%w: %v", ErrInvalidStatus, err)
+	case errors.Is(err, state.ErrInvalidRequest):
+		return fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	default:
+		return err
+	}
 }
 
 func uniqueNonEmpty(values []string) []string {

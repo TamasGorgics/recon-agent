@@ -128,10 +128,11 @@ func loadLedgerCandidates(ctx context.Context, tx pgx.Tx, scope Scope, window Wi
 	return txns, nil
 }
 
-// insertCandidate writes the active header plus its legs. The caller holds the
-// scope's transaction-scoped advisory lock, so the partial unique indexes are a
-// backstop rather than the concurrency mechanism.
-func insertCandidate(ctx context.Context, tx pgx.Tx, scopeID, runID string, candidate Candidate) error {
+// insertCandidate writes the active header plus its legs and returns the new
+// match id. The caller holds the scope's transaction-scoped advisory lock, so
+// the partial unique indexes are a backstop rather than the concurrency
+// mechanism. A configured late-match hook runs after this returns.
+func insertCandidate(ctx context.Context, tx pgx.Tx, scopeID, runID string, candidate Candidate) (string, error) {
 	var matchID string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO matches
@@ -140,7 +141,7 @@ func insertCandidate(ctx context.Context, tx pgx.Tx, scopeID, runID string, cand
 		 RETURNING id::text`,
 		scopeID, candidate.External.ID, candidate.Rule,
 		confidenceNumeric(candidate.ConfidenceBPS), runID).Scan(&matchID); err != nil {
-		return fmt.Errorf("match: insert header for external %s: %w", candidate.External.ID, err)
+		return "", fmt.Errorf("match: insert header for external %s: %w", candidate.External.ID, err)
 	}
 	for _, leg := range candidate.Legs {
 		if _, err := tx.Exec(ctx,
@@ -148,10 +149,10 @@ func insertCandidate(ctx context.Context, tx pgx.Tx, scopeID, runID string, cand
 			     (match_id, ledger_txn_id, amount_minor, currency, status)
 			 VALUES ($1::uuid, $2::uuid, $3, $4, 'active')`,
 			matchID, leg.LedgerTxnID, leg.AmountMinor, leg.Currency); err != nil {
-			return fmt.Errorf("match: insert leg %s for header %s: %w", leg.LedgerTxnID, matchID, err)
+			return "", fmt.Errorf("match: insert leg %s for header %s: %w", leg.LedgerTxnID, matchID, err)
 		}
 	}
-	return nil
+	return matchID, nil
 }
 
 // finishRun records the run's final status and stats.
