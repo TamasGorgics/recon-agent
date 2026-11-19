@@ -3,7 +3,8 @@
 This page is the operator and developer reference for the M4-10 case lifecycle:
 the six case statuses, the single transition authority, proposal supersession,
 late-match reconciliation, retry/expiry, waiting-info re-entry, the
-missing-settlement SLA, and the audited admin unmatch.
+missing-settlement SLA (implemented but dormant in production), and the
+audited admin unmatch.
 
 `docs/spec.md` section 8.5 and `docs/ROADMAP.md` M4-10 are the requirements.
 `internal/cases/state` implements the transition authority and
@@ -18,7 +19,7 @@ decisions and deviations are recorded in `docs/open-questions.md` Q-95.
 | `in_agent` | The case is leased to an agent/worker and owns the lease fields. |
 | `proposal_pending` | The case has an active proposal awaiting policy/approval. |
 | `waiting_info` | The case is paused waiting for a human reply or new source data. |
-| `escalated` | A human decision is required after the shared attempt cap, the missing-settlement SLA, or a manual escalation. |
+| `escalated` | A human decision is required after an attempt cap (agent or lifecycle), the missing-settlement SLA (dormant until a ledger-only producer exists), or a manual escalation. |
 | `resolved` | Terminal. `resolution_type` and `resolved_at` are set; only a human reopen/unmatch may return the case to `open`. |
 
 ## Transition authority
@@ -87,6 +88,15 @@ breaks become `superseded` with one `break.superseded` audit each.
 Reconciliation is idempotent and runs in the matcher transaction when the hook
 is wired; the case lock and the `approval.cancel` key serialize replays.
 
+- **Lock order:** reconciliation locks case, then proposals, then breaks. The
+  executor locks proposal, then breaks, then case; that inversion is a residual
+  deadlock risk mitigated by `40P01` retries, and no deadlock, partial write, or
+  data loss was observed or probed.
+- **Whole-break consumption:** linkage treats any match overlap with a break
+  window as consuming the full break. This is theoretical for the current
+  whole-break producers (`external_only`/`duplicate`); revisit it if
+  partial-amount breaks are introduced.
+
 ## Retry and expiry
 
 `OnProposalClosed` handles proposals that become `rejected` or `expired`.
@@ -96,19 +106,25 @@ Every other proposal status is a no-op.
   no-ops, and other statuses write one deduplicated `case.retry_skipped` audit
   and change nothing.
 - `cases.attempts` is the single shared counter for agent failures and
-  rejected/expired proposals. The cap is **3**:
-  - increment to 1 or 2: the case reopens to `open` with reason
-    `proposal_rejected` or `proposal_expired`;
-  - increment to 3 (or more): the case escalates with reason
-    `attempts_exhausted`.
+  rejected/expired proposals, but the two paths do not share one configurable
+  cap:
+  - The lifecycle retry path caps at the fixed constant
+    `lifecycle.AttemptCap = 3` (the same value as `cases.DefaultMaxAttempts`).
+  - Agent failures honor `worker.max_attempts` (default `3`, strict range
+    `1..10`). A non-default worker cap changes the agent-side escalation point
+    while the lifecycle retry cap stays `3`, so the effective caps differ.
+    There is no `cases.max_attempts` key.
+  - On the lifecycle retry path, increment to 1 or 2 reopens `open` with reason
+    `proposal_rejected` or `proposal_expired`; increment to 3 (or more)
+    escalates with reason `attempts_exhausted`.
 - The increment and transition commit in one transaction, and a repeated hook
   for the same proposal cannot increment twice.
-- The approval decision path calls the hook in its own transaction. The
-  `RetryStalledProposals` sweep is the repair path for decisions that
-  committed without the hook; it is idempotent and never reopens a resolved or
-  escalated case.
-
-No scheduler/worker call site drives the retry sweep yet.
+- The approval decision path calls the hook in its own transaction.
+  `RetryStalledProposals` is the repair path for decisions that committed
+  without the hook; it is idempotent and never reopens a resolved or escalated
+  case.
+- Neither the retry sweep nor any other time-based sweep has a production
+  caller yet; see [Dormant sweeps](#dormant-sweeps).
 
 ## Waiting-info re-entry
 
@@ -136,8 +152,9 @@ cases:
 - Default `5` when omitted; strict integer range `1..365`. Zero, negative,
   values above 365, non-integer scalars, and unknown `cases` keys fail startup
   with a `config:` error naming the key and range. Values are never clamped.
-- The shared attempt cap remains the constant `3`; there is no
-  `cases.max_attempts` key.
+- The lifecycle retry cap remains the fixed constant `3`;
+  `worker.max_attempts` configures only the agent-side cap (default `3`, range
+  `1..10`). There is no `cases.max_attempts` key.
 
 Classifier and anchor:
 
@@ -149,8 +166,13 @@ Classifier and anchor:
   literally: it has attached breaks and the non-void predicate is vacuously
   true.
 - The source comes from the attached breaks' scope. Mixed-source cases are
-  never guessed at: they are excluded and receive one deduplicated
-  `case.sla_skipped_mixed_source` audit.
+  never guessed at: when every non-void break is `ledger_only` and the attached
+  breaks span more than one source, the case is excluded and receives one
+  deduplicated `case.sla_skipped_mixed_source` audit. If any attached non-void
+  break is not `ledger_only`, eligibility fails before the mixed-source check,
+  so no audit is written; that exclusion is visible only as a
+  `SweepResult.Skipped` count (the SQL candidate query filters such cases out
+  entirely).
 - The anchor is the earliest `detected_at` among attached breaks (including
   void breaks), converted to the source timezone. At/after the source's FIN-41
   cutoff the clock starts on the next business day; otherwise it starts on the
@@ -159,9 +181,39 @@ Classifier and anchor:
 - The case escalates with reason `missing_settlement_sla` only when the
   source-local date is strictly after the due date.
 
+**Dormant in production (M4-14 dependency).** The classifier and sweep are
+implemented and tested, but the classifier cannot fire from real matcher data
+today: no production matcher pass emits `ledger_only` breaks. The only
+production `breaks` writer is fed by `match.Engine.Run`; `pass3` emits
+`external_only`, `pass5` emits `duplicate`, and synth metadata is not a
+producer. The missing ledger-only break producer is a matcher/ingest
+dependency that must land before the M4-14 end-to-end missing-settlement gate.
+Until then, missing-settlement escalation is not operational end to end.
+
 The sweep uses bounded `FOR UPDATE SKIP LOCKED` batches and is idempotent.
 A source with no configured calendar is a silent skip (counted, no audit, no
-error). No scheduler/worker tick calls the sweep yet.
+error). The sweep is a service-level repair path: no scheduler/worker tick
+calls it yet (see [Dormant sweeps](#dormant-sweeps)).
+
+## Dormant sweeps
+
+Three tested service-level paths have no production caller and no
+scheduler/worker tick; there is no `cmd/scheduler` and the worker poll loop
+calls none of them.
+
+- `approval/state.ExpireDue` expires due `proposed`/`pending_approval`
+  proposals. It has no lifecycle hook, so a future scheduler must pair it with
+  `RetryStalledProposals`; otherwise expired proposals leave their cases in
+  `proposal_pending`.
+- `RetryStalledProposals` is the repair path for rejected/expired proposals
+  whose case missed the decision-time hook. It is idempotent and never reopens
+  a resolved or escalated case.
+- `EscalateMissingSettlementSLA` is the missing-settlement sweep; it is also
+  blocked by the missing ledger-only producer above.
+
+Expiry handled inside the approval decision path is the only hooked expiry
+path. An ops task must decide when to run these sweeps until a scheduler
+exists.
 
 ## Admin unmatch
 
@@ -206,5 +258,10 @@ exist** in this release; the refusal must not imply otherwise.
 - **No `recon reverse` command** is registered in M4-10.
 - **No HTTP unmatch route** is required or shipped.
 - **No migration** is required: M4-10 uses existing tables and grants.
-- **No scheduler** call site exists yet for `RetryStalledProposals` or
-  `EscalateMissingSettlementSLA`.
+- **No scheduler** call site exists yet for `approval/state.ExpireDue`,
+  `RetryStalledProposals`, or `EscalateMissingSettlementSLA`. A future
+  scheduler must pair `ExpireDue` with the retry sweep; expiry handled inside
+  the approval decision path is the only hooked expiry path.
+- **Missing-settlement SLA is dormant in production** until a matcher/ingest
+  follow-up emits `ledger_only` breaks; the M4-14 end-to-end gate must not be
+  claimed before that producer exists.
