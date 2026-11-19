@@ -446,6 +446,7 @@ type approverSpec struct {
 	Role        string
 	Active      *bool
 	APIKeyID    *string
+	SlackUserID *string
 }
 
 // seedApprover inserts an approvers row with the admin/owner test pool. The
@@ -465,10 +466,10 @@ func (f *fixture) seedApprover(spec approverSpec) (approverID, apiKeyID string) 
 	}
 	var storedKey *string
 	if err := f.d.Pool.QueryRow(context.Background(),
-		`INSERT INTO approvers (display_name, role, active, api_key_id)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO approvers (display_name, role, active, api_key_id, slack_user_id)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id::text, api_key_id`,
-		spec.DisplayName, spec.Role, active, spec.APIKeyID).
+		spec.DisplayName, spec.Role, active, spec.APIKeyID, spec.SlackUserID).
 		Scan(&approverID, &storedKey); err != nil {
 		f.t.Fatalf("seed approver: %v", err)
 	}

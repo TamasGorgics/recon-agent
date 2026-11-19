@@ -1,0 +1,39 @@
+{
+  "now": "2026-11-19T12:00:00Z",
+  "channel_id": "C0123456789",
+  "case_file_base_url": "https://cases.example.test",
+  "data": {
+    "proposal_id": "11111111-2222-3333-4444-555555555555",
+    "proposal_type": "write_off",
+    "proposal_version": 3,
+    "proposal_status": "pending_approval",
+    "risk_tier": "T1",
+    "expires_at": "2026-11-20T10:00:00Z",
+    "case_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "case_value_minor": 123456,
+    "case_currency": "USD",
+    "case_priority": 2,
+    "case_created_at": "2026-11-16T08:00:00Z",
+    "break_count": 1,
+    "primary_break_side": "external_only",
+    "primary_break_delta_minor": 1250,
+    "primary_break_currency": "USD",
+    "pattern_claimed": "fee_variance",
+    "pattern_verified": "fee_variance",
+    "verification": {
+      "schema_version": 1,
+      "claimed": "fee_variance",
+      "reason": "",
+      "expected_minor": 11250,
+      "actual_minor": 12500,
+      "currency": "USD"
+    },
+    "policy_rule": "high_value",
+    "policy_tier": "T1",
+    "rationale": "The bank fee is 12.50 USD higher than the fee schedule and the ledger transaction matches the external settlement.",
+    "evidence": [
+      "ext:bank:abc123",
+      "ledger_txn:11111111-2222-3333-4444-555555555555"
+    ]
+  }
+}

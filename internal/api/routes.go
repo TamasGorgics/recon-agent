@@ -7,43 +7,76 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/config"
 )
 
+// AuthKind is the route's authentication mode. It is explicit rather than
+// inferred from an empty role so a signature-authenticated callback can never
+// fall through to the public branch.
+type AuthKind uint8
+
+const (
+	// AuthPublic serves the request with no authentication (health, metrics).
+	AuthPublic AuthKind = iota
+	// AuthAPIKey requires a static Bearer API key with the route's role.
+	AuthAPIKey
+	// AuthSignature requires the route-specific signature middleware.
+	AuthSignature
+)
+
+// String renders a short diagnostic label for the auth mode. It is not the
+// OpenAPI x-auth-kind value; the Slack operation uses "slack-signature".
+func (k AuthKind) String() string {
+	switch k {
+	case AuthPublic:
+		return "public"
+	case AuthAPIKey:
+		return "api-key"
+	case AuthSignature:
+		return "signature"
+	default:
+		return "unknown"
+	}
+}
+
 // Route is one row of the single route registry. Method+Pattern are mounted by
-// the chi router and compared with api/openapi.yaml by the contract test. Role
-// is empty exactly for the two public routes.
+// the chi router and compared with api/openapi.yaml by the contract test. Auth
+// selects the middleware; Role is non-empty exactly for AuthAPIKey routes.
 type Route struct {
 	Method  string
 	Pattern string
 	Role    config.Role
+	Auth    AuthKind
 	Handler http.HandlerFunc
 }
 
 // Route patterns. They are exported constants so the OpenAPI contract test and
 // handler tests share the same spelling, including "{id}".
 const (
-	RouteHealthz          = "/healthz"
-	RouteMetrics          = "/metrics"
-	RouteIngest           = "/v1/ingest/files"
-	RouteReconcile        = "/v1/reconcile/run"
-	RouteCases            = "/v1/cases"
-	RouteCaseFile         = "/v1/cases/{id}"
-	RouteProposals        = "/v1/proposals"
-	RouteProposalDecision = "/v1/proposals/{id}/decision"
-	RouteSwitches         = "/v1/admin/switches"
+	RouteHealthz           = "/healthz"
+	RouteMetrics           = "/metrics"
+	RouteIngest            = "/v1/ingest/files"
+	RouteReconcile         = "/v1/reconcile/run"
+	RouteCases             = "/v1/cases"
+	RouteCaseFile          = "/v1/cases/{id}"
+	RouteProposals         = "/v1/proposals"
+	RouteProposalDecision  = "/v1/proposals/{id}/decision"
+	RouteSlackInteractions = "/v1/slack/interactions"
+	RouteSwitches          = "/v1/admin/switches"
 )
 
-// routeTable is the single source of truth for method, path, required role,
-// and handler. Order affects only the Allow header for 405 responses.
+// routeTable is the single source of truth for method, path, auth kind,
+// required role, and handler. Order affects only the Allow header for 405
+// responses.
 func (a *API) routeTable() []Route {
 	return []Route{
-		{Method: http.MethodGet, Pattern: RouteHealthz, Handler: a.handleHealthz},
-		{Method: http.MethodGet, Pattern: RouteMetrics, Handler: a.handleMetrics},
-		{Method: http.MethodPost, Pattern: RouteIngest, Role: config.RoleAdmin, Handler: a.handleIngest},
-		{Method: http.MethodPost, Pattern: RouteReconcile, Role: config.RoleAdmin, Handler: a.handleReconcile},
-		{Method: http.MethodGet, Pattern: RouteCases, Role: config.RoleViewer, Handler: a.handleListCases},
-		{Method: http.MethodGet, Pattern: RouteCaseFile, Role: config.RoleViewer, Handler: a.handleCaseFile},
-		{Method: http.MethodGet, Pattern: RouteProposals, Role: config.RoleViewer, Handler: a.handleListProposals},
-		{Method: http.MethodPost, Pattern: RouteProposalDecision, Role: config.RoleApprover, Handler: a.handleProposalDecision},
-		{Method: http.MethodPost, Pattern: RouteSwitches, Role: config.RoleAdmin, Handler: a.handleSetSwitch},
+		{Method: http.MethodGet, Pattern: RouteHealthz, Auth: AuthPublic, Handler: a.handleHealthz},
+		{Method: http.MethodGet, Pattern: RouteMetrics, Auth: AuthPublic, Handler: a.handleMetrics},
+		{Method: http.MethodPost, Pattern: RouteIngest, Auth: AuthAPIKey, Role: config.RoleAdmin, Handler: a.handleIngest},
+		{Method: http.MethodPost, Pattern: RouteReconcile, Auth: AuthAPIKey, Role: config.RoleAdmin, Handler: a.handleReconcile},
+		{Method: http.MethodGet, Pattern: RouteCases, Auth: AuthAPIKey, Role: config.RoleViewer, Handler: a.handleListCases},
+		{Method: http.MethodGet, Pattern: RouteCaseFile, Auth: AuthAPIKey, Role: config.RoleViewer, Handler: a.handleCaseFile},
+		{Method: http.MethodGet, Pattern: RouteProposals, Auth: AuthAPIKey, Role: config.RoleViewer, Handler: a.handleListProposals},
+		{Method: http.MethodPost, Pattern: RouteProposalDecision, Auth: AuthAPIKey, Role: config.RoleApprover, Handler: a.handleProposalDecision},
+		{Method: http.MethodPost, Pattern: RouteSlackInteractions, Auth: AuthSignature, Handler: a.handleSlackInteraction},
+		{Method: http.MethodPost, Pattern: RouteSwitches, Auth: AuthAPIKey, Role: config.RoleAdmin, Handler: a.handleSetSwitch},
 	}
 }
 

@@ -38,9 +38,22 @@ var (
 	// ErrDecisionConflict means a prior decision by another approver or with a
 	// different outcome conflicts with this one.
 	ErrDecisionConflict = errors.New("approval: decision conflicts with an existing decision")
+	// ErrInfoRequestedUnsupported means DecisionOptions.InfoRequested was used
+	// without an InfoRequestedHook. The decision fails closed before any write
+	// so a request for information can never silently retry or escalate.
+	ErrInfoRequestedUnsupported = errors.New("approval: info-requested hook is not configured")
 	// ErrInvalidDecision means the decision value is not approved or rejected.
 	ErrInvalidDecision = errors.New("approval: invalid decision")
 )
+
+// maxDecisionReasonRunes bounds the optional decision reason. It matches the
+// proposal and case authority reason bound.
+const maxDecisionReasonRunes = 2000
+
+// maxSlackUserIDRunes bounds the external Slack identity accepted by the
+// channel lookup. Slack IDs are short ASCII tokens; the limit matches the
+// audit actor id bound.
+const maxSlackUserIDRunes = 128
 
 // Decision is a human approval outcome. The set is closed.
 type Decision string

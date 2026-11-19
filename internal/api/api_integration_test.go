@@ -17,8 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TamasGorgics/recon-agent/internal/api/webhook"
 	"github.com/TamasGorgics/recon-agent/internal/approval"
+	"github.com/TamasGorgics/recon-agent/internal/approval/slack"
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
+	caselifecycle "github.com/TamasGorgics/recon-agent/internal/cases/lifecycle"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
@@ -51,6 +54,8 @@ type apiFixture struct {
 	app      *db.RolePool
 	api      *API
 	switches *SwitchWriter
+	clock    *clock.Fake
+	slack    *fakeSlackServer
 }
 
 func newAPIFixture(t *testing.T) *apiFixture {
@@ -92,16 +97,59 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	if err != nil {
 		t.Fatalf("build proposal state service: %v", err)
 	}
+	lifecycleService, err := caselifecycle.NewService(caselifecycle.Options{
+		DB:    app.Pool,
+		Clock: clk,
+	})
+	if err != nil {
+		t.Fatalf("build case lifecycle service: %v", err)
+	}
 	approvalService, err := approval.NewService(approval.Options{
-		Pool:     app.Pool,
-		Clock:    clk,
-		State:    stateService,
-		Verifier: approval.VerifierAdapter{Service: verificationService},
-		Limits:   limitService,
-		Policy:   approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+		Pool:              app.Pool,
+		Clock:             clk,
+		State:             stateService,
+		Verifier:          approval.VerifierAdapter{Service: verificationService},
+		Limits:            limitService,
+		Policy:            approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+		InfoRequestedHook: lifecycleService.RequestInfo,
 	})
 	if err != nil {
 		t.Fatalf("build approval service: %v", err)
+	}
+
+	slackServer := newFakeSlackServer(t)
+	slackClient, err := slack.NewClient(slack.ClientOptions{
+		BaseURL:    slackServer.URL(),
+		BotToken:   "xoxb-test-token",
+		HTTPClient: slackServer.Client(),
+		Clock:      clk,
+	})
+	if err != nil {
+		t.Fatalf("build slack client: %v", err)
+	}
+	interactions, err := slack.NewInteractionHandler(slack.InteractionOptions{
+		DB:        app.Pool,
+		Queryer:   app.Pool,
+		Decisions: approvalService,
+		Client:    slackClient,
+		Clock:     clk,
+		Logger:    telemetry.NewLogger(io.Discard, slog.LevelError),
+	})
+	if err != nil {
+		t.Fatalf("build slack interaction handler: %v", err)
+	}
+	verifier, err := webhook.New(webhook.Options{
+		Secret:             []byte(testSlackSigningSecret),
+		SignatureHeader:    slackSignatureHeader,
+		TimestampHeader:    slackTimestampHeader,
+		ReplayExemptHeader: slackRetryHeader,
+		Tolerance:          5 * time.Minute,
+		MaxBodyBytes:       1 << 20,
+		Replay:             webhook.NewMemoryReplayCache(0),
+		Clock:              clk,
+	})
+	if err != nil {
+		t.Fatalf("build slack verifier: %v", err)
 	}
 
 	a, err := New(Options{
@@ -117,11 +165,15 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		Proposals:  store,
 		Switches:   switchWriter,
 		Decisions:  approvalService,
+
+		SignatureAuth:     verifier.Middleware,
+		SlackInteractions: interactions,
 	})
 	if err != nil {
 		t.Fatalf("build api: %v", err)
 	}
-	return &apiFixture{db: database, app: app, api: a, switches: switchWriter}
+	return &apiFixture{db: database, app: app, api: a, switches: switchWriter,
+		clock: clk, slack: slackServer}
 }
 
 type seededCase struct {

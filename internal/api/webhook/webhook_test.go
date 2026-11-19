@@ -539,3 +539,125 @@ func assertEnvelope(t *testing.T, data []byte, wantCode string) {
 		t.Fatal("error message is empty")
 	}
 }
+
+func TestVerifierReplayExemptHeader(t *testing.T) {
+	base := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	body := []byte(`{"event":"payment.settled"}`)
+	timestamp := strconv.FormatInt(base.Unix(), 10)
+	signature := sign(testSecret, DefaultPrefix, timestamp, body)
+
+	newVerifier := func(t *testing.T) *Verifier {
+		t.Helper()
+		verifier, err := New(Options{
+			Secret:             []byte(testSecret),
+			SignatureHeader:    testSignature,
+			TimestampHeader:    testTimestamp,
+			ReplayExemptHeader: "X-Test-Retry-Num",
+			Clock:              clock.NewFake(base),
+		})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		return verifier
+	}
+	do := func(verifier *Verifier, mutate func(*http.Request), calls *int) *httptest.ResponseRecorder {
+		handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { *calls++ })
+		request := httptest.NewRequest(http.MethodPost, "/hook", bytes.NewReader(body))
+		request.Header.Set(testSignature, signature)
+		request.Header.Set(testTimestamp, timestamp)
+		if mutate != nil {
+			mutate(request)
+		}
+		recorder := httptest.NewRecorder()
+		verifier.Middleware(handler).ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	t.Run("retry header skips only the replay marker", func(t *testing.T) {
+		verifier := newVerifier(t)
+		calls := 0
+		retry := func(r *http.Request) { r.Header.Set("X-Test-Retry-Num", "1") }
+		if recorder := do(verifier, retry, &calls); recorder.Code != http.StatusOK {
+			t.Fatalf("first status = %d, want 200; body=%s", recorder.Code, recorder.Body)
+		}
+		if recorder := do(verifier, retry, &calls); recorder.Code != http.StatusOK {
+			t.Fatalf("retry status = %d, want 200; body=%s", recorder.Code, recorder.Body)
+		}
+		if calls != 2 {
+			t.Fatalf("handler calls = %d, want 2", calls)
+		}
+	})
+
+	t.Run("no retry header keeps 409", func(t *testing.T) {
+		verifier := newVerifier(t)
+		calls := 0
+		if recorder := do(verifier, nil, &calls); recorder.Code != http.StatusOK {
+			t.Fatalf("first status = %d, want 200", recorder.Code)
+		}
+		recorder := do(verifier, nil, &calls)
+		if recorder.Code != http.StatusConflict {
+			t.Fatalf("replay status = %d, want 409", recorder.Code)
+		}
+		assertEnvelope(t, recorder.Body.Bytes(), CodeReplay)
+		if calls != 1 {
+			t.Fatalf("handler calls = %d, want 1", calls)
+		}
+	})
+
+	t.Run("empty or duplicate retry header does not exempt", func(t *testing.T) {
+		for _, mutate := range []func(*http.Request){
+			func(r *http.Request) { r.Header.Set("X-Test-Retry-Num", "") },
+			func(r *http.Request) {
+				r.Header.Add("X-Test-Retry-Num", "1")
+				r.Header.Add("X-Test-Retry-Num", "2")
+			},
+		} {
+			verifier := newVerifier(t)
+			calls := 0
+			if recorder := do(verifier, nil, &calls); recorder.Code != http.StatusOK {
+				t.Fatalf("first status = %d, want 200", recorder.Code)
+			}
+			recorder := do(verifier, mutate, &calls)
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409; body=%s", recorder.Code, recorder.Body)
+			}
+		}
+	})
+
+	t.Run("retry header never bypasses signature or timestamp", func(t *testing.T) {
+		verifier := newVerifier(t)
+		retry := func(r *http.Request) { r.Header.Set("X-Test-Retry-Num", "1") }
+		badSignature := func(r *http.Request) {
+			retry(r)
+			r.Header.Set(testSignature, sign(testSecret, DefaultPrefix, timestamp, []byte("other")))
+		}
+		calls := 0
+		if recorder := do(verifier, badSignature, &calls); recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("bad signature status = %d, want 401", recorder.Code)
+		}
+		stale := func(r *http.Request) {
+			retry(r)
+			old := strconv.FormatInt(base.Add(-10*time.Minute).Unix(), 10)
+			r.Header.Set(testTimestamp, old)
+			r.Header.Set(testSignature, sign(testSecret, DefaultPrefix, old, body))
+		}
+		if recorder := do(verifier, stale, &calls); recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("stale timestamp status = %d, want 401", recorder.Code)
+		}
+		if calls != 0 {
+			t.Fatalf("handler calls = %d, want 0", calls)
+		}
+	})
+}
+
+func TestVerifierOptionsReplayExemptHeaderFormatting(t *testing.T) {
+	opts := testOptions()
+	opts.ReplayExemptHeader = "X-Test-Retry-Num"
+	out := fmt.Sprintf("%v %#v %s", opts, opts, opts.GoString())
+	if !strings.Contains(out, "X-Test-Retry-Num") {
+		t.Fatalf("formatting omitted the replay exempt header: %s", out)
+	}
+	if strings.Contains(out, testSecret) {
+		t.Fatalf("formatting leaked the secret: %s", out)
+	}
+}

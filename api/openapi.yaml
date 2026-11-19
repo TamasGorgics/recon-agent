@@ -14,6 +14,7 @@ tags:
   - name: reconcile
   - name: cases
   - name: proposals
+  - name: approvals
   - name: admin
 paths:
   /healthz:
@@ -263,6 +264,53 @@ paths:
           $ref: "#/components/responses/PayloadTooLarge"
         "415":
           $ref: "#/components/responses/UnsupportedMediaType"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/slack/interactions:
+    post:
+      tags: [approvals]
+      operationId: handleSlackInteraction
+      summary: Handle one signed Slack approval interaction
+      description: |
+        Slack signs every interaction request. The endpoint verifies the
+        v0 HMAC-SHA256 signature over the raw body with a five-minute
+        timestamp tolerance before parsing. Exact replays are rejected unless
+        the request carries X-Slack-Retry-Num, in which case only the replay
+        marker is skipped and the idempotent decision path runs again. No API
+        key is accepted or required. Unauthorized users and business conflicts
+        return 200 with a best-effort ephemeral message so Slack stops
+        retrying; 400 is reserved for malformed form or JSON input.
+      security: []
+      x-auth-kind: slack-signature
+      x-required-role: none
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [payload]
+              properties:
+                payload:
+                  type: string
+                  description: JSON block_actions payload with exactly one approval action.
+                  maxLength: 65536
+      responses:
+        "200":
+          description: Decision recorded, replayed, or a best-effort ephemeral refusal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlackInteractionAck"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/admin/switches:
@@ -1293,3 +1341,11 @@ components:
         replayed:
           type: boolean
           description: True when the same approver repeated the same decision and nothing was written.
+    SlackInteractionAck:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+          description: The signed callback was accepted. Business refusals are reported by ephemeral Slack messages, not by this body.

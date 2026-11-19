@@ -81,6 +81,14 @@ type Options struct {
 	Proposals  ProposalReader
 	Switches   SwitchService
 	Decisions  DecisionService
+
+	// SignatureAuth wraps a signature-authenticated route. It must verify the
+	// raw body before the handler parses it. Required when the route table has
+	// an AuthSignature route.
+	SignatureAuth func(http.Handler) http.Handler
+	// SlackInteractions is the POST /v1/slack/interactions handler. Required
+	// when the route table has an AuthSignature route.
+	SlackInteractions http.Handler
 }
 
 // API owns the router and its dependencies. It is immutable after New.
@@ -98,6 +106,9 @@ type API struct {
 	proposals ProposalReader
 	switches  SwitchService
 	decisions DecisionService
+
+	signatureAuth     func(http.Handler) http.Handler
+	slackInteractions http.Handler
 
 	handler http.Handler
 }
@@ -172,9 +183,46 @@ func New(opts Options) (*API, error) {
 		proposals: opts.Proposals,
 		switches:  opts.Switches,
 		decisions: opts.Decisions,
+
+		signatureAuth:     opts.SignatureAuth,
+		slackInteractions: opts.SlackInteractions,
+	}
+	if err := a.validateRouteAuth(); err != nil {
+		return nil, err
 	}
 	a.handler = a.buildRouter()
 	return a, nil
+}
+
+// validateRouteAuth enforces the registry invariants and the middleware
+// prerequisites of AuthSignature routes. It runs before the router is built, so
+// a signature route can never silently fall through to the public branch.
+func (a *API) validateRouteAuth() error {
+	for _, route := range a.routeTable() {
+		switch route.Auth {
+		case AuthPublic:
+			if route.Role != "" {
+				return fmt.Errorf("api: public route %s %s must not have a role", route.Method, route.Pattern)
+			}
+		case AuthAPIKey:
+			if route.Role == "" {
+				return fmt.Errorf("api: API-key route %s %s must have a role", route.Method, route.Pattern)
+			}
+		case AuthSignature:
+			if route.Role != "" {
+				return fmt.Errorf("api: signature route %s %s must not have a role", route.Method, route.Pattern)
+			}
+			if a.signatureAuth == nil {
+				return fmt.Errorf("api: signature route %s %s requires signature middleware", route.Method, route.Pattern)
+			}
+			if a.slackInteractions == nil {
+				return fmt.Errorf("api: signature route %s %s requires an interaction handler", route.Method, route.Pattern)
+			}
+		default:
+			return fmt.Errorf("api: route %s %s has an unknown auth kind", route.Method, route.Pattern)
+		}
+	}
+	return nil
 }
 
 // Handler returns the fully wrapped router.
@@ -201,10 +249,27 @@ func (a *API) buildRouter() http.Handler {
 
 	for _, route := range a.routeTable() {
 		var handler http.Handler = route.Handler
-		if route.Role != "" {
+		switch route.Auth {
+		case AuthPublic:
+		case AuthAPIKey:
 			handler = a.authenticate(route.Role, handler)
+		case AuthSignature:
+			handler = a.signatureAuth(handler)
+		default:
+			// New validates every row before buildRouter, so this branch is
+			// unreachable; fail closed if the registry changes.
+			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				a.writeError(w, r, http.StatusUnauthorized, codeUnauthenticated, messageUnauthenticated)
+			})
 		}
 		router.Method(route.Method, route.Pattern, handler)
 	}
 	return router
+}
+
+// handleSlackInteraction delegates to the configured Slack interaction
+// handler. The signature middleware has already verified and restored the raw
+// form body before this function runs.
+func (a *API) handleSlackInteraction(w http.ResponseWriter, r *http.Request) {
+	a.slackInteractions.ServeHTTP(w, r)
 }

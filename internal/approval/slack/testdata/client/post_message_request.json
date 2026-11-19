@@ -1,0 +1,14 @@
+{
+  "channel": "C0123456789",
+  "text": "Approval required: case aaaaaaaa — write_off 1234.56 USD (T1)",
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Case* aaaaaaaa"
+      }
+    }
+  ],
+  "client_msg_id": "11111111-2222-3333-4444-555555555555"
+}

@@ -118,6 +118,7 @@ func TestValidateAPIRuntimeIncludesCases(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	cfg.API.Keys = []APIKey{{ID: "test", Role: RoleAdmin}}
+	cfg.Slack = SlackConfig{BotToken: "test-bot-token", SigningSecret: "test-signing-secret"}
 	cfg.Cases.MissingSettlementSLABusinessDays = 0
 	if err := cfg.ValidateAPIRuntime(); err == nil {
 		t.Fatal("ValidateAPIRuntime accepted an out-of-range SLA")

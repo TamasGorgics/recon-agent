@@ -392,21 +392,22 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		t.Fatalf("configure goose: %v", err)
 	}
 
-	// Down 0: the M4-13 actor-id format (20261119120000), so the M4-11/M4-06/
-	// M4-05 Down assertions below start from the versions they were written for.
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	// Down 0: unwind every migration newer than M4-11 (M4-13, M4-12, and
+	// later), so the M4-11/M4-06/M4-05 Down assertions below start from the
+	// versions they were written for.
+	if err := goose.DownToContext(ctx, sqlDB, ".", m411MigrationVersion); err != nil {
 		_ = sqlDB.Close()
-		t.Fatalf("apply M4-13 actor-id format Down: %v", err)
+		t.Fatalf("apply newer-than-M4-11 Downs: %v", err)
 	}
 	var version int64
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		_ = sqlDB.Close()
-		t.Fatalf("read version after M4-13 Down: %v", err)
+		t.Fatalf("read version after newer-than-M4-11 Downs: %v", err)
 	}
 	if version != m411MigrationVersion {
 		_ = sqlDB.Close()
-		t.Fatalf("version after M4-13 Down = %d, want %d", version, m411MigrationVersion)
+		t.Fatalf("version after newer-than-M4-11 Downs = %d, want %d", version, m411MigrationVersion)
 	}
 
 	// Down 1: the M4-11 approval migration (20261117120000).

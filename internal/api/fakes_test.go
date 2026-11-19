@@ -165,20 +165,7 @@ type harness struct {
 func newHarness(t *testing.T, mutate func(*Options)) *harness {
 	t.Helper()
 	logs := &bytes.Buffer{}
-	opts := Options{
-		Config:     config.DefaultAPIConfig(),
-		Keys:       testKeys(),
-		Logger:     telemetry.NewLogger(logs, slog.LevelDebug),
-		Clock:      clock.NewFake(testClockTime),
-		Ingest:     &fakeIngest{},
-		Matcher:    &fakeMatcher{},
-		Cases:      &fakeCases{},
-		CaseReader: &fakeCaseReader{page: CaseListPage{Items: []CaseSummary{}}},
-		CaseFile:   &fakeCaseFile{},
-		Proposals:  &fakeProposalReader{page: ProposalListPage{Items: []ProposalSummary{}}},
-		Switches:   &fakeSwitches{},
-		Decisions:  &fakeDecisions{},
-	}
+	opts := defaultTestOptions(logs)
 	if mutate != nil {
 		mutate(&opts)
 	}
@@ -196,6 +183,46 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 	h.switches, _ = opts.Switches.(*fakeSwitches)
 	h.decisions, _ = opts.Decisions.(*fakeDecisions)
 	return h
+}
+
+// defaultTestOptions is the complete API wiring used by the unit harness and
+// by tests that assert New's construction errors.
+func defaultTestOptions(logs *bytes.Buffer) Options {
+	return Options{
+		Config:     config.DefaultAPIConfig(),
+		Keys:       testKeys(),
+		Logger:     telemetry.NewLogger(logs, slog.LevelDebug),
+		Clock:      clock.NewFake(testClockTime),
+		Ingest:     &fakeIngest{},
+		Matcher:    &fakeMatcher{},
+		Cases:      &fakeCases{},
+		CaseReader: &fakeCaseReader{page: CaseListPage{Items: []CaseSummary{}}},
+		CaseFile:   &fakeCaseFile{},
+		Proposals:  &fakeProposalReader{page: ProposalListPage{Items: []ProposalSummary{}}},
+		Switches:   &fakeSwitches{},
+		Decisions:  &fakeDecisions{},
+		// The signature route is wired with a deterministic test stub: only
+		// the explicit header reaches the handler, so route-auth tests can
+		// prove an API key or no credentials never authenticate it.
+		SignatureAuth: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Test-Signature") != "signed" {
+					writeJSON(w, http.StatusUnauthorized, errorEnvelope{
+						Error: struct {
+							Code    string `json:"code"`
+							Message string `json:"message"`
+						}{Code: codeUnauthenticated, Message: messageUnauthenticated},
+						RequestID: w.Header().Get("X-Request-ID"),
+					})
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+		},
+		SlackInteractions: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		}),
+	}
 }
 
 func (h *harness) request(method, target, body, contentType, bearer string, mutate func(*http.Request)) *http.Response {

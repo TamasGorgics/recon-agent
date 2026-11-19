@@ -135,8 +135,10 @@ func TestM413ActorIDFormatMigrationUpDownUp(t *testing.T) {
 
 	var wantActors []string
 	for cycle := 0; cycle < 2; cycle++ {
-		if err := goose.DownContext(ctx, gooseDB, "."); err != nil {
-			t.Fatalf("cycle %d: apply M4-13 Down: %v", cycle, err)
+		// Newer migrations (M4-12 and later) sit above M4-13; unwind down to
+		// M4-13's predecessor so this test still exercises the M4-13 Down.
+		if err := goose.DownToContext(ctx, gooseDB, ".", m413PreviousVersion); err != nil {
+			t.Fatalf("cycle %d: apply migrations after M4-13 Down: %v", cycle, err)
 		}
 		m413RequireConstraintAbsent(t, d, m413ConstraintName)
 		m413RequireConstraint(t, d, "audit_log_actor_type_check", m413ActorTypeCheckDef)
@@ -153,7 +155,7 @@ func TestM413ActorIDFormatMigrationUpDownUp(t *testing.T) {
 			t.Fatalf("cycle %d: rows before Up = %d %v, want %d %v", cycle, count, actors, len(wantActors), wantActors)
 		}
 
-		if err := goose.UpContext(ctx, gooseDB, "."); err != nil {
+		if err := goose.UpToContext(ctx, gooseDB, ".", m413MigrationVersion); err != nil {
 			t.Fatalf("cycle %d: apply M4-13 Up: %v", cycle, err)
 		}
 		m413RequireConstraint(t, d, m413ConstraintName, m413ConstraintDef)
@@ -185,8 +187,8 @@ func TestM413ActorIDFormatMigrationRejectsInvalidExistingRows(t *testing.T) {
 	d := testdb.New(t)
 	gooseDB := m413OpenGoose(t, d)
 
-	if err := goose.DownContext(ctx, gooseDB, "."); err != nil {
-		t.Fatalf("apply M4-13 Down before seeding invalid rows: %v", err)
+	if err := goose.DownToContext(ctx, gooseDB, ".", m413PreviousVersion); err != nil {
+		t.Fatalf("apply migrations after M4-13 Down before seeding invalid rows: %v", err)
 	}
 
 	const (
@@ -199,7 +201,7 @@ func TestM413ActorIDFormatMigrationRejectsInvalidExistingRows(t *testing.T) {
 		}
 	}
 
-	err := goose.UpContext(ctx, gooseDB, ".")
+	err := goose.UpToContext(ctx, gooseDB, ".", m413MigrationVersion)
 	if err == nil {
 		t.Fatal("M4-13 Up succeeded with invalid pre-existing actor rows, want fail-closed error")
 	}
