@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/TamasGorgics/recon-agent/internal/match"
+	"github.com/TamasGorgics/recon-agent/internal/traceability"
 )
 
 // CaseSummary is one row of GET /v1/cases.
@@ -25,13 +26,25 @@ type CaseList struct {
 	NextCursor string        `json:"next_cursor"`
 }
 
-// CaseFile is the v1 case document.
+// CaseFile is the v2 case document. The trace section is the traceability
+// reader's case snapshot: one chain per applied proposal, including
+// applications with no ledger transaction.
 type CaseFile struct {
 	SchemaVersion int              `json:"schema_version"`
 	Case          CaseFileCase     `json:"case"`
 	Breaks        []Break          `json:"breaks"`
 	Proposals     []ProposalDetail `json:"proposals"`
 	AgentRuns     []AgentRun       `json:"agent_runs"`
+	Trace         CaseFileTrace    `json:"trace"`
+}
+
+// CaseFileTrace is the v2 top-level trace section. Case is the case link the
+// reader resolved; it is the same shape as each chain's case link and does not
+// repeat the document's break_ids list. Chains and Missing are never null.
+type CaseFileTrace struct {
+	Case    traceability.Case    `json:"case"`
+	Chains  []traceability.Chain `json:"chains"`
+	Missing []string             `json:"missing"`
 }
 
 // CaseFileCase is the case section of the case file.

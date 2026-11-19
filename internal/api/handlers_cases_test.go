@@ -1,3 +1,5 @@
+// covers: FIN-30, FIN-31, FIN-32, FIN-33, FIN-34
+
 package api
 
 import (
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	"github.com/TamasGorgics/recon-agent/internal/traceability"
 )
 
 func TestListCasesDefaultsAndFilters(t *testing.T) {
@@ -91,6 +94,9 @@ func TestCaseFileShapeAndNormalization(t *testing.T) {
 	h := newHarness(t, nil)
 	h.caseFile.document = CaseFile{
 		Case: CaseFileCase{ID: testCaseID, BreakIDs: nil},
+		Trace: CaseFileTrace{
+			Case: traceability.Case{ID: testCaseID},
+		},
 	}
 	response := h.expectStatus(http.MethodGet, "/v1/cases/"+testCaseID, "", "", testViewerKey, http.StatusOK)
 	defer func() { _ = response.Body.Close() }()
@@ -98,16 +104,146 @@ func TestCaseFileShapeAndNormalization(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if document.SchemaVersion != 1 {
-		t.Fatalf("schema_version = %d, want 1", document.SchemaVersion)
+	if document.SchemaVersion != 2 {
+		t.Fatalf("schema_version = %d, want 2", document.SchemaVersion)
 	}
 	if document.Breaks == nil || document.Proposals == nil || document.AgentRuns == nil || document.Case.BreakIDs == nil {
 		t.Fatalf("empty sections must be [] not null: %+v", document)
+	}
+	if document.Trace.Chains == nil || document.Trace.Missing == nil {
+		t.Fatalf("trace sections must be [] not null: %+v", document.Trace)
+	}
+	if document.Trace.Case.ID != testCaseID {
+		t.Fatalf("trace case id = %q, want %q", document.Trace.Case.ID, testCaseID)
 	}
 	if h.caseFile.got != testCaseID {
 		t.Fatalf("case id = %q", h.caseFile.got)
 	}
 }
+
+// TestCaseFileV2TraceShape pins the v2 trace JSON: the trace has exactly the
+// case/chains/missing keys, and each chain carries every link plus the missing
+// markers. An unlinked application keeps ledger_txn_id null.
+//
+// covers: FIN-32
+func TestCaseFileV2TraceShape(t *testing.T) {
+	configYAML := "schema_version: 1\nthresholds:\n  single_approval_minor: 0\n"
+	appliedAt := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	decidedAt := appliedAt.Add(5 * time.Minute)
+	tier := "T1"
+	rule := "default_single_approval"
+	h := newHarness(t, nil)
+	h.caseFile.document = CaseFile{
+		Case:      CaseFileCase{ID: testCaseID, BreakIDs: []string{}},
+		Breaks:    []Break{},
+		Proposals: []ProposalDetail{},
+		AgentRuns: []AgentRun{},
+		Trace: CaseFileTrace{
+			Case: traceability.Case{ID: testCaseID, Status: "resolved"},
+			Chains: []traceability.Chain{{
+				LedgerTxnID: nil,
+				AppliedProposal: &traceability.AppliedProposal{
+					ProposalID:    testDecisionProposalID,
+					AppliedAt:     appliedAt,
+					ExecutorRunID: "executor-run-1",
+				},
+				Proposal: &traceability.Proposal{
+					ID: testDecisionProposalID, CaseID: testCaseID, Type: "adjustment",
+					Status: "applied", CreatedAt: appliedAt,
+				},
+				Case:         &traceability.Case{ID: testCaseID},
+				Breaks:       []traceability.Break{},
+				AgentRun:     &traceability.AgentRun{ID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", TraceID: ptrString("trace-1")},
+				Verification: json.RawMessage(`{"passed":true}`),
+				Policy: &traceability.Policy{
+					RiskTier: &tier, Rule: rule, Reasons: []string{rule},
+					ConfigHash: "hash", ConfigYAML: &configYAML,
+				},
+				Approvals: []traceability.Approval{{
+					Decision: "approved", DecidedAt: decidedAt,
+					Approver: traceability.Approver{DisplayName: "Alice Approver", Role: "approver"},
+				}},
+				Executor:      traceability.Executor{Audit: &traceability.ExecutorAudit{Seq: 7}},
+				LedgerEntries: []traceability.LedgerEntry{},
+				Missing:       []string{traceability.MissingLedgerTxn},
+			}},
+			Missing: []string{traceability.MissingLedgerTxn},
+		},
+	}
+	response := h.expectStatus(http.MethodGet, "/v1/cases/"+testCaseID, "", "", testViewerKey, http.StatusOK)
+	defer func() { _ = response.Body.Close() }()
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if _, ok := raw["trace"]; !ok {
+		t.Fatal("response is missing trace")
+	}
+	var traceRaw map[string]json.RawMessage
+	if err := json.Unmarshal(raw["trace"], &traceRaw); err != nil {
+		t.Fatalf("decode trace: %v", err)
+	}
+	for _, key := range []string{"case", "chains", "missing"} {
+		if _, ok := traceRaw[key]; !ok {
+			t.Fatalf("trace is missing %q", key)
+		}
+	}
+	if len(traceRaw) != 3 {
+		t.Fatalf("trace keys = %v, want exactly case/chains/missing", keysOf(traceRaw))
+	}
+	var chains []map[string]json.RawMessage
+	if err := json.Unmarshal(traceRaw["chains"], &chains); err != nil {
+		t.Fatalf("decode chains: %v", err)
+	}
+	if len(chains) != 1 {
+		t.Fatalf("chains = %d, want 1", len(chains))
+	}
+	wantChainKeys := []string{
+		"ledger_txn_id", "applied_proposal", "proposal", "case", "breaks",
+		"agent_run", "verification", "policy", "approvals", "executor",
+		"ledger_txn", "ledger_entries", "missing",
+	}
+	for _, key := range wantChainKeys {
+		if _, ok := chains[0][key]; !ok {
+			t.Fatalf("chain is missing %q", key)
+		}
+	}
+	if len(chains[0]) != len(wantChainKeys) {
+		t.Fatalf("chain keys = %v, want %v", keysOf(chains[0]), wantChainKeys)
+	}
+	if string(chains[0]["ledger_txn_id"]) != "null" {
+		t.Fatalf("ledger_txn_id = %s, want null", chains[0]["ledger_txn_id"])
+	}
+	if string(chains[0]["ledger_txn"]) != "null" {
+		t.Fatalf("ledger_txn = %s, want null", chains[0]["ledger_txn"])
+	}
+	var missing []string
+	if err := json.Unmarshal(chains[0]["missing"], &missing); err != nil {
+		t.Fatalf("decode chain missing: %v", err)
+	}
+	if len(missing) != 1 || missing[0] != traceability.MissingLedgerTxn {
+		t.Fatalf("chain missing = %v", missing)
+	}
+	var policyRaw map[string]json.RawMessage
+	if err := json.Unmarshal(chains[0]["policy"], &policyRaw); err != nil {
+		t.Fatalf("decode policy: %v", err)
+	}
+	for _, key := range []string{"risk_tier", "rule", "reasons", "config_hash", "config_yaml", "config_loaded_at"} {
+		if _, ok := policyRaw[key]; !ok {
+			t.Fatalf("policy is missing %q", key)
+		}
+	}
+}
+
+func keysOf[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func ptrString(value string) *string { return &value }
 
 func TestCaseFileRequestBody(t *testing.T) {
 	h := newHarness(t, nil)
@@ -117,7 +253,7 @@ func TestCaseFileRequestBody(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&raw); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	for _, key := range []string{"schema_version", "case", "breaks", "proposals", "agent_runs"} {
+	for _, key := range []string{"schema_version", "case", "breaks", "proposals", "agent_runs", "trace"} {
 		if _, ok := raw[key]; !ok {
 			t.Fatalf("response missing %q", key)
 		}

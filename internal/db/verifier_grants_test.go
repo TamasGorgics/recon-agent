@@ -392,13 +392,28 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		t.Fatalf("configure goose: %v", err)
 	}
 
-	// Down 0: the M4-11 approval migration (20261117120000), so the M4-06/M4-05
-	// Down assertions below start from the version they were written for.
+	// Down 0: the M4-13 actor-id format (20261119120000), so the M4-11/M4-06/
+	// M4-05 Down assertions below start from the versions they were written for.
+	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("apply M4-13 actor-id format Down: %v", err)
+	}
+	var version int64
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("read version after M4-13 Down: %v", err)
+	}
+	if version != m411MigrationVersion {
+		_ = sqlDB.Close()
+		t.Fatalf("version after M4-13 Down = %d, want %d", version, m411MigrationVersion)
+	}
+
+	// Down 1: the M4-11 approval migration (20261117120000).
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-11 approval Down: %v", err)
 	}
-	var version int64
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("read version after M4-11 Down: %v", err)
@@ -412,7 +427,7 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		}
 	}
 
-	// Down 1: the M4-06 executor read grant (20261114120000). It must not
+	// Down 2: the M4-06 executor read grant (20261114120000). It must not
 	// touch the M4-05 app grant or the agent role.
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
@@ -437,7 +452,7 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		}
 	}
 
-	// Down 2: the M4-05 read grant (20261113091000) only.
+	// Down 3: the M4-05 read grant (20261113091000) only.
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-05 read-grant Down: %v", err)
@@ -466,7 +481,7 @@ func TestM405VerifierGrantDownReversesOnlyOwnGrants(t *testing.T) {
 		}
 	}
 
-	// Down 3: the M4-05 column grant (20261113090000) only.
+	// Down 4: the M4-05 column grant (20261113090000) only.
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-05 column-grant Down: %v", err)

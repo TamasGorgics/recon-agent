@@ -22,6 +22,9 @@ Commands:
   agent run        run the M2 agent on one case and print the transcript
                    usage: recon agent run --case <uuid> --llm scripted|opencode
                           --prompt v1 [--model <id>] [--cassette-dir <dir>] [--json]
+  audit verify     verify the audit hash chain without writing
+                   usage: recon audit verify [--from <seq>] [--json]
+                   exit: 0 intact, 1 findings, 2 usage/config/query error
   demo seed        generate, ingest, match and tie out a deterministic dataset
                    usage: recon demo seed [--seed N] [--days N]
                           [--difficulty easy|realistic|adversarial] [--reset]
@@ -38,6 +41,9 @@ Commands:
   tieout           independent balance tie-out for a scope and statement date
                    usage: recon tieout --scope <uuid> --date YYYY-MM-DD [--json]
                    exit: 0 tied, 2 unexplained difference, 1 error
+  trace            walk one ledger transaction's FIN-32 decision chain
+                   usage: recon trace --txn <ledger-txn-uuid> [--json]
+                   exit: 0 found (even if partial), 1 not found, 2 usage/config/query
 
 Environment:
   CONFIG_FILE        optional YAML config path (defaults < YAML < environment)
@@ -69,6 +75,8 @@ func runTo(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	case "agent":
 		return runAgent(ctx, args[1:])
+	case "audit":
+		return runAudit(ctx, args[1:])
 	case "match":
 		return runMatch(ctx, args[1:])
 	case "migrate":
@@ -79,6 +87,8 @@ func runTo(ctx context.Context, args []string, out io.Writer) error {
 		return runSynth(ctx, args[1:])
 	case "tieout":
 		return runTieout(ctx, args[1:])
+	case "trace":
+		return runTrace(ctx, args[1:])
 	case "demo":
 		return runDemo(ctx, args[1:])
 	default:
