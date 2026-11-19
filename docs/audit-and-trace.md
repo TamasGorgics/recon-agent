@@ -7,11 +7,14 @@ for a ledger transaction or a case, and the narrow audit-sequence retry.
 requirements. Decisions and accepted boundaries are recorded in
 `docs/open-questions.md` Q-96; `docs/spec.md` itself is unchanged.
 
-Neither CLI command writes: both open one `REPEATABLE READ`, `READ ONLY`
-transaction and only roll it back. Both need only `database.app_url`
+Neither CLI command writes to the database: both open one `REPEATABLE READ`,
+`READ ONLY` transaction and only roll it back. Both need only `database.app_url`
 (`DATABASE_APP_URL` or the `database.app_url` config key), not the migration
 `database.url`, `policy.file`, or unrelated runtime settings. The DSN must be
-the `recon_app` role login; a superuser or foreign-role DSN is rejected.
+the application-role DSN: a non-superuser session that is a member of
+`recon_app` (`db.OpenRole(RoleApp, ...)`). A superuser session or one outside
+the role is rejected when the pool is opened, with exit `2`, before the
+verification or trace queries run.
 
 ## `recon audit verify`
 
@@ -19,7 +22,8 @@ the `recon_app` role login; a superuser or foreign-role DSN is rejected.
 recon audit verify [--from <seq>] [--json]
 ```
 
-Recomputes the hash chain and the head mirror from `audit_log` and
+Recomputes each audit row's hash from its current column values and compares
+the resulting chain with the stored rows and the head mirror in `audit_log` and
 `audit_chain_head`. Verification is not reimplemented in the CLI; it calls
 `audit.Verify` inside the read-only snapshot.
 
@@ -34,6 +38,8 @@ Flags:
 - `--from <seq>` defaults to `1`; numeric values below `1` clamp to `1`.
   `--from head+1` is a valid empty incremental check (`checked: 0`, exit 0);
   `--from head+2` is beyond the tail (exit 2). A non-integer is a usage error.
+- `--help` prints the audit usage and exits `0`; unknown flags or extra
+  arguments are usage errors (exit `2`, no stdout).
 - `--json` prints exactly one object:
 
 ```json
@@ -53,16 +59,44 @@ audit verify: FINDINGS from=1 head=4 checked=4 findings=3
   seq=2 kind=hash_mismatch detail=...
 ```
 
-Finding kinds: `hash_mismatch` (stored payload hash differs),
-`broken_link` (a row's `prev_hash` does not match its predecessor's hash),
-`gap` (a seq is missing), `truncated_tail` (the head mirror points past the
-last row), and `head_mismatch` (the mirror does not match the last row).
-Query errors override findings: the command exits `2` and writes no partial
-JSON.
+Finding kinds: `hash_mismatch` (a row's stored `row_hash` is not the hash of
+its current column values), `broken_link` (a row's `prev_hash` does not match
+its predecessor's hash), `gap` (a seq is missing, including a deleted prefix or
+a missing start), `truncated_tail` (the head mirror points past the last row),
+and `head_mismatch` (the mirror is behind the rows, or its hash does not match
+the row it mirrors). Query errors override findings: the command exits `2` and
+writes no partial JSON.
 
 A superuser tamper test must disable the `audit_log` triggers, which requires
 superuser; the committed coverage does this only in disposable `testdb`
 clones, restores every trigger, and asserts `tgenabled = 'O'`.
+
+### Threat model and limits
+
+The verifier detects tampering **relative to the stored head mirror**: mutated
+or forged rows, deleted rows or prefixes (`gap`, `broken_link`), a deleted tail
+while `audit_chain_head` still points past the last row (`truncated_tail`), and
+a mirror that is behind the rows or disagrees with the row it mirrors
+(`head_mismatch`). Every one of those cases exits `1` with a finding.
+
+The chain is **unanchored**, so `recon audit verify` does **not** detect a
+privileged attacker who can rewrite `audit_log` and `audit_chain_head`
+together. The only head witness is a mutable table in the same database, and
+`audit.Append` writes the mirror in the same transaction as the row. A
+superuser, or any role that can disable triggers and write storage, can:
+
+- delete every row and the mirror, then append a fresh, internally consistent
+  chain with recomputed `prev_hash`/`row_hash` values and a matching mirror; or
+- delete a tail together with the mirror (or move the mirror back), leaving a
+  shorter but internally consistent chain.
+
+Both states verify with exit `0` and `findings: []`. The trigger-disabled
+tamper tests above prove the row-level cases; they do not turn the chain into an
+anchor against the superuser who runs them. An external anchor - a published
+head hash/sequence, WORM/immutable storage, or signed off-box checkpoints - is
+future hardening and is **out of M4-13 scope** (`docs/open-questions.md`
+Q-96(10)). Operators must not read exit `0` as proof that a privileged attacker
+did not rewrite the chain.
 
 ## `actor_id` format
 
@@ -83,9 +117,12 @@ CHECK (actor_id ~ '^[^[:space:][:cntrl:]:]{1,128}$')
 The migration `20261119120000_m4_13_actor_id_format.sql` first counts invalid
 or NULL existing `actor_id` values and aborts with the count only (never the
 IDs). It never rewrites, trims, or normalizes rows, so existing hashes and the
-chain stay valid. Go parity is deliberately ASCII-only: PostgreSQL's POSIX
-classes also reject some Unicode spaces/controls, and that locale-dependent
-difference is accepted with the database as the stronger rule.
+chain stay valid. An empty `actor_id` can be reported by the older
+`audit_log_actor_id_check` (`actor_id <> ''`) rather than
+`audit_log_actor_id_format`, because PostgreSQL may evaluate the older check
+first; the insert is rejected either way. Go parity is deliberately ASCII-only:
+PostgreSQL's POSIX classes also reject some Unicode spaces/controls, and that
+locale-dependent difference is accepted with the database as the stronger rule.
 
 ## Trace surfaces
 
@@ -125,7 +162,9 @@ it does in `recon trace`.
 
 This is a breaking version bump for consumers: v1 documents are no longer
 returned. The trace exposes `policy.config_yaml` (threshold and rule
-configuration from `policy_config_versions`) to viewers; it is not secrets.
+configuration from `policy_config_versions`) to viewers; it is not secrets, and
+any future secret material must be redacted before it reaches this column
+(Q-96(2)).
 `trace.case` intentionally omits `break_ids`, which remains on the top-level
 `case`.
 
@@ -135,6 +174,15 @@ Missing-link markers, in emission order, are: `applied_proposal`,
 `ledger_txn`, `ledger_entries`. Markers are deduplicated and ordered by this
 list, never lexicographically. A T0 decision needs no approvals; a T1/T2
 decision without approvals gets the `approvals` marker.
+
+One edge is not produced by normal writes: a JSONB `null` in
+`proposals.policy_decision` (as opposed to SQL `NULL`) decodes to a zero policy
+object, so the `policy` marker is suppressed, `policy_config` is emitted
+instead, and the empty decision tier also suppresses the `approvals` marker for
+what should have been a T1/T2 decision. The policy store always persists a
+validated decision object, so reaching this state requires a direct SQL writer;
+SQL `NULL` is handled correctly (`policy` marker). This is an accepted
+limitation recorded in Q-96(11), not a supported decision shape.
 
 ## Narrow audit-sequence retry
 
