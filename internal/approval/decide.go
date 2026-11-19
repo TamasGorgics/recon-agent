@@ -101,6 +101,12 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 				}); err != nil {
 					return fmt.Errorf("approval: expire proposal %s: %w", proposalID, err)
 				}
+				// M4-10 owns the case lifecycle. The expiry already committed to
+				// this transaction; a hook error rolls it (and the decision) back.
+				if err := s.notifyProposalClosed(ctx, tx, proposalID,
+					string(state.StatusExpired), ReasonExpired); err != nil {
+					return err
+				}
 				at := proposal.ExpiresAt.UTC()
 				expiredAt = &at
 				return nil
@@ -165,6 +171,16 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 			})
 			if err != nil {
 				return fmt.Errorf("approval: transition proposal %s: %w", proposalID, err)
+			}
+
+			// M4-10 owns the case lifecycle. A rejected decision advances the
+			// case (retry or escalation) in this same transaction; a hook error
+			// rolls back the approval row, proposal transition, and audits.
+			if target == state.StatusRejected {
+				if err := s.notifyProposalClosed(ctx, tx, proposalID,
+					string(state.StatusRejected), reason); err != nil {
+					return err
+				}
 			}
 
 			if _, err := audit.Append(ctx, tx, audit.Entry{
@@ -233,6 +249,20 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 			ErrExpired, proposalID, expiredAt.Format(time.RFC3339))
 	}
 	return result, nil
+}
+
+// notifyProposalClosed invokes the optional M4-10 lifecycle hook inside the
+// caller's decision transaction. A nil hook is a no-op, so M4-11 remains
+// usable without the lifecycle service.
+func (s *Service) notifyProposalClosed(ctx context.Context, tx pgx.Tx,
+	proposalID, status, reason string) error {
+	if s.onClosed == nil {
+		return nil
+	}
+	if err := s.onClosed(ctx, tx, proposalID, status, reason); err != nil {
+		return fmt.Errorf("approval: proposal-closed hook for %s: %w", proposalID, err)
+	}
+	return nil
 }
 
 // DecideByAPIKey maps a configured API key id to the approvers row and then

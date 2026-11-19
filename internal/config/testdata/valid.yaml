@@ -10,3 +10,5 @@ llm:
   fallback_models: []
   timeout: 90s
   max_attempts: 3
+cases:
+  missing_settlement_sla_business_days: 5

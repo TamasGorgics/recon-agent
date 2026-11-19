@@ -172,6 +172,12 @@ func (s *Service) CreateBreaks(ctx context.Context, req CreateBreaksRequest) (Cr
 			}
 			createdCases = append(createdCases, c)
 		}
+		// Waiting-info re-entry runs in this attach transaction: the hook sees
+		// every case whose break this pass observed. An error rolls back the
+		// breaks and cases created above.
+		if err := s.touchCasesTx(ctx, tx, persisted); err != nil {
+			return err
+		}
 		result.Cases = createdCases
 		return nil
 	})

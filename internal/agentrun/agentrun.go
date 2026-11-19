@@ -232,7 +232,9 @@ func Run(ctx context.Context, opts Options, deps Deps) (Report, error) {
 
 	caseService := deps.Cases
 	if caseService == nil {
-		actor, actorErr := audit.AgentActor(model)
+		// The command helper leases and finalizes the case as the agent-loop
+		// component; the case authority rejects agent:* actors.
+		actor, actorErr := audit.SystemActor("agent-loop")
 		if actorErr != nil {
 			return Report{}, fmt.Errorf("%w: %v", agent.ErrInvalidConfig, actorErr)
 		}

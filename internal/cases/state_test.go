@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	casestate "github.com/TamasGorgics/recon-agent/internal/cases/state"
 )
 
 // TestTransitionOptimisticConcurrency covers FIN-24's stale-writer rule: a
@@ -32,7 +34,7 @@ func TestTransitionOptimisticConcurrency(t *testing.T) {
 		CaseID:           leased.ID,
 		ExpectedVersion:  leased.Version,
 		Status:           cases.StatusEscalated,
-		EscalationReason: "manager_review",
+		EscalationReason: "manual",
 	})
 	if err != nil {
 		t.Fatalf("Transition: %v", err)
@@ -46,10 +48,10 @@ func TestTransitionOptimisticConcurrency(t *testing.T) {
 	if escalated.LeasedBy != nil || escalated.LeaseExpiresAt != nil {
 		t.Fatalf("transitioned case still leased: %+v", escalated)
 	}
-	if escalated.EscalationReason == nil || *escalated.EscalationReason != "manager_review" {
-		t.Fatalf("escalation_reason = %v, want manager_review", escalated.EscalationReason)
+	if escalated.EscalationReason == nil || *escalated.EscalationReason != "manual" {
+		t.Fatalf("escalation_reason = %v, want manual", escalated.EscalationReason)
 	}
-	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseTransition), 1; got != want {
+	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseTransition), 2; got != want {
 		t.Fatalf("transition audit rows = %d, want %d", got, want)
 	}
 
@@ -90,6 +92,62 @@ func TestTransitionOptimisticConcurrency(t *testing.T) {
 	}
 	if resolved.ResolutionType == nil || *resolved.ResolutionType != "adjustment" {
 		t.Fatalf("resolution_type = %v, want adjustment", resolved.ResolutionType)
+	}
+	if got, want := f.auditCount(t, seeded.ID, cases.ActionCaseTransition), 3; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
+	}
+}
+
+// TestTransitionRejectsIllegalEdge proves the wrapper delegates the edge table:
+// open -> proposal_pending was accepted by the old permissive writer and must
+// now be ErrIllegalTransition with no version bump and no audit row.
+func TestTransitionRejectsIllegalEdge(t *testing.T) {
+	f := newFixture(t)
+	seeded := seedOneCase(t, f, "transition-illegal-edge", 100)
+
+	_, err := f.service.Transition(context.Background(), cases.TransitionRequest{
+		CaseID:          seeded.ID,
+		ExpectedVersion: seeded.Version,
+		Status:          cases.StatusProposalPending,
+	})
+	if !errors.Is(err, casestate.ErrIllegalTransition) {
+		t.Fatalf("illegal edge error = %v, want ErrIllegalTransition", err)
+	}
+	after := f.getCase(t, seeded.ID)
+	if after.Status != cases.StatusOpen || after.Version != seeded.Version {
+		t.Fatalf("illegal edge changed case: %s/version %d", after.Status, after.Version)
+	}
+	if got := f.auditCount(t, seeded.ID, cases.ActionCaseTransition); got != 0 {
+		t.Fatalf("illegal edge wrote %d transition audit rows, want 0", got)
+	}
+}
+
+// TestTransitionUsesServiceActor proves the wrapper forwards the service actor
+// to the authority. Agent actors are always rejected by the authority; the
+// production loop/worker services use human:/system: actors instead.
+func TestTransitionUsesServiceActor(t *testing.T) {
+	f := newFixture(t)
+	seeded := seedOneCase(t, f, "transition-agent-actor", 100)
+	actor, err := audit.AgentActor("model-x")
+	if err != nil {
+		t.Fatalf("agent actor: %v", err)
+	}
+	agentSvc, err := cases.NewService(f.pool, f.clock, actor)
+	if err != nil {
+		t.Fatalf("new agent case service: %v", err)
+	}
+	if _, err := agentSvc.Transition(context.Background(), cases.TransitionRequest{
+		CaseID:          seeded.ID,
+		ExpectedVersion: seeded.Version,
+		Status:          cases.StatusInAgent,
+	}); !errors.Is(err, casestate.ErrActorNotAllowed) {
+		t.Fatalf("agent actor transition error = %v, want ErrActorNotAllowed", err)
+	}
+	if got := f.getCase(t, seeded.ID); got.Status != cases.StatusOpen || got.Version != seeded.Version {
+		t.Fatalf("agent transition changed case: %s/version %d", got.Status, got.Version)
+	}
+	if got := f.auditCount(t, seeded.ID, cases.ActionCaseTransition); got != 0 {
+		t.Fatalf("agent transition wrote %d transition audit rows, want 0", got)
 	}
 }
 

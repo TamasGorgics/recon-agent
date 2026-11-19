@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	casestate "github.com/TamasGorgics/recon-agent/internal/cases/state"
 )
 
 // TestRecordFailedAttemptIncrementsAndReleases proves the worker-owned attempt
@@ -42,6 +43,9 @@ func TestRecordFailedAttemptIncrementsAndReleases(t *testing.T) {
 	if got, want := f.auditCount(t, c.ID, cases.ActionCaseAttempt), 1; got != want {
 		t.Fatalf("attempt audit rows = %d, want %d", got, want)
 	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 2; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
+	}
 
 	// A non-owner can never record the attempt.
 	if _, err := f.service.Lease(context.Background(), "worker-b", time.Minute); err != nil {
@@ -57,6 +61,9 @@ func TestRecordFailedAttemptIncrementsAndReleases(t *testing.T) {
 	if got, want := f.auditCount(t, c.ID, cases.ActionCaseAttempt), 1; got != want {
 		t.Fatalf("attempt audit rows after rejection = %d, want %d", got, want)
 	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 3; got != want {
+		t.Fatalf("transition audit rows after rejection = %d, want %d", got, want)
+	}
 
 	// After Release there is no lease to record against.
 	if _, err := f.service.Release(context.Background(), c.ID, "worker-b"); err != nil {
@@ -69,10 +76,13 @@ func TestRecordFailedAttemptIncrementsAndReleases(t *testing.T) {
 	if after.Attempts != 1 {
 		t.Fatalf("attempts after release attempt = %d, want 1", after.Attempts)
 	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 4; got != want {
+		t.Fatalf("transition audit rows after release = %d, want %d", got, want)
+	}
 }
 
 // TestRecordFailedAttemptEscalatesAtCap proves the case is escalated exactly on
-// the maxAttempts-th failed attempt, with reason agent_failed, and that no
+// the maxAttempts-th failed attempt, with reason attempts_exhausted, and that no
 // fourth attempt can be recorded.
 func TestRecordFailedAttemptEscalatesAtCap(t *testing.T) {
 	f := newFixture(t)
@@ -101,8 +111,8 @@ func TestRecordFailedAttemptEscalatesAtCap(t *testing.T) {
 	if final.Status != cases.StatusEscalated {
 		t.Fatalf("final status = %s, want escalated", final.Status)
 	}
-	if final.EscalationReason == nil || *final.EscalationReason != "agent_failed" {
-		t.Fatalf("escalation reason = %v, want agent_failed", final.EscalationReason)
+	if final.EscalationReason == nil || *final.EscalationReason != casestate.EscalationAttemptsExhausted {
+		t.Fatalf("escalation reason = %v, want %s", final.EscalationReason, casestate.EscalationAttemptsExhausted)
 	}
 	if final.Attempts != 3 {
 		t.Fatalf("final attempts = %d, want 3", final.Attempts)
@@ -115,6 +125,9 @@ func TestRecordFailedAttemptEscalatesAtCap(t *testing.T) {
 	}
 	if got, want := f.auditCount(t, c.ID, cases.ActionCaseAttempt), 3; got != want {
 		t.Fatalf("attempt audit rows = %d, want %d", got, want)
+	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 6; got != want {
+		t.Fatalf("transition audit rows = %d, want %d", got, want)
 	}
 	if _, err := f.service.Lease(context.Background(), "worker-a", time.Minute); !errors.Is(err, cases.ErrNoCase) {
 		t.Fatalf("Lease after escalation = %v, want ErrNoCase", err)
@@ -142,6 +155,9 @@ func TestRecordFailedAttemptLostLeaseNoDoubleIncrement(t *testing.T) {
 	if after.Status != cases.StatusOpen || after.Attempts != 1 {
 		t.Fatalf("reclaimed case = %s/%d, want open/1", after.Status, after.Attempts)
 	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 2; got != want {
+		t.Fatalf("transition audit rows after reclaim = %d, want %d", got, want)
+	}
 
 	// The previous owner wakes up late: both the attempt and the release are
 	// no-ops that report a lost lease.
@@ -154,6 +170,9 @@ func TestRecordFailedAttemptLostLeaseNoDoubleIncrement(t *testing.T) {
 	final := f.getCase(t, c.ID)
 	if final.Attempts != 1 {
 		t.Fatalf("attempts after late release/attempt = %d, want 1", final.Attempts)
+	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 2; got != want {
+		t.Fatalf("transition audit rows after late no-ops = %d, want %d", got, want)
 	}
 }
 
@@ -175,5 +194,8 @@ func TestRecordFailedAttemptValidation(t *testing.T) {
 	}
 	if _, err := f.service.RecordFailedAttempt(context.Background(), "11111111-1111-4111-8111-111111111111", "worker-a", 3); !errors.Is(err, cases.ErrCaseNotFound) {
 		t.Fatalf("unknown case error = %v, want ErrCaseNotFound", err)
+	}
+	if got, want := f.auditCount(t, c.ID, cases.ActionCaseTransition), 1; got != want {
+		t.Fatalf("validation errors wrote %d transition audit rows, want %d", got, want)
 	}
 }

@@ -228,6 +228,7 @@ type proposalSpec struct {
 	Type            string
 	Payload         map[string]any
 	CaseCurrency    string
+	CaseStatus      string
 	Status          string
 	PatternVerified *string
 	PatternClaimed  *string
@@ -242,6 +243,9 @@ func (f *fixture) seedProposal(spec proposalSpec) (proposalID, caseID, runID str
 	}
 	if spec.Status == "" {
 		spec.Status = "proposed"
+	}
+	if spec.CaseStatus == "" {
+		spec.CaseStatus = "open"
 	}
 	if spec.Confidence == "" {
 		spec.Confidence = "0.9000"
@@ -260,9 +264,9 @@ func (f *fixture) seedProposal(spec proposalSpec) (proposalID, caseID, runID str
 
 	ctx := context.Background()
 	if err := f.d.Pool.QueryRow(ctx,
-		`INSERT INTO cases (priority, value_minor, currency, created_at)
-		 VALUES (0, 100, $1, now())
-		 RETURNING id::text`, spec.CaseCurrency).Scan(&caseID); err != nil {
+		`INSERT INTO cases (priority, value_minor, currency, status, version, created_at)
+		 VALUES (0, 100, $1, $2, 0, now())
+		 RETURNING id::text`, spec.CaseCurrency, spec.CaseStatus).Scan(&caseID); err != nil {
 		f.t.Fatalf("seed case: %v", err)
 	}
 	if err := f.d.Pool.QueryRow(ctx,
@@ -546,6 +550,54 @@ func (f *fixture) readCaseStatus(caseID string) string {
 		f.t.Fatalf("read case %s: %v", caseID, err)
 	}
 	return status
+}
+
+type storedCase struct {
+	Status           string
+	Version          int
+	Attempts         int
+	EscalationReason *string
+}
+
+// readCase reads the lifecycle columns Decide's hook may change.
+func (f *fixture) readCase(caseID string) storedCase {
+	f.t.Helper()
+	var stored storedCase
+	if err := f.d.Pool.QueryRow(context.Background(),
+		`SELECT status, version, attempts, escalation_reason
+		   FROM cases WHERE id = $1::uuid`, caseID).
+		Scan(&stored.Status, &stored.Version, &stored.Attempts,
+			&stored.EscalationReason); err != nil {
+		f.t.Fatalf("read case %s: %v", caseID, err)
+	}
+	return stored
+}
+
+// caseAudits returns the case-entity audit rows the M4-10 hook writes.
+func (f *fixture) caseAudits(caseID string) []auditRow {
+	f.t.Helper()
+	rows, err := f.d.Pool.Query(context.Background(),
+		`SELECT action, actor_type, actor_id, before, after
+		   FROM audit_log
+		  WHERE entity_type = 'case' AND entity_id = $1
+		  ORDER BY seq`, caseID)
+	if err != nil {
+		f.t.Fatalf("query case audits for %s: %v", caseID, err)
+	}
+	defer rows.Close()
+	var out []auditRow
+	for rows.Next() {
+		var row auditRow
+		if err := rows.Scan(&row.Action, &row.ActorType, &row.ActorID,
+			&row.Before, &row.After); err != nil {
+			f.t.Fatalf("scan case audit row: %v", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		f.t.Fatalf("iterate case audits: %v", err)
+	}
+	return out
 }
 
 func decodeObject(t *testing.T, raw []byte) map[string]any {

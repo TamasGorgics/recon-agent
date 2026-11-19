@@ -592,6 +592,32 @@ func (w *world) assertAppliedOnce(t *testing.T, fixture *caseFixture, wantLedger
 		fixture.proposalID); got != 1 {
 		t.Errorf("executor.applied audit rows = %d, want 1", got)
 	}
+	// The case authority writes the case.transition row; the executor's own
+	// case.resolve summary row is preserved alongside it.
+	if got := w.count(t,
+		`SELECT count(*) FROM audit_log WHERE action = 'case.transition' AND entity_id = $1`,
+		fixture.caseID); got != 1 {
+		t.Errorf("case.transition audit rows = %d, want 1", got)
+	}
+	if got := w.count(t,
+		`SELECT count(*) FROM audit_log WHERE action = 'case.resolve' AND entity_id = $1`,
+		fixture.caseID); got != 1 {
+		t.Errorf("case.resolve audit rows = %d, want 1", got)
+	}
+	var transitionActorType, transitionActorID, transitionReason string
+	if err := w.db.Pool.QueryRow(context.Background(),
+		`SELECT actor_type, actor_id, COALESCE(after->>'reason', '')
+		   FROM audit_log WHERE action = 'case.transition' AND entity_id = $1`,
+		fixture.caseID).Scan(&transitionActorType, &transitionActorID, &transitionReason); err != nil {
+		t.Fatalf("read case.transition audit: %v", err)
+	}
+	if transitionActorType != "system" || transitionActorID != "executor" {
+		t.Errorf("case.transition actor = %s:%s, want system:executor",
+			transitionActorType, transitionActorID)
+	}
+	if transitionReason != "apply" {
+		t.Errorf("case.transition reason = %q, want apply", transitionReason)
+	}
 	if got := w.count(t,
 		`SELECT count(*) FROM audit_log WHERE action = 'proposal.transition' AND entity_id = $1`,
 		fixture.proposalID); got != 1 {

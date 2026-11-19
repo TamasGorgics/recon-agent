@@ -16,14 +16,15 @@
 // FOR UPDATE SKIP LOCKED, assigns leased_by/lease_expires_at, and increments
 // version. ReclaimExpired (also run inline by Lease) returns expired leases to
 // open and audits each reclaim, incrementing attempts; when the new count
-// reaches the service attempt cap the case is escalated agent_failed instead of
-// returning to the queue. A fresh lease does not increment attempts; only
-// expiry does (spec section 6.5). Renew and Release are owner-guarded.
-// Transition is guarded by the caller's expected version and returns ErrStale
-// without changing anything when another writer won. RecordFailedAttempt is the
-// worker's counted path: in one transaction it re-checks the lease owner,
-// increments attempts, clears the lease, and escalates with reason agent_failed
-// at the attempt cap (M2-10).
+// reaches the service attempt cap the case is escalated attempts_exhausted
+// instead of returning to the queue. A fresh lease does not increment attempts;
+// only expiry does (spec section 6.5). Renew and Release are owner-guarded.
+// Transition delegates to internal/cases/state, which owns the edge table and
+// returns ErrStale without changing anything when another writer won.
+// RecordFailedAttempt is the worker's counted path: in one transaction it
+// re-checks the lease owner, transitions the status, increments attempts, clears
+// the lease, and escalates with reason attempts_exhausted at the attempt cap
+// (M2-10, M4-10).
 //
 // Every state change writes an audit entry through internal/audit in the same
 // transaction, with a typed actor and a timestamp from the injected clock.

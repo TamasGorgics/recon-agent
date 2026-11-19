@@ -314,8 +314,9 @@ func TestAgentLoopIntegrationEscalation(t *testing.T) {
 		t.Fatalf("case = %s v%d reason %v", status, version, reason)
 	}
 
-	// FIN-24/FIN-30/FIN-33: the loop-owned transition is audited with the
-	// agent actor derived from the configured model.
+	// FIN-24/FIN-30/FIN-33: the loop-owned transition is audited as the
+	// system:agent-loop component. Agent actors are rejected by the case
+	// authority; the proposal tools keep the model-derived agent actor.
 	var (
 		actorType string
 		actorID   string
@@ -326,7 +327,7 @@ func TestAgentLoopIntegrationEscalation(t *testing.T) {
 		  ORDER BY seq DESC LIMIT 1`, caseID).Scan(&actorType, &actorID); err != nil {
 		t.Fatalf("read audit row: %v", err)
 	}
-	if actorType != "agent" || actorID != "test-model" {
-		t.Fatalf("audit actor = %s:%s, want agent:test-model", actorType, actorID)
+	if actorType != "system" || actorID != "agent-loop" {
+		t.Fatalf("audit actor = %s:%s, want system:agent-loop", actorType, actorID)
 	}
 }

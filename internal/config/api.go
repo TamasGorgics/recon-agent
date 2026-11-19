@@ -227,6 +227,9 @@ func (c Config) ValidateAPIRuntime() error {
 	if err := c.Ingest.Validate(); err != nil {
 		return err
 	}
+	if err := c.Cases.Validate(); err != nil {
+		return err
+	}
 	if err := c.Match.Validate(); err != nil {
 		return err
 	}

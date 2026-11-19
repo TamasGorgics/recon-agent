@@ -15,6 +15,7 @@ import (
 
 	"github.com/TamasGorgics/recon-agent/internal/agent"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	casestate "github.com/TamasGorgics/recon-agent/internal/cases/state"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 )
@@ -22,8 +23,10 @@ import (
 const (
 	// releaseTimeout bounds every shutdown-safe release/attempt context.
 	releaseTimeout = 5 * time.Second
-	// agentFailedReason is the dead-letter escalation reason for a poison case.
-	agentFailedReason = "agent_failed"
+	// attemptsExhaustedReason is the dead-letter escalation reason for a poison
+	// case: the shared M4-10 attempt cap. It is the same canonical value the
+	// cases attempt/reclaim paths persist, replacing the older agent_failed.
+	attemptsExhaustedReason = casestate.EscalationAttemptsExhausted
 )
 
 // Sentinels returned by the worker. They classify the reason leasing stopped;

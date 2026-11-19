@@ -26,6 +26,10 @@ Commands:
                    usage: recon demo seed [--seed N] [--days N]
                           [--difficulty easy|realistic|adversarial] [--reset]
                    --reset drops and recreates the public schema (dev only)
+  match unmatch    audited admin unmatch of one active match
+                   usage: recon match unmatch --id <match-uuid> --reason <text>
+                          --actor human:<id> [--json]
+                   exit: 0 unmatched, 2 usage/validation, 1 conflict/error
   migrate up       apply all pending migrations
   migrate status   print the current schema version and pending migrations
   synth generate   write a deterministic synthetic dataset to a directory
@@ -65,6 +69,8 @@ func runTo(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	case "agent":
 		return runAgent(ctx, args[1:])
+	case "match":
+		return runMatch(ctx, args[1:])
 	case "migrate":
 		return runMigrate(ctx, args[1:])
 	case "testdb":

@@ -231,7 +231,7 @@ func TestWorkerTotalProviderOutageLeavesCasesQueued(t *testing.T) {
 }
 
 // TestWorkerPoisonCaseEscalatesAfterThreeAttempts proves a poison case gets
-// exactly max_attempts model calls and is escalated agent_failed on the third
+// exactly max_attempts model calls and is escalated attempts_exhausted on the third
 // counted failure; there is no fourth lease.
 func TestWorkerPoisonCaseEscalatesAfterThreeAttempts(t *testing.T) {
 	ctx := context.Background()
@@ -266,8 +266,8 @@ func TestWorkerPoisonCaseEscalatesAfterThreeAttempts(t *testing.T) {
 	if status != "escalated" || attempts != 3 || leasedBy != nil {
 		t.Fatalf("case = %s attempts=%d leased_by=%v, want escalated/3/nil", status, attempts, leasedBy)
 	}
-	if reason == nil || *reason != "agent_failed" {
-		t.Fatalf("escalation reason = %v, want agent_failed", reason)
+	if reason == nil || *reason != "attempts_exhausted" {
+		t.Fatalf("escalation reason = %v, want attempts_exhausted", reason)
 	}
 	if got, want := f.count(t,
 		`SELECT count(*) FROM agent_runs WHERE case_id = $1::uuid AND outcome = 'budget_exhausted'`,
@@ -435,8 +435,8 @@ func TestWorkerAttemptCapPrecheckEscalatesWithoutModelCall(t *testing.T) {
 	if status != "escalated" || attempts != 3 || leasedBy != nil {
 		t.Fatalf("case = %s attempts=%d leased_by=%v, want escalated/3/nil", status, attempts, leasedBy)
 	}
-	if reason == nil || *reason != "agent_failed" {
-		t.Fatalf("escalation reason = %v, want agent_failed", reason)
+	if reason == nil || *reason != "attempts_exhausted" {
+		t.Fatalf("escalation reason = %v, want attempts_exhausted", reason)
 	}
 }
 

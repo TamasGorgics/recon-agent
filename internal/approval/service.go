@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
@@ -44,6 +45,13 @@ type Policy struct {
 	Loaded policy.LoadedConfig
 }
 
+// ProposalClosedHook is the M4-10 lifecycle callback invoked inside Decide's
+// transaction after a proposal transitions to rejected, or expires on a late
+// decision. A nil hook is safe and leaves M4-11 behavior unchanged. M4-11 never
+// imports the lifecycle package: cmd/api wires the concrete method value, and
+// a hook error rolls the whole decision back.
+type ProposalClosedHook func(ctx context.Context, tx pgx.Tx, proposalID, proposalStatus, reason string) error
+
 // Options is the approval service dependency set. Pool and State must use the
 // recon_app role; TTL zero means the policy document's proposal_ttl_hours.
 type Options struct {
@@ -54,6 +62,10 @@ type Options struct {
 	Limits   Limits
 	Policy   Policy
 	TTL      time.Duration
+	// OnProposalClosed is optional M4-10 lifecycle integration. It runs inside
+	// the decision transaction after a rejection or a late-decision expiry; a
+	// returned error aborts the decision.
+	OnProposalClosed ProposalClosedHook
 }
 
 // Service routes proposed proposals through verification, policy, and limits,
@@ -70,6 +82,7 @@ type Service struct {
 	ttl         time.Duration
 	systemActor audit.Actor
 	expiryActor audit.Actor
+	onClosed    ProposalClosedHook
 }
 
 // NewService validates its dependencies and returns a read-mostly approval
@@ -128,6 +141,7 @@ func NewService(opts Options) (*Service, error) {
 		ttl:         ttl,
 		systemActor: systemActor,
 		expiryActor: expiryActor,
+		onClosed:    opts.OnProposalClosed,
 	}, nil
 }
 
