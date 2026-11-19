@@ -17,10 +17,21 @@ import (
 var ErrRetryExhausted = errors.New("db: retry attempts exhausted")
 
 // Retryable SQLSTATE codes. Postgres has already rolled the transaction back
-// when it reports either of these, so running the callback again is safe.
+// when it reports 40001 or 40P01, so running the callback again is safe.
+//
+// A unique violation (23505) is retried only for the audit chain seq key: under
+// concurrent appends a SERIALIZABLE caller can read a stale chain head and lose
+// the seq race. That is a bounded race-healing retry for seq allocation, not
+// unlimited retry and not a schema fix (Q-92(7), owned by Q-95(13)). Every
+// other unique violation stays terminal.
 const (
 	sqlStateSerializationFailure = "40001"
 	sqlStateDeadlockDetected     = "40P01"
+	sqlStateUniqueViolation      = "23505"
+
+	// auditLogSeqConstraint is the unique constraint on audit_log.seq. Only
+	// this constraint's 23505 is retryable.
+	auditLogSeqConstraint = "audit_log_seq_key"
 )
 
 // Retry policy defaults.
@@ -70,17 +81,18 @@ func (p RetryPolicy) withDefaults() RetryPolicy {
 }
 
 // WithTx runs fn inside a transaction started with opts, retrying only
-// serialization failures (SQLSTATE 40001) and deadlocks (SQLSTATE 40P01) with
-// bounded, full-jitter exponential backoff.
+// serialization failures (SQLSTATE 40001), deadlocks (SQLSTATE 40P01), and the
+// audit chain seq-key unique violation (SQLSTATE 23505 with constraint
+// audit_log_seq_key) with bounded, full-jitter exponential backoff.
 //
 // fn may run up to five times, so it must be re-runnable: it must not depend on
 // side effects from an earlier attempt and must not perform network calls while
 // the transaction is open (FIN-22).
 //
-// Unique violations (23505), context cancellation or deadline expiry, and all
-// other errors are returned immediately without a retry. After the attempt
-// bound WithTx returns an error that wraps both ErrRetryExhausted and the last
-// transaction error.
+// Every other unique violation (23505), context cancellation or deadline
+// expiry, and all other errors are returned immediately without a retry. After
+// the attempt bound WithTx returns an error that wraps both ErrRetryExhausted
+// and the last transaction error.
 func WithTx(ctx context.Context, b Beginner, opts pgx.TxOptions, fn func(context.Context, pgx.Tx) error) error {
 	return WithTxPolicy(ctx, b, opts, RetryPolicy{}, fn)
 }
@@ -146,7 +158,9 @@ func runTx(ctx context.Context, b Beginner, opts pgx.TxOptions, fn func(context.
 	return nil
 }
 
-// isRetryable reports whether err is a serialization failure or deadlock.
+// isRetryable reports whether err is a serialization failure, a deadlock, or
+// the narrow audit chain seq-key race. The 23505 match requires the exact
+// constraint name so unrelated unique violations are never masked.
 func isRetryable(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -155,6 +169,8 @@ func isRetryable(err error) bool {
 	switch pgErr.Code {
 	case sqlStateSerializationFailure, sqlStateDeadlockDetected:
 		return true
+	case sqlStateUniqueViolation:
+		return pgErr.ConstraintName == auditLogSeqConstraint
 	default:
 		return false
 	}

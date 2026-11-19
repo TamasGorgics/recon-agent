@@ -286,8 +286,12 @@ func TestExecutorReadGrantMigrationDown(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("configure goose dialect: %v", err)
 	}
-	// M4-11 (the app expires_at grant) is newer than the M4-06 read grant.
-	// Unwind it first so the second Down is the M4-06 migration under test.
+	// M4-13 (actor-id format) and M4-11 (the app expires_at grant) are newer
+	// than the M4-06 read grant. Unwind both first so the third Down is the
+	// M4-06 migration under test.
+	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+		t.Fatalf("migrate M4-13 down: %v", err)
+	}
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("migrate M4-11 down: %v", err)
 	}
@@ -314,6 +318,9 @@ func TestExecutorReadGrantMigrationDown(t *testing.T) {
 	}
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("migrate M4-11 up: %v", err)
+	}
+	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+		t.Fatalf("migrate M4-13 up: %v", err)
 	}
 	for _, view := range m406ExecutorViews {
 		if !m406TablePrivilege(t, d, db.RoleExecutor, view, "SELECT") {

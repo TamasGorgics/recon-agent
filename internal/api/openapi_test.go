@@ -1,3 +1,5 @@
+// covers: FIN-30, FIN-31, FIN-32, FIN-33, FIN-34
+
 package api
 
 import (
@@ -27,6 +29,7 @@ type openAPIDocument struct {
 			Type   string `yaml:"type"`
 			Scheme string `yaml:"scheme"`
 		} `yaml:"securitySchemes"`
+		Schemas map[string]yaml.Node `yaml:"schemas"`
 	} `yaml:"components"`
 }
 
@@ -234,4 +237,115 @@ func methodLower(method string) string {
 	default:
 		return method
 	}
+}
+
+// TestOpenAPICaseFileV2Schema pins the case-file v2 contract: the version is
+// 2, the trace section is present, and every chain link and missing marker is
+// documented. The route/status contract is covered by TestOpenAPIRouteContract.
+//
+// covers: FIN-32
+func TestOpenAPICaseFileV2Schema(t *testing.T) {
+	document := loadOpenAPI(t)
+
+	caseFile := decodeSchema(t, document, "CaseFile")
+	if !containsString(caseFile.Required, "schema_version") || !containsString(caseFile.Required, "trace") {
+		t.Fatalf("CaseFile required = %v", caseFile.Required)
+	}
+	var version struct {
+		Const int `yaml:"const"`
+	}
+	decodeNode(t, caseFile.Properties["schema_version"], &version)
+	if version.Const != 2 {
+		t.Fatalf("CaseFile schema_version const = %d, want 2", version.Const)
+	}
+	var traceRef struct {
+		Ref string `yaml:"$ref"`
+	}
+	decodeNode(t, caseFile.Properties["trace"], &traceRef)
+	if traceRef.Ref != "#/components/schemas/CaseFileTrace" {
+		t.Fatalf("CaseFile trace ref = %q", traceRef.Ref)
+	}
+
+	trace := decodeSchema(t, document, "CaseFileTrace")
+	for _, key := range []string{"case", "chains", "missing"} {
+		if !containsString(trace.Required, key) {
+			t.Fatalf("CaseFileTrace required = %v, missing %q", trace.Required, key)
+		}
+	}
+
+	chain := decodeSchema(t, document, "TraceChain")
+	wantChainFields := []string{
+		"ledger_txn_id", "applied_proposal", "proposal", "case", "breaks",
+		"agent_run", "verification", "policy", "approvals", "executor",
+		"ledger_txn", "ledger_entries", "missing",
+	}
+	for _, key := range wantChainFields {
+		if !containsString(chain.Required, key) {
+			t.Fatalf("TraceChain required = %v, missing %q", chain.Required, key)
+		}
+	}
+	var ledgerTxnID struct {
+		Types []string `yaml:"type"`
+	}
+	decodeNode(t, chain.Properties["ledger_txn_id"], &ledgerTxnID)
+	if !containsString(ledgerTxnID.Types, "null") {
+		t.Fatalf("ledger_txn_id types = %v, want nullable", ledgerTxnID.Types)
+	}
+
+	policy := decodeSchema(t, document, "TracePolicy")
+	var configYAML struct {
+		Description string `yaml:"description"`
+	}
+	decodeNode(t, policy.Properties["config_yaml"], &configYAML)
+	if !strings.Contains(configYAML.Description, "not secrets") {
+		t.Fatalf("config_yaml description = %q, want the not-secrets statement", configYAML.Description)
+	}
+
+	markers := decodeSchema(t, document, "TraceMissingMarker")
+	wantMarkers := []string{
+		"applied_proposal", "proposal", "case", "breaks", "agent_run",
+		"agent_run.trace_id", "verification", "policy", "policy_config",
+		"approvals", "executor.audit", "ledger_txn", "ledger_entries",
+	}
+	if len(markers.Enum) != len(wantMarkers) {
+		t.Fatalf("marker enum = %v, want %v", markers.Enum, wantMarkers)
+	}
+	for i, marker := range wantMarkers {
+		if markers.Enum[i] != marker {
+			t.Fatalf("marker enum[%d] = %q, want %q", i, markers.Enum[i], marker)
+		}
+	}
+}
+
+type openAPISchema struct {
+	Required   []string             `yaml:"required"`
+	Properties map[string]yaml.Node `yaml:"properties"`
+	Enum       []string             `yaml:"enum"`
+}
+
+func decodeSchema(t *testing.T, document openAPIDocument, name string) openAPISchema {
+	t.Helper()
+	node, ok := document.Components.Schemas[name]
+	if !ok {
+		t.Fatalf("OpenAPI is missing schema %q", name)
+	}
+	var schema openAPISchema
+	decodeNode(t, node, &schema)
+	return schema
+}
+
+func decodeNode(t *testing.T, node yaml.Node, out any) {
+	t.Helper()
+	if err := node.Decode(out); err != nil {
+		t.Fatalf("decode OpenAPI schema node: %v", err)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

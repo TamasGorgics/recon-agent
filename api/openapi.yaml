@@ -575,14 +575,20 @@ components:
     CaseFile:
       type: object
       description: |
-        Version 1 of the case document. Later tasks may add top-level sections;
-        clients must ignore unknown fields. Rationale is sanitized and truncated
-        to 4000 characters; raw evidence and external payloads are not returned.
-      required: [schema_version, case, breaks, proposals, agent_runs]
+        Version 2 of the case document. The existing case/breaks/proposals/
+        agent_runs sections are unchanged from version 1. The top-level trace
+        section is one consistent snapshot of the case's applied proposals:
+        one chain per applied_proposals row, including applications with no
+        ledger transaction (ledger_txn_id null). Later tasks may add top-level
+        sections; clients must ignore unknown fields. Rationale is sanitized
+        and truncated to 4000 characters; raw evidence and external payloads
+        are not returned. policy.config_yaml is the exact stored policy
+        threshold/rule configuration, not secrets.
+      required: [schema_version, case, breaks, proposals, agent_runs, trace]
       properties:
         schema_version:
           type: integer
-          const: 1
+          const: 2
         case:
           $ref: "#/components/schemas/Case"
         breaks:
@@ -597,6 +603,396 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AgentRun"
+        trace:
+          $ref: "#/components/schemas/CaseFileTrace"
+    CaseFileTrace:
+      type: object
+      description: |
+        The case-file v2 trace snapshot. case is the resolved case link and is
+        the same shape as each chain's case link (it does not repeat the
+        document's break_ids list). chains and missing are always arrays.
+      required: [case, chains, missing]
+      properties:
+        case:
+          $ref: "#/components/schemas/TraceCase"
+        chains:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceChain"
+        missing:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceMissingMarker"
+    TraceMissingMarker:
+      type: string
+      description: One absent link or empty sub-collection, in spec order.
+      enum:
+        - applied_proposal
+        - proposal
+        - case
+        - breaks
+        - agent_run
+        - agent_run.trace_id
+        - verification
+        - policy
+        - policy_config
+        - approvals
+        - executor.audit
+        - ledger_txn
+        - ledger_entries
+    TraceChain:
+      type: object
+      description: |
+        One applied proposal and every link reachable from it. Nullable links
+        stay in the chain with their missing marker instead of disappearing.
+      required:
+        - ledger_txn_id
+        - applied_proposal
+        - proposal
+        - case
+        - breaks
+        - agent_run
+        - verification
+        - policy
+        - approvals
+        - executor
+        - ledger_txn
+        - ledger_entries
+        - missing
+      properties:
+        ledger_txn_id:
+          type: [string, "null"]
+          format: uuid
+          description: applied_proposals.ledger_txn_id; null when the application posted no ledger transaction.
+        applied_proposal:
+          oneOf:
+            - $ref: "#/components/schemas/TraceAppliedProposal"
+            - type: "null"
+        proposal:
+          oneOf:
+            - $ref: "#/components/schemas/TraceProposal"
+            - type: "null"
+        case:
+          oneOf:
+            - $ref: "#/components/schemas/TraceCase"
+            - type: "null"
+        breaks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Break"
+        agent_run:
+          oneOf:
+            - $ref: "#/components/schemas/TraceAgentRun"
+            - type: "null"
+        verification:
+          description: Stored proposal verification document exactly as persisted; null when absent.
+        policy:
+          oneOf:
+            - $ref: "#/components/schemas/TracePolicy"
+            - type: "null"
+        approvals:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceApproval"
+        executor:
+          $ref: "#/components/schemas/TraceExecutor"
+        ledger_txn:
+          oneOf:
+            - $ref: "#/components/schemas/TraceLedgerTxn"
+            - type: "null"
+        ledger_entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceLedgerEntry"
+        missing:
+          type: array
+          items:
+            $ref: "#/components/schemas/TraceMissingMarker"
+    TraceCase:
+      type: object
+      required:
+        - id
+        - priority
+        - value_minor
+        - currency
+        - status
+        - version
+        - attempts
+        - escalation_reason
+        - created_at
+        - resolved_at
+        - resolution_type
+      properties:
+        id:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+        value_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+        version:
+          type: integer
+        attempts:
+          type: integer
+        escalation_reason:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: [string, "null"]
+          format: date-time
+        resolution_type:
+          type: [string, "null"]
+    TraceAppliedProposal:
+      type: object
+      required: [proposal_id, ledger_txn_id, applied_at, executor_run_id]
+      properties:
+        proposal_id:
+          type: string
+          format: uuid
+        ledger_txn_id:
+          type: [string, "null"]
+          format: uuid
+        applied_at:
+          type: string
+          format: date-time
+        executor_run_id:
+          type: string
+    TraceProposal:
+      type: object
+      required: [id, case_id, agent_run_id, type, status, risk_tier, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        agent_run_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        status:
+          type: string
+        risk_tier:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+    TraceAgentRun:
+      type: object
+      required:
+        - id
+        - model
+        - prompt_version
+        - started_at
+        - ended_at
+        - outcome
+        - trace_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        model:
+          type: string
+        prompt_version:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: [string, "null"]
+          format: date-time
+        outcome:
+          type: [string, "null"]
+        trace_id:
+          type: [string, "null"]
+          description: OTel trace id; a blank value is reported as the agent_run.trace_id marker.
+    TracePolicy:
+      type: object
+      description: |
+        The stored policy decision joined to the referenced policy config
+        version. config_yaml is threshold/rule configuration, not secrets.
+      required: [risk_tier, rule, reasons, config_hash, config_yaml, config_loaded_at]
+      properties:
+        risk_tier:
+          type: [string, "null"]
+        rule:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+        config_hash:
+          type: string
+        config_yaml:
+          type: [string, "null"]
+          description: |
+            Exact stored policy_config_versions.yaml. This is threshold/rule
+            configuration, not secrets.
+        config_loaded_at:
+          type: [string, "null"]
+          format: date-time
+    TraceApproval:
+      type: object
+      required:
+        - id
+        - channel
+        - external_ref
+        - decision
+        - decided_at
+        - signature_valid
+        - approver
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+        external_ref:
+          type: [string, "null"]
+        decision:
+          type: string
+          enum: [approved, rejected]
+        decided_at:
+          type: string
+          format: date-time
+        signature_valid:
+          type: boolean
+        approver:
+          $ref: "#/components/schemas/TraceApprover"
+    TraceApprover:
+      type: object
+      required: [id, display_name, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        role:
+          type: string
+          enum: [viewer, approver, admin]
+    TraceExecutor:
+      type: object
+      required: [audit]
+      properties:
+        audit:
+          oneOf:
+            - $ref: "#/components/schemas/TraceExecutorAudit"
+            - type: "null"
+    TraceExecutorAudit:
+      type: object
+      description: The executor.applied audit_log row attributable to the proposal.
+      required: [seq, ts, actor, before, after]
+      properties:
+        seq:
+          type: integer
+          format: int64
+        ts:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        before:
+          description: Stored audit before document (arbitrary JSON, nullable).
+        after:
+          description: Stored audit after document; carries ledger_txn_id, applied_at, and executor_run_id.
+    TraceLedgerTxn:
+      type: object
+      required:
+        - id
+        - seq
+        - kind
+        - value_date
+        - created_at
+        - booked_at
+        - description
+        - period_id
+        - adjusts_period_id
+        - reversal_of
+      properties:
+        id:
+          type: string
+          format: uuid
+        seq:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum:
+            - charge
+            - refund
+            - payout
+            - fee
+            - chargeback
+            - fx
+            - adjustment
+            - reversal
+        value_date:
+          type: string
+          format: date
+        created_at:
+          type: string
+          format: date-time
+        booked_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+        period_id:
+          type: string
+          format: uuid
+        adjusts_period_id:
+          type: [string, "null"]
+          format: uuid
+        reversal_of:
+          type: [string, "null"]
+          format: uuid
+    TraceLedgerEntry:
+      type: object
+      required:
+        - id
+        - txn_id
+        - account_id
+        - account_code
+        - direction
+        - amount_minor
+        - currency
+        - posted_at
+        - external_ref
+      properties:
+        id:
+          type: string
+          format: uuid
+        txn_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        account_code:
+          type: string
+        direction:
+          type: string
+          enum: [debit, credit]
+        amount_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        posted_at:
+          type: string
+          format: date-time
+        external_ref:
+          type: [string, "null"]
     Case:
       type: object
       required:

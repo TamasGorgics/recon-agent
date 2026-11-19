@@ -5,6 +5,8 @@ import (
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/TamasGorgics/recon-agent/internal/traceability"
 )
 
 // caseStatuses is the complete case.status CHECK set.
@@ -89,11 +91,13 @@ func (a *API) handleCaseFile(w http.ResponseWriter, r *http.Request) {
 		a.writeServiceError(w, r, err)
 		return
 	}
-	document.SchemaVersion = 1
+	document.SchemaVersion = 2
 	document.Case.BreakIDs = nonNilStrings(document.Case.BreakIDs)
 	document.Breaks = nonNilBreaks(document.Breaks)
 	document.Proposals = nonNilProposals(document.Proposals)
 	document.AgentRuns = nonNilAgentRuns(document.AgentRuns)
+	document.Trace.Chains = nonNilTraceChains(document.Trace.Chains)
+	document.Trace.Missing = nonNilStrings(document.Trace.Missing)
 	writeJSON(w, http.StatusOK, document)
 }
 
@@ -121,6 +125,13 @@ func nonNilProposals(values []ProposalDetail) []ProposalDetail {
 func nonNilAgentRuns(values []AgentRun) []AgentRun {
 	if values == nil {
 		return []AgentRun{}
+	}
+	return values
+}
+
+func nonNilTraceChains(values []traceability.Chain) []traceability.Chain {
+	if values == nil {
+		return []traceability.Chain{}
 	}
 	return values
 }

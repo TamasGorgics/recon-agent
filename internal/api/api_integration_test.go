@@ -1,5 +1,7 @@
 //go:build integration
 
+// covers: FIN-30, FIN-31, FIN-32, FIN-33, FIN-34
+
 package api
 
 import (
@@ -25,6 +27,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/policy/verify"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 	"github.com/TamasGorgics/recon-agent/internal/testdb"
+	"github.com/TamasGorgics/recon-agent/internal/traceability"
 )
 
 // TestMain keeps the migration template current before any API integration
@@ -262,8 +265,18 @@ func TestAPICasesListAndDetailIntegration(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
 		t.Fatalf("decode detail: %v", err)
 	}
-	if document.SchemaVersion != 1 || document.Case.ID != full.caseID {
+	if document.SchemaVersion != 2 || document.Case.ID != full.caseID {
 		t.Fatalf("document = %+v", document)
+	}
+	if document.Trace.Case.ID != full.caseID {
+		t.Fatalf("trace case = %+v, want %s", document.Trace.Case, full.caseID)
+	}
+	if len(document.Trace.Chains) != 0 || len(document.Trace.Missing) != 1 ||
+		document.Trace.Missing[0] != traceability.MissingAppliedProposal {
+		t.Fatalf("trace = %+v, want no chains and the applied_proposal marker", document.Trace)
+	}
+	if document.Trace.Chains == nil || document.Trace.Missing == nil {
+		t.Fatalf("trace arrays must be [] not null: %+v", document.Trace)
 	}
 	if len(document.Breaks) != 1 || document.Breaks[0].ID != full.breakID {
 		t.Fatalf("breaks = %+v", document.Breaks)
@@ -289,6 +302,13 @@ func TestAPICasesListAndDetailIntegration(t *testing.T) {
 	}
 	if empty.Breaks == nil || empty.Proposals == nil || empty.AgentRuns == nil {
 		t.Fatalf("empty sections must be [] not null: %+v", empty)
+	}
+	if empty.Trace.Chains == nil || empty.Trace.Missing == nil {
+		t.Fatalf("empty trace arrays must be [] not null: %+v", empty.Trace)
+	}
+	if len(empty.Trace.Chains) != 0 || len(empty.Trace.Missing) != 1 ||
+		empty.Trace.Missing[0] != traceability.MissingAppliedProposal {
+		t.Fatalf("empty trace = %+v", empty.Trace)
 	}
 }
 

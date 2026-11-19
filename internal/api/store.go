@@ -15,6 +15,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/cases"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/match"
+	"github.com/TamasGorgics/recon-agent/internal/traceability"
 )
 
 // PostgresStore implements the API read model through the recon_app pool.
@@ -185,12 +186,24 @@ func (s *PostgresStore) GetCaseFile(ctx context.Context, caseID string) (CaseFil
 		if err != nil {
 			return err
 		}
+		trace, err := traceability.ByCase(ctx, tx, fileCase.ID)
+		if err != nil {
+			return fmt.Errorf("api: read case trace: %w", err)
+		}
+		if trace.Case == nil {
+			return fmt.Errorf("api: read case trace: root case is missing")
+		}
 		document = CaseFile{
-			SchemaVersion: 1,
+			SchemaVersion: 2,
 			Case:          fileCase,
 			Breaks:        breaks,
 			Proposals:     proposals,
 			AgentRuns:     runs,
+			Trace: CaseFileTrace{
+				Case:    *trace.Case,
+				Chains:  trace.Chains,
+				Missing: trace.Missing,
+			},
 		}
 		return nil
 	})

@@ -173,6 +173,24 @@ func TestM411ApprovalMigrationDown(t *testing.T) {
 		_ = sqlDB.Close()
 		t.Fatalf("configure goose: %v", err)
 	}
+
+	// The branch tip adds M4-13 (20261119120000) after M4-11. Roll it back
+	// first so the next Down is the M4-11 migration this test exercises.
+	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("apply M4-13 Down before M4-11: %v", err)
+	}
+	var version int64
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
+		_ = sqlDB.Close()
+		t.Fatalf("read version after M4-13 Down: %v", err)
+	}
+	if version != m411MigrationVersion {
+		_ = sqlDB.Close()
+		t.Fatalf("version after M4-13 Down = %d, want %d", version, m411MigrationVersion)
+	}
+
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 		_ = sqlDB.Close()
 		t.Fatalf("apply M4-11 Down: %v", err)
@@ -181,7 +199,6 @@ func TestM411ApprovalMigrationDown(t *testing.T) {
 		t.Fatalf("close scratch database: %v", err)
 	}
 
-	var version int64
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("read version after M4-11 Down: %v", err)
