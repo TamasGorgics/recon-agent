@@ -884,6 +884,15 @@ Goal: proposals become ledger effects only through policy, verified patterns, ap
 **Done when**
 - The e2e test passes with `FakeChannel`; an e2e eval run on `dev` from cassettes produces a report with tier columns; the gate test is in CI.
 
+**Evidence note (2026-11-20).** The tick is authorized under A5/Q-98 with a
+**record-only** evidence boundary, not the literal dev-replay claim: the stored
+e2e report is a `RECORD-ONLY / TEST-FIXTURE` render from
+`TestPostgresE2EReportEndToEnd` (tier columns present), and the attempted
+`dev` cassette run failed closed with `cassette_miss`. No eval cassettes are
+committed. The FakeChannel gate test is delivered and runs in CI via
+`make test-integration`. A real dev cassette replay remains Q-53/Q-68/M6-05;
+do not read this tick as a byte-deterministic dev replay.
+
 ---
 
 ## M5 · Visibility

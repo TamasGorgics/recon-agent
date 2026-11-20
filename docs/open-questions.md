@@ -400,6 +400,101 @@ boundaries, not release blockers. Each names its consumer and follow-up owner.
   `docs/eval-report.md` are updated for the delivered metrics and gate
   behavior.
 
+**Q-98 final adversary addendum (docs phase; behavior frozen; all items
+non-blocking).** The adversary verified fail-closed persistence (failed e2e
+cases persist `failed=true` and keep a resumed run failed) with no finding. The
+nine findings below are recorded as boundaries, owners, and follow-ups; none
+changes a gated metric.
+
+- **Link/duplicate amount is the cited-record sum, not the case delta
+  (conformant; residual only).** The M4-14 spec §4.1.3 predicate 2 requires
+  `p.AmountMinor` to equal the exact sum/amount implied by the cited records
+  for `link`/`duplicate`; only ledger-affecting types compare to
+  `c.DeltaMinor`. The e2e read model therefore permits a partial resolution
+  (for example a 100-unit link for a 500-unit break) and the approver can
+  approve it. The executor independently revalidates the proposal against the
+  current case/break/evidence projection and stored state hash before applying,
+  so it cannot overpay beyond the cited records; the accepted amount can still
+  be smaller than the observable discrepancy. **Owner:** future spec/AC note on
+  partial link/duplicate resolutions, or an e2e diagnostic when the proposal
+  amount differs from the case delta.
+- **Counterparty predicate is tautological in the real loader (coverage gap).**
+  `LoadCaseFacts` and `LoadProposalFacts` both project `Counterparty` from the
+  same `reconciliation_scopes.source` column, and cited
+  `ExternalRecord.Counterparty` comes from the same source, so no end-to-end
+  fixture can make the values differ while both loaders succeed. The predicate
+  is exercised only with hand-built facts; it remains correct there and still
+  guards normalization/emptiness, so this is a coverage gap, not a runtime
+  defect. **Owner:** a falsifiable observable counterparty (for example the
+  cited external record's counterparty) plus an e2e reject test.
+- **Truth-blind unit test is weak; no runtime `eval_truth` dependency.** In
+  `TestTruthOnlyMismatchDoesNotInfluenceDecision`, the differing `hiddenTruth`
+  value is a local variable never passed to `Act`, so the assertion is a
+  tautology and would not catch an ambient truth read. The boundary is instead
+  proven statically: `TestNoTruthImportsOrAccess` and
+  `eval/e2e/boundary_test.go` scan imports and SQL text, and a `go list -deps`
+  probe found no dependency on `eval/dataset`, `eval/score`, `eval/truth`,
+  `eval/runner`, `eval/gate`, or `eval/report`, with no `eval_truth` SQL.
+  **Owner:** optional truth-reader seam in a test-only harness, asserted never
+  consulted.
+- **T0 gate accepts a self-inconsistent rate through public
+  `gate.Evaluate(Input)` (defense-in-depth).** `validateT0Evidence` checks the
+  schema, `denominator == t0_applied`, numerator range, defined/undefined
+  agreement, and value range, but it does not recompute
+  `value == numerator/denominator`. A hand-built block with
+  `t0_applied=10`, `10/10`, and value `0.0` returns `pass`. Production
+  `report.Build` recomputes the rate from persisted detail, so the CLI cannot
+  construct this block; only a direct caller of the public seam can. **Owner:**
+  add an exact/epsilon arithmetic consistency check in `validateT0Evidence`.
+- **Tie-out can be skipped on a case-facts load error; statement lookup errors
+  are swallowed (diagnostic only).** The runner uses
+  `if caseFacts, err := LoadCaseFacts(...); err == nil`; on error `ScopeID`
+  and `AsOf` stay zero, `computeTieout` returns nil, and a successful case can
+  carry no `tieout` block. Separately, `statementAsOf` converts any statement
+  query error (including no row) to the zero time; with a non-empty `ScopeID`
+  and zero `AsOf`, `computeTieout` returns "tie-out requires both a scope id
+  and an as-of time" and fails the case closed, contrary to the "missing
+  statement skips tie-out" comment. T0 false-fix/precision and
+  `TestMilestone4Gate` compute their tie-out independently, so the gated
+  evidence is unaffected. **Owner:** return the loader/statement error or
+  record an explicit "tie-out skipped" reason.
+- **Synthetic approver seed accepts a wrong pre-existing fixed-UUID row.**
+  `EnsureSyntheticApprover` uses `INSERT ... ON CONFLICT (id) DO NOTHING`, so a
+  clone already holding the fixed UUID
+  `00000000-0000-4000-8000-00000000e2e1` with the wrong role or `active=false`
+  reports success without inspecting the row. `Service.Decide` fails closed
+  (`ErrApproverRole` is checked first, then `ErrApproverInactive`), so there is
+  no authorization bypass; the failure appears later as a confusing eval error.
+  **Owner:** validate the existing row after the conflict no-op, or use a
+  guarded `DO UPDATE`.
+- **Claimed-tier diagnostic is usually NULL or policy-derived.**
+  `agent_claimed_tier` is read from `proposals.risk_tier` **before**
+  `approval.Request`; policy writes that column only during Request
+  (`PersistDecision`), so it is normally NULL at the read and
+  `tier_claimed_correctness` is often undefined. When the proposal is still
+  `proposed`, the pipeline backfills a nil claim from `state.PolicyTier`, so a
+  non-null value can be a policy-tier copy rather than an independent agent
+  claim. The real tier metric, `tier_correctness`, uses `tier_actual` (the
+  policy tier) and is unaffected; it is reported, not gated, in M4-14.
+  **Owner:** persist an explicit agent claim at proposal creation, or document
+  the diagnostic as a policy-tier fallback.
+  `docs/eval-scoring.md` §7.1 and `docs/eval-report.md` now state this.
+- **T0 path calls `Approver.Act` (`skip_t0`); only `Decide` is skipped.** The
+  e2e router calls `Approver.Act` for T0, which returns `ActionSkipT0`; the
+  `Decide` count is 0 and no decision, audit row, or state change is produced,
+  and the skip is idempotent. The run spec's "the simulated approver is never
+  called for T0" and AC-2 "no approver call" are therefore literal-wording
+  nuances: true for `Decide`, false for `Act`. **Owner:** route T0 directly to
+  the executor, or tighten the wording to "no `Decide` call".
+- **Roadmap done-when evidence boundary.** The M4-14 tick is authorized under
+  A5/A8, but the literal "e2e eval run on `dev` from cassettes produces a
+  report" leg is not delivered: no eval cassettes are committed, the attempted
+  dev cassette run failed closed with `cassette_miss`, and the stored report is
+  a record-only/test-fixture render from `TestPostgresE2EReportEndToEnd`. The
+  FakeChannel gate test and the CI integration target are delivered. A real dev
+  cassette replay remains Q-53/Q-68/M6-05. The roadmap M4-14 section now carries
+  the evidence note.
+
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-98 | **RESOLVED (M4-14), with the recorded boundaries in the addendum above:** the simulated approver, `recon-eval run --e2e`, additive e2e scoring/report block, applicable `t0_false_fix` gate, and `TestMilestone4Gate` are delivered and covered by unit/integration tests. Recorded residuals: (1) dev evidence is record-only/test-fixture; no eval cassettes are committed and no byte-deterministic dev replay is claimed (Q-53/Q-68); (2) T0 precision and false-fix use asymmetric denominators, and a zero T0 applied denominator is gate `error`/exit 1, never a pass (Q-68/A3); (3) `eval-report/v1` gains only an optional `e2e` block, agent goldens are unchanged, and malformed detail or tier disagreement fails closed (A2); (4) the synthetic approver uses fixed UUID `00000000-0000-4000-8000-00000000e2e1`, source `e2e`, audit actor `human:<uuid>`, seeded only in eval clones (A6); (5) verifier false-pass is `passed && false_fix`, failed outcomes use the `unverified` bucket, and false negatives stay 0 (A7); (6) `tier_actual` is the policy tier for e2e rows and the claimed tier is diagnostic (A10); (7) e2e repeat aggregation is unsupported and rejected; (8) tie-out evidence seeds a statement balance and asserts non-empty open items plus a perturbation control (W5.3); (9) no live Slack/network is used and outbox delivery remains intentionally undelivered; (10) M4-14 adds no migration, production seeding, scheduler, OTel, spec edit, or non-additive report change. | M4-15 / M6-05 / M6-06 / M4-12 AC-15 / eval consumers / ops | Keep the record-only evidence boundary and the M2 fixture as the replay proof; do not treat a zero T0 denominator as a pass; keep the e2e block additive and fail-closed; use the fixed synthetic approver and `e2e` source; keep verifier negatives at 0 until the M4-15/M6-05 definition; read `tier_actual` by suite; reject e2e repeats; keep statement-seeded tie-out evidence; keep the decision path off `FakeChannel` and the outbox undelivered in tests; leave `docs/spec.md` untouched and add no migration for M4-14. |

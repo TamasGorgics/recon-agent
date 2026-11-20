@@ -244,10 +244,19 @@ keeps `request_status=auto_approved|approved` and counts in `errors`, not
   key; `VerifierSummary.Total` still equals the sum of `ByPattern`.
 - `false_negatives` is fixed at 0 in M4-14 (Q-98); the metric is reported, not
   gated.
-- `tier_actual` stores the **policy** tier for e2e rows; the agent-claimed
-  `proposals.risk_tier` is only `detail.e2e.agent_claimed_tier` and is
-  diagnostic. A missing/mismatched `tier_actual` is a hard error, not a metric
-  input.
+- `tier_actual` stores the **policy** tier for e2e rows; a missing/mismatched
+  `tier_actual` is a hard error, not a metric input. `tier_correctness` is
+  measured against `tier_expected` with that policy tier and is the comparable
+  tier metric.
+- `tier_claimed_correctness` is a diagnostic with a narrow input. The runner
+  reads `proposals.risk_tier` **before** `approval.Request`, but policy writes
+  that column only during Request (`PersistDecision`), so it is usually NULL at
+  the read and the diagnostic is usually undefined (`n/a`). When the pipeline
+  backfills a nil claim from the policy tier for a still-`proposed` proposal, a
+  non-null value can also be a policy-tier copy rather than an independent
+  agent claim. Do not treat this rate as agent-calibration evidence or as a
+  gate input; persisting an explicit claim at proposal creation is the Q-98
+  follow-up.
 - `t0_false_fix` zero denominator is deliberately stricter than the general
   undefined rule: `report.Build` leaves it undefined, and the gate converts
   `t0_applied == 0` into `status: error`, exit 1 (Q-68). It is never a `0.0`
@@ -373,6 +382,17 @@ errors; malformed actual payloads are tested as incorrect results with a
   stays deferred in v1, while the M4-14 e2e metrics (§7.1) are additive and
   read from the versioned e2e detail. `false_negatives` and gated tier
   correctness remain Q-98 residuals.
+- **Claimed-tier diagnostic is pre-Request.** `tier_claimed_correctness` reads
+  `detail.e2e.agent_claimed_tier`, which the runner projects from
+  `proposals.risk_tier` before `approval.Request`; policy writes that column
+  during Request, so the diagnostic is usually undefined or policy-derived. Use
+  `tier_correctness` for the policy-tier metric (§7.1).
+- **Dev e2e evidence is record-only (A5/Q-98).** No dev-split eval cassettes are
+  committed; the attempted dev `--llm cassette` run failed closed with
+  `cassette_miss`. The stored e2e report is a `RECORD-ONLY / TEST-FIXTURE`
+  render from `TestPostgresE2EReportEndToEnd`, not a byte-deterministic dev
+  replay and not a gate proof. The 12 committed M2 fixture cassettes remain the
+  only replayable corpus; a real dev replay remains Q-53/Q-68/M6-05.
 - **`case:` evidence identity.** The scorer does not receive a separate case ID;
   any canonical `case:` ref present in this run's `RetrievedRefs` is real but
   never relevant. `RetrievedRefs` comes from this run, so it cannot contain

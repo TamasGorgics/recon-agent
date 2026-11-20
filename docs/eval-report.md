@@ -141,6 +141,36 @@ without a pattern, a partial mix of e2e and non-e2e rows, an e2e repeat group,
 or `tier_actual` disagreeing with `e2e.policy_tier`. `tier_actual` holds the
 policy tier for e2e rows; the agent-claimed tier is diagnostic-only.
 
+The claimed-tier diagnostic is narrower than its name suggests.
+`tier_claimed_correctness` compares `detail.e2e.agent_claimed_tier`, which the
+runner reads from `proposals.risk_tier` **before** `approval.Request`; policy
+writes that column during Request, so it is usually NULL and the diagnostic is
+usually undefined (`n/a`). The pipeline may also backfill a missing claimed tier
+from the policy tier for a still-`proposed` proposal. Read `tier_correctness`
+(the policy tier in `tier_actual`) as the tier metric and treat
+`tier_claimed_correctness` as a diagnostic only (Q-98).
+
+Tie-out is a per-case diagnostic in `detail.e2e.tieout`, not a report-block
+rate and not a T0 input. It is computed only when the case loader supplies both
+a scope and an as-of time; the runner derives the as-of from the latest
+`statement_balances` row at or before the scenario time, and the pipeline
+requires both values (a partial pair is a pipeline error). Two gaps are
+recorded: a case-facts load error is ignored, leaving both values empty so the
+case can succeed without a tie-out block; and a statement lookup error is
+converted to a zero as-of, which with a non-empty scope fails the case closed
+("tie-out requires both a scope id and an as-of time"), contrary to the
+"missing statement skips tie-out" comment. T0 false-fix/precision and
+`TestMilestone4Gate` compute their tie-out independently, so neither path
+affects the gated metrics (Q-98).
+
+**Evidence boundary.** The committed M4-14 e2e report fixture is
+`RECORD-ONLY / TEST-FIXTURE` (A5/Q-98). It was rendered by
+`TestPostgresE2EReportEndToEnd` from deterministic fixture rows; it is not a
+dev-split cassette replay, not a live-LLM run, and not an M4 gate proof. The
+attempted dev cassette run failed closed with `cassette_miss`; no eval cassettes
+are committed, and the 12 committed M2 fixture cassettes are the only
+replayable corpus. A real dev cassette replay remains Q-53/Q-68/M6-05.
+
 ## Wilson intervals
 
 Rates carry a two-sided 95% Wilson score interval with
@@ -399,6 +429,15 @@ Evaluation order and semantics:
    `status: error`, exit 1 (never a `0.0` pass; Q-68). For an `agent` candidate
    it is `not_applicable` with a warning and is never counted as a pass (A4).
    The baseline e2e block is not compared; T0 evidence is candidate-only.
+   `report.Build` recomputes the rate from the persisted detail before the gate
+   sees it. `validateT0Evidence` re-checks the block invariants — schema,
+   `denominator == t0_applied`, numerator range, defined/undefined agreement,
+   value in `[0,1]` — but it does not recompute
+   `value == numerator/denominator`. A caller that hand-builds
+   `gate.Evaluate(Input)` can therefore pass a self-inconsistent block (for
+   example 10/10 with value 0); the CLI cannot, because `Run` builds the report
+   itself. This is a defense-in-depth residual, not an end-to-end bypass
+   (Q-98).
 2. `overall_false_fix` — reuses the compare classification. The candidate
    fails only when the overall false-fix comparison is `regression` under
    disjoint 95% Wilson intervals.
