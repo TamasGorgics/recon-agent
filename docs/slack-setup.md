@@ -254,6 +254,32 @@ ORDER BY p.created_at DESC;
 > run it once and record the result below. Automated tests, fake Slack
 > servers, and sanitized fixtures do not satisfy AC-15.
 
+### Known residuals before AC-15
+
+The final adversary review at `a9ea9f1` recorded four non-blocking residuals in
+`docs/open-questions.md` Q-97 (F1–F4). They do not change the smoke steps, but
+read them before recording a result:
+
+- **F1 (high, pre-existing/out-of-scope):** whole-`Config` JSON/slog redacts the
+  Slack bot token and signing secret but still renders database DSNs/passwords
+  and the LLM API key. Do not JSON-marshal or `slog.Any` a whole `Config`
+  during the smoke; log `cfg.Slack` or use `%v`/`String`, which redact
+  everything. Tracked as separate config hardening (propose FIN-62 if adopted
+  broadly), not an M4-12 failure.
+- **F2 (medium):** a decision that lands between the Slack post and the
+  `approval_messages` insert can consume `approval.update` and leave a decided
+  message with live buttons. Clicks are still refused by the proposal
+  state/version check, so this is a stale-message gap, not a wrong decision.
+- **F3 (low):** `PostMessageRef` trusts Slack's response channel; a malformed
+  channel value could produce an unparseable `external_ref`. Real channel IDs
+  cannot contain `:`, so this is robustness only.
+- **F4 (medium, AC-15 risk):** the strict nested `message` allow-list rejects
+  message fields it does not know. If a real workspace payload carries
+  `app_id`, `files`, `bot_profile`, a nested `team`, or similar, the click
+  returns `400 invalid_request`. If the smoke reproduces this, stop and record
+  it: AC-15 fails, and the fix is to relax `message` to `json.RawMessage` and
+  validate only `message.ts` against the stored external ref.
+
 Preconditions: Postgres migrated; API and outbox running; tunnel host set as
 the Slack interactivity request URL; bot invited to the channel; one active
 `approver`/`admin` seeded with the operator's real `slack_user_id`; a pending
@@ -316,6 +342,7 @@ T1 proposal exists (section 7).
 | HTTP 429 / `ratelimited` with `Retry-After` | Slack rate limit. | The client retries within its 2-retry/10 s budget. Persistent 429 means reduce delivery volume or split channels; check outbox attempts/backoff. |
 | 401 `unauthenticated` (signature verification failed) | Wrong signing secret, clock skew beyond five minutes, a proxy rewriting the form body, or a stale tunnel URL. | Replace the signing secret, sync the host clock, ensure the proxy forwards the raw body unchanged, and update the interactivity URL. |
 | 409 `replay` | The same signed request was delivered twice without `X-Slack-Retry-Num`. | Expected replay protection. A genuine Slack retry carries the retry header and is processed; duplicate decisions are idempotent. |
+| `400 invalid_request` on a real click | The payload carries a message field outside the strict nested allow-list (Q-97 F4), or a genuinely malformed/stale action. | Capture the redacted payload and record it; AC-15 fails until the message allow-list is relaxed/validated. Do not widen the allow-list ad hoc during the smoke. |
 | 413 `payload_too_large` | Interaction payload above the 1 MiB verifier cap. | Check for a malformed client/proxy; normal Block Kit actions are far below the cap. |
 | Slack retries a click repeatedly (500) | Internal failure before the decision commits, or an audit failure. | Check API logs by trace ID; fix the dependency. Slack retries are safe because decisions are idempotent. |
 | No message appears but `approval.request` row exists | Outbox not running, provider error, T2/`ticket` row skipped, or proposal left pending before delivery. | Run `cmd/outbox`, inspect attempts/dead, and confirm the proposal is still `pending_approval` and `channel = 'slack'`. |
@@ -332,6 +359,10 @@ T1 proposal exists (section 7).
   accepted in YAML, are never logged, and are redacted by config formatting
   and by the JSON/slog renderers. Never paste them into this document, an
   issue, a chat, or a screenshot.
+- **Do not JSON-log a whole `Config`.** `SlackConfig` redacts the bot token
+  and signing secret in JSON/slog, but a whole `Config` value still renders
+  database DSNs/passwords and the LLM API key (Q-97 F1). Log `cfg.Slack`, or
+  use `%v`/`String`, which redact the whole configuration.
 - **Rotate after exposure.** Reinstall the app / regenerate the signing
   secret and update the process environment; rotate one process at a time.
 - **Do not log Slack payloads.** The adapter logs only method, status, error
