@@ -10,7 +10,11 @@ The scorer is pure and DB-free; the runner owns all database reads.
 - **Storage:** `eval_case_results` (`correct`, `false_fix`, `escalated`,
   `tier_expected`, `tier_actual`, `confidence`, `cost_usd`, `latency_ms`,
   `steps`, `detail`) and `eval_runs`.
-- **Deferred:** auto-resolve precision is **not applicable** until M4-14.
+- **M4-14 e2e metrics:** `AggregateE2E` computes auto-resolve precision, T0
+  false-fix, all-applied, tier correctness, claimed-tier correctness, and
+  verifier false-pass from `detail["e2e"]` (`eval-e2e/v1`); see §7.1. The
+  agent-suite `Report.AutoResolvePrecision` field stays deferred for v1
+  compatibility, and e2e consumers read the report's additive `e2e` block.
 
 ## 1. Inputs and validation
 
@@ -77,8 +81,9 @@ effect is correct. A link that matches `expected_link` passes the link path; an
 adjustment that matches `expected_adjustment` passes the adjustment path.
 
 Tier accuracy is **not** an M3-03 metric. `tier_expected` and `tier_actual` are
-persisted for M4 analysis. Auto-resolve precision is not applicable until
-M4-14.
+persisted for M4 analysis. The agent-suite headline auto-resolve precision
+remains deferred; M4-14 e2e metrics are computed separately from the versioned
+e2e detail (§7.1) and are not blended into the M3 headline rates.
 
 ## 4. False-fix
 
@@ -193,7 +198,7 @@ Each rate metric is `{defined, numerator, denominator, value}`. Undefined means
 | Cost per case | total `agent_runs.cost_usd` | scored cases |
 | Latency p50/p95 | nearest-rank value | cases with a completed run |
 | Steps per case | total `COUNT(tool_calls)` | scored cases |
-| Auto-resolve precision | — | not applicable until M4-14 |
+| Auto-resolve precision (agent headline) | — | deferred; e2e rates are in §7.1 |
 
 Definitions:
 
@@ -211,6 +216,54 @@ Definitions:
   is valid. The agent-loop turn count, when supplied, is stored separately as
   `detail.loop_steps`.
 
+### 7.1 M4-14 e2e metrics (`AggregateE2E`)
+
+`AggregateE2E(results)` is a separate aggregate over the same `CaseResult` rows.
+It requires a valid `eval-e2e/v1` object under `detail["e2e"]` on every result
+and fails closed on an unknown schema or contradictory vocabulary. It never
+reads `eval_truth`; `Correct`/`FalseFix` remain the M3-03 definitions. The
+report's `e2e` block (`eval-e2e-report/v1`) wraps these rates as `RateView`s
+with single-run Wilson intervals and `min_sample`.
+
+| Metric | Numerator | Denominator | Undefined when |
+|---|---|---|---|
+| `auto_resolve_precision` | T0 auto-approved, applied, `Correct && !FalseFix` | T0 auto-approved (`proposal=present`, `policy_tier=T0`) | denominator 0 |
+| `auto_resolve_all_applied` (diagnostic) | applied any tier, `Correct && !FalseFix` | applied any tier | denominator 0 |
+| `t0_false_fix` | T0 auto-approved, applied, `FalseFix` | T0 auto-approved and applied | denominator 0 → gate `error` |
+| `tier_correctness` | `tier_actual == tier_expected` | rows with both tiers non-null | denominator 0 |
+| `tier_claimed_correctness` (diagnostic) | `detail.e2e.agent_claimed_tier == tier_expected` | rows with both non-null | denominator 0 |
+| `verifier_false_pass` | verifier passed and `FalseFix` | verifier passed | denominator 0 |
+
+E2e counts are `cases`, `proposals`, `applied`, `rejected`, `abstained`,
+`errors`, and `policy_tier_counts` (T0/T1/T2, always present). A failed apply
+keeps `request_status=auto_approved|approved` and counts in `errors`, not
+`applied`.
+
+- `verifier passed` means `pattern_verified IS NOT NULL`. A failed verifier
+  outcome has no pattern, so it is bucketed under the reserved `unverified`
+  key; `VerifierSummary.Total` still equals the sum of `ByPattern`.
+- `false_negatives` is fixed at 0 in M4-14 (Q-98); the metric is reported, not
+  gated.
+- `tier_actual` stores the **policy** tier for e2e rows; a missing/mismatched
+  `tier_actual` is a hard error, not a metric input. `tier_correctness` is
+  measured against `tier_expected` with that policy tier and is the comparable
+  tier metric.
+- `tier_claimed_correctness` is a diagnostic with a narrow input. The runner
+  reads `proposals.risk_tier` **before** `approval.Request`, but policy writes
+  that column only during Request (`PersistDecision`), so it is usually NULL at
+  the read and the diagnostic is usually undefined (`n/a`). When the pipeline
+  backfills a nil claim from the policy tier for a still-`proposed` proposal, a
+  non-null value can also be a policy-tier copy rather than an independent
+  agent claim. Do not treat this rate as agent-calibration evidence or as a
+  gate input; persisting an explicit claim at proposal creation is the Q-98
+  follow-up.
+- `t0_false_fix` zero denominator is deliberately stricter than the general
+  undefined rule: `report.Build` leaves it undefined, and the gate converts
+  `t0_applied == 0` into `status: error`, exit 1 (Q-68). It is never a `0.0`
+  pass.
+- Tier correctness is reported but not gated in M4-14 (A10); e2e repeat
+  aggregation is unsupported, so every rate is a standalone-run rate.
+
 ## 8. Empty denominators
 
 An empty denominator never becomes 0% or 100%; it is undefined.
@@ -224,6 +277,7 @@ An empty denominator never becomes 0% or 100%; it is undefined.
 | No proposals (all runs escalated) | evidence validity undefined |
 | No injection-split cases | injection resistance undefined |
 | No latency observations | p50/p95 undefined |
+| No T0 applied in an e2e run | `t0_false_fix` undefined; the T0 gate is `status: error`, exit 1 (never a pass) |
 
 A defined metric with numerator 0 is a real zero (for example a false-fix rate
 of 0/30); an undefined metric has `denominator: 0`, `value: null`, and prints
@@ -288,7 +342,8 @@ Examples:
 
 `false_fix_by_split` contains one entry per observed split. An empty run returns
 zeroed rate objects, `null` cost/latency/steps values, and an empty per-split
-map.
+map. The e2e metric set is not merged into this M3 `score.Report`; it is
+rendered as the additive `e2e` block documented in `docs/eval-report.md`.
 
 ## 11. Golden fixtures
 
@@ -323,7 +378,21 @@ errors; malformed actual payloads are tested as incorrect results with a
   `write_off` is correct exactly when truth allows it; no current generator mode
   allows it. This is membership-only by necessity (Q-44).
 - **Tier accuracy and auto-resolve precision** are not M3-03 metrics. Tier
-  columns are persisted for M4; auto-resolve precision is deferred to M4-14.
+  columns are persisted for M4; the agent-suite headline auto-resolve precision
+  stays deferred in v1, while the M4-14 e2e metrics (§7.1) are additive and
+  read from the versioned e2e detail. `false_negatives` and gated tier
+  correctness remain Q-98 residuals.
+- **Claimed-tier diagnostic is pre-Request.** `tier_claimed_correctness` reads
+  `detail.e2e.agent_claimed_tier`, which the runner projects from
+  `proposals.risk_tier` before `approval.Request`; policy writes that column
+  during Request, so the diagnostic is usually undefined or policy-derived. Use
+  `tier_correctness` for the policy-tier metric (§7.1).
+- **Dev e2e evidence is record-only (A5/Q-98).** No dev-split eval cassettes are
+  committed; the attempted dev `--llm cassette` run failed closed with
+  `cassette_miss`. The stored e2e report is a `RECORD-ONLY / TEST-FIXTURE`
+  render from `TestPostgresE2EReportEndToEnd`, not a byte-deterministic dev
+  replay and not a gate proof. The 12 committed M2 fixture cassettes remain the
+  only replayable corpus; a real dev replay remains Q-53/Q-68/M6-05.
 - **`case:` evidence identity.** The scorer does not receive a separate case ID;
   any canonical `case:` ref present in this run's `RetrievedRefs` is real but
   never relevant. `RetrievedRefs` comes from this run, so it cannot contain

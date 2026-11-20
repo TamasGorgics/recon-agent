@@ -21,6 +21,8 @@ import (
 // Locked defaults from the M3-04 contract.
 const (
 	DefaultSuite       = "agent"
+	SuiteAgent         = DefaultSuite
+	SuiteE2E           = "e2e"
 	DefaultRepeat      = 1
 	DefaultConcurrency = 4
 	MinConcurrency     = 1
@@ -72,12 +74,17 @@ type Options struct {
 	// It is rejected for every other LLM mode.
 	UpdateCassettes bool
 
+	// E2E selects the end-to-end approval/executor/tie-out pipeline. It is the
+	// effective mode after suite selection: --e2e and --suite e2e are
+	// equivalent spellings, and the canonical persisted suite is "e2e".
+	E2E bool
+
 	// The Set fields tell resume whether a flag was explicit. The CLI parser
 	// populates them; programmatic callers may leave them false so stored run
 	// values win where the stored fingerprint is authoritative. LLMSet,
 	// MaxCostUSDSet, and CassetteDirSet are required to distinguish an explicit
 	// `--llm cassette`, `--max-cost-usd 0`, or `--cassette-dir` from an omitted
-	// flag.
+	// flag. E2ESet distinguishes an explicit --e2e=false from the default.
 	SuiteSet       bool
 	SplitSet       bool
 	ModelSet       bool
@@ -87,6 +94,7 @@ type Options struct {
 	LLMSet         bool
 	MaxCostUSDSet  bool
 	CassetteDirSet bool
+	E2ESet         bool
 }
 
 // ParseOptions parses the `run` subcommand flags. Flag syntax errors and
@@ -110,8 +118,9 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 		datasetDir  string
 		cassetteDir string
 		update      bool
+		e2e         bool
 	)
-	fs.StringVar(&suite, "suite", DefaultSuite, "eval suite (only agent in M3-04)")
+	fs.StringVar(&suite, "suite", DefaultSuite, "eval suite: agent or e2e")
 	fs.StringVar(&split, "split", string(dataset.Dev), "dataset split: dev, test, or injection")
 	fs.StringVar(&model, "model", "", "model API id (default: config default)")
 	fs.StringVar(&prompt, "prompt", "", "prompt version (default: config default / v1)")
@@ -126,6 +135,8 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 		"cassette root for record/replay (default: eval/cassettes)")
 	fs.BoolVar(&update, "update-cassettes", false,
 		"with --llm record, overwrite existing cassette files")
+	fs.BoolVar(&e2e, "e2e", false,
+		"run the end-to-end approval/executor/tie-out pipeline after each agent run")
 	if err := fs.Parse(args); err != nil {
 		return Options{}, err
 	}
@@ -145,6 +156,7 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 		DatasetDir:      strings.TrimSpace(datasetDir),
 		CassetteDir:     strings.TrimSpace(cassetteDir),
 		UpdateCassettes: update,
+		E2E:             e2e,
 	}
 	if seed != "" {
 		parsed, err := parseSeed(seed)
@@ -172,19 +184,26 @@ func ParseOptions(args []string, out io.Writer) (Options, error) {
 	opts.LLMSet = seen["llm"]
 	opts.MaxCostUSDSet = seen["max-cost-usd"]
 	opts.CassetteDirSet = seen["cassette-dir"]
+	opts.E2ESet = seen["e2e"]
 	return opts, nil
 }
 
 // RunUsage is the `recon-eval run` help text.
 const RunUsage = `usage: recon-eval run [flags]
 
-Runs the M3 agent eval on one committed dataset split. Results are written to
+Runs the eval on one committed dataset split. Results are written to
 DATABASE_URL; sandbox databases are disposable. Public LLM modes are live,
 record (live execution plus cassette recording), and cassette (replay only);
 scripted is an internal test seam only.
 
+--e2e (or --suite e2e) additionally runs the end-to-end pipeline after each
+agent run: approval request -> simulated approver -> executor -> tie-out. The
+canonical persisted suite is "e2e". --e2e requires --repeat 1. --e2e with an
+unset or "agent" --suite selects e2e; an incompatible --suite is a usage error.
+
 Flags:
-  --suite string         eval suite (only "agent" in M3-04) (default "agent")
+  --suite string         eval suite: "agent" or "e2e" (default "agent")
+  --e2e                  run the end-to-end approval/executor/tie-out pipeline
   --split string         dataset split: dev, test, or injection (default "dev")
   --model string         model API id (default: config default)
   --prompt string        prompt version (default: config default / v1)
@@ -204,7 +223,7 @@ never a flag), refuses to overwrite an existing cassette unless
 
 Exit codes:
   0  run completed, or intentionally stopped by the cost cap
-  1  validation, database, agent, or scoring infrastructure failure
+  1  validation, database, agent, scoring, or e2e pipeline failure
   2  flag or usage error
 `
 
@@ -245,11 +264,39 @@ func defaultInt(value int, set bool, fallback int) int {
 	return value
 }
 
+// SelectSuite resolves the two equivalent e2e selectors into one effective
+// mode and canonical persisted suite. --e2e and --suite e2e may be combined
+// because they name the same mode (spec section 5 shows both); only an
+// incompatible explicit suite or an explicit --e2e=false with --suite e2e is a
+// usage error.
+func SelectSuite(opts *Options) error {
+	if opts == nil {
+		return usagef("options are required")
+	}
+	if opts.Suite != SuiteAgent && opts.Suite != SuiteE2E {
+		return usagef("--suite %q is not supported; valid suites are %q and %q",
+			opts.Suite, SuiteAgent, SuiteE2E)
+	}
+	if opts.E2ESet && !opts.E2E && opts.Suite == SuiteE2E {
+		return usagef("--e2e=false conflicts with --suite e2e")
+	}
+	if opts.E2E {
+		opts.Suite = SuiteE2E
+	}
+	if opts.Suite == SuiteE2E {
+		opts.E2E = true
+	}
+	if opts.E2E && opts.Repeat > 1 {
+		return usagef("--e2e requires --repeat 1, got %d", opts.Repeat)
+	}
+	return nil
+}
+
 // Validate checks every flag-level contract before any database or network
 // work. Resume fingerprint checks that need the stored row happen later.
 func Validate(opts Options) error {
-	if opts.Suite == "" || opts.Suite != DefaultSuite {
-		return usagef("--suite %q is not supported; only %q is valid in M3-04", opts.Suite, DefaultSuite)
+	if err := SelectSuite(&opts); err != nil {
+		return err
 	}
 	if !opts.Split.Valid() {
 		return usagef("--split %q is not dev, test, or injection", opts.Split)

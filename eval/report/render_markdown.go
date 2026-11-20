@@ -14,7 +14,8 @@ func RenderMarkdown(report Report) ([]byte, error) {
 	fmt.Fprintf(&builder, "# Eval report — run %s\n\n", mdEscape(report.Run.ID))
 	writeMetadata(&builder, report)
 	writeWarnings(&builder, report.Warnings)
-	writeHeadline(&builder, report.Headline)
+	writeHeadline(&builder, report.Headline, report.E2E)
+	writeE2EPipeline(&builder, report.E2E)
 	writePartitionTable(&builder, "By failure mode", report.ByMode)
 	writePartitionTable(&builder, "By difficulty", report.ByDifficulty)
 	writeRepeats(&builder, report.Repeats)
@@ -80,7 +81,7 @@ func writeWarnings(builder *strings.Builder, warnings []string) {
 	builder.WriteString("\n")
 }
 
-func writeHeadline(builder *strings.Builder, headline MetricBlock) {
+func writeHeadline(builder *strings.Builder, headline MetricBlock, e2e *E2EBlock) {
 	builder.WriteString("## Headline\n\n")
 	builder.WriteString("| Metric | Value | 95% CI | n | Min sample |\n")
 	builder.WriteString("|---|---|---|---|---|\n")
@@ -101,8 +102,63 @@ func writeHeadline(builder *strings.Builder, headline MetricBlock) {
 		headline.Steps.Cases)
 	writeStepsRow(builder, "Steps mean", valueOrNAPtr(headline.Steps.Mean),
 		headline.Steps.Cases)
-	fmt.Fprintf(builder, "| Auto-resolve precision | n/a | — | — | deferred to %s |\n",
-		mdEscape(headline.AutoResolvePrecision.DeferredTo))
+	if e2e != nil {
+		writeRateRow(builder, "Auto-resolve precision (T0)", e2e.AutoResolvePrecision)
+		writeRateRow(builder, "T0 false-fix", e2e.T0FalseFix)
+		writeRateRow(builder, "Tier correctness", e2e.TierCorrectness)
+		writeRateRow(builder, "Tier claimed correctness (diagnostic)", e2e.TierClaimedCorrectness)
+		writeRateRow(builder, "All-applied (diagnostic)", e2e.AutoResolveAllApplied)
+		writeRateRow(builder, "Verifier false-pass", e2e.Verifier.FalsePassRate)
+	} else {
+		fmt.Fprintf(builder, "| Auto-resolve precision | n/a | — | — | deferred to %s |\n",
+			mdEscape(headline.AutoResolvePrecision.DeferredTo))
+	}
+	builder.WriteString("\n")
+}
+
+// writeE2EPipeline renders the additive e2e section. Agent-suite reports have
+// a nil block and keep their byte-identical M3 layout.
+func writeE2EPipeline(builder *strings.Builder, e2e *E2EBlock) {
+	if e2e == nil {
+		return
+	}
+	builder.WriteString("## E2E pipeline\n\n")
+	builder.WriteString("| Metric | Count |\n")
+	builder.WriteString("|---|---|\n")
+	fmt.Fprintf(builder, "| Cases | %d |\n", e2e.Cases)
+	fmt.Fprintf(builder, "| Proposals | %d |\n", e2e.Proposals)
+	fmt.Fprintf(builder, "| Applied | %d |\n", e2e.Applied)
+	fmt.Fprintf(builder, "| Rejected | %d |\n", e2e.Rejected)
+	fmt.Fprintf(builder, "| Abstained | %d |\n", e2e.Abstained)
+	fmt.Fprintf(builder, "| Errors | %d |\n", e2e.Errors)
+	builder.WriteString("\n")
+	builder.WriteString("| Policy tier | Proposals |\n")
+	builder.WriteString("|---|---|\n")
+	for _, tier := range []string{"T0", "T1", "T2"} {
+		fmt.Fprintf(builder, "| %s | %d |\n", tier, e2e.PolicyTierCounts[tier])
+	}
+	builder.WriteString("\n")
+	if len(e2e.Verifier.ByPattern) == 0 {
+		builder.WriteString("Verifier: no outcomes recorded.\n\n")
+		return
+	}
+	fmt.Fprintf(builder,
+		"Verifier: %d evaluated, %d passed, %d false passes, %d false negatives.\n\n",
+		e2e.Verifier.Evaluated, e2e.Verifier.Passed,
+		e2e.Verifier.FalsePasses, e2e.Verifier.FalseNegatives)
+	builder.WriteString("| Pattern | Evaluated | Passed | False passes | False negatives |\n")
+	builder.WriteString("|---|---|---|---|---|\n")
+	patterns := make([]string, 0, len(e2e.Verifier.ByPattern))
+	for pattern := range e2e.Verifier.ByPattern {
+		patterns = append(patterns, pattern)
+	}
+	sort.Strings(patterns)
+	for _, pattern := range patterns {
+		counts := e2e.Verifier.ByPattern[pattern]
+		fmt.Fprintf(builder, "| %s | %d | %d | %d | %d |\n",
+			mdEscape(pattern), counts.Evaluated, counts.Passed,
+			counts.FalsePasses, counts.FalseNegatives)
+	}
 	builder.WriteString("\n")
 }
 

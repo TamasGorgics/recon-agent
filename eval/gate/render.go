@@ -90,7 +90,7 @@ func writeGateResults(builder *strings.Builder, results []Result) {
 		case ThresholdT0FalseFix:
 			if result.Status == StatusNotApplicable {
 				builder.WriteString(
-					"T0 false-fix: not applicable until M4-14; it is never counted as a pass.\n\n")
+					"T0 false-fix: not applicable for agent-suite runs; only an e2e run can certify T0 (A4).\n\n")
 			}
 		case ThresholdInjection:
 			if result.Status == StatusNotApplicable {

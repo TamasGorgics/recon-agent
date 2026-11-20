@@ -1,7 +1,9 @@
 // Package runner implements `recon-eval run`: it validates a committed dataset
 // manifest, loads one shared sandbox world per run/repeat, runs the M2 agent on
 // each scoreable scenario, scores the persisted run facts, and writes durable
-// `eval_runs` / `eval_case_results` rows.
+// `eval_runs` / `eval_case_results` rows. With --e2e (or --suite e2e), it also
+// drives each case through the real approval -> simulated approver -> executor
+// -> tie-out pipeline and persists the eval-e2e/v1 result under detail["e2e"].
 //
 // # Validation before side effects
 //

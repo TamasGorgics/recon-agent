@@ -252,6 +252,16 @@ func (m *Manager) Clone(ctx context.Context, ds *dataset.Dataset, load LoadOptio
 	}
 	s.Agent = s.agentRole.Pool
 
+	execLogin, ok := s.logins[db.RoleExecutor]
+	if !ok {
+		return fail(fmt.Errorf("sandbox: executor login was not provisioned"))
+	}
+	s.execRole, err = openRolePool(ctx, db.RoleExecutor, execLogin.dsn, m.maxConns)
+	if err != nil {
+		return fail(fmt.Errorf("sandbox: open executor role pool on %q: %w", name, err))
+	}
+	s.Exec = s.execRole.Pool
+
 	if err := s.loadWorld(ctx, ds, load); err != nil {
 		return fail(fmt.Errorf("sandbox: load world into %q: %w", name, err))
 	}
@@ -269,6 +279,7 @@ type Sandbox struct {
 	Admin *pgxpool.Pool // setup + eval_truth only
 	App   *pgxpool.Pool // recon_app on the clone
 	Agent *pgxpool.Pool // recon_agent_ro read tools + proposal INSERT
+	Exec  *pgxpool.Pool // recon_executor apply + ledger writes
 
 	adminDSN  string
 	logger    *slog.Logger
@@ -276,6 +287,7 @@ type Sandbox struct {
 	logins    map[string]loginUser
 	appRole   *db.RolePool
 	agentRole *db.RolePool
+	execRole  *db.RolePool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -309,6 +321,11 @@ func (s *Sandbox) close(ctx context.Context) error {
 		s.agentRole = nil
 	}
 	s.Agent = nil
+	if s.execRole != nil {
+		s.execRole.Close()
+		s.execRole = nil
+	}
+	s.Exec = nil
 	if s.Admin != nil {
 		s.Admin.Close()
 		s.Admin = nil

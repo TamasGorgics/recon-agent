@@ -15,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/TamasGorgics/recon-agent/eval/dataset"
+	"github.com/TamasGorgics/recon-agent/eval/e2e"
 	"github.com/TamasGorgics/recon-agent/eval/sandbox"
 	"github.com/TamasGorgics/recon-agent/eval/score"
 	"github.com/TamasGorgics/recon-agent/internal/agent/tools"
@@ -38,6 +39,7 @@ type runExecution struct {
 	resumed      bool
 	cassetteDir  string
 	recordClient llm.Client
+	policyPath   string
 }
 
 // caseResultRow is one eval_case_results insert.
@@ -148,13 +150,25 @@ func (e *runExecution) executeCase(ctx context.Context, ref sandbox.CaseRef) err
 			ref.ScenarioID, facts.RunID)
 	}
 
+	tierActual := facts.ProposalRiskTier
+	var (
+		e2eResult *e2e.Result
+		e2eErr    error
+	)
+	if e.opts.E2E {
+		result, runErr := e.runE2E(ctx, ref, facts)
+		e2eResult = &result
+		e2eErr = runErr
+		tierActual = result.PolicyTier
+	}
+
 	actual := score.Actual{
 		Outcome:        facts.Outcome,
 		RetrievedRefs:  facts.RetrievedRefs,
 		CostUSD:        facts.CostUSD,
 		Steps:          facts.ToolCalls,
 		InjectionFlags: facts.InjectionFlags,
-		TierActual:     facts.ProposalRiskTier,
+		TierActual:     tierActual,
 		Confidence:     facts.ProposalConfidence,
 		CostDetail: &score.CostDetail{
 			Allowance:  decimal.Zero,
@@ -207,6 +221,24 @@ func (e *runExecution) executeCase(ctx context.Context, ref sandbox.CaseRef) err
 	// destroyed; reports render it after the clone is gone.
 	detail["transcript"] = transcriptSnapshot(report, facts.Outcome, facts.ProposalID, facts.ProposalType)
 
+	if e2eResult != nil {
+		// The verifier projection cannot read truth, so W3 stamps the
+		// truth-equivalence false pass once ScoreCase has decided FalseFix.
+		if e2eResult.Verifier != nil {
+			e2eResult.Verifier.FalsePass = e2eResult.Verifier.Passed && result.FalseFix
+		}
+		if err := e2eResult.Validate(); err != nil {
+			fallback := failedE2EResult(facts.ProposalID, facts.ProposalRiskTier, err)
+			e2eResult = &fallback
+			if e2eErr == nil {
+				e2eErr = fmt.Errorf("%w: invalid result: %v", e2e.ErrE2EFailed, err)
+			}
+		}
+		for key, value := range e2eResult.Detail() {
+			detail[key] = value
+		}
+	}
+
 	if err := insertCaseResult(ctx, e.results, e.run.ID, caseResultRow{
 		ScenarioID:   ref.ScenarioID,
 		FailureMode:  result.Mode,
@@ -229,10 +261,99 @@ func (e *runExecution) executeCase(ctx context.Context, ref sandbox.CaseRef) err
 		return err
 	}
 	e.costs.raise(spent)
+	if e2eErr != nil {
+		return fmt.Errorf("eval/runner: scenario %s: %w", ref.ScenarioID, e2eErr)
+	}
 	return nil
 }
 
 var errNoAgentRun = errors.New("agent run row not found")
+
+// runE2E drives one case through the real approval/executor/tie-out harness.
+// The harness is case-scoped because every service uses the case's fake clock.
+// A missing statement-balance date skips tie-out (the pipeline only computes it
+// when both scope and as-of are supplied); a harness or pipeline error returns
+// a persisted partial result and an error wrapping e2e.ErrE2EFailed.
+func (e *runExecution) runE2E(ctx context.Context, ref sandbox.CaseRef,
+	facts caseFacts) (e2e.Result, error) {
+	harness, err := e2e.NewHarness(ctx, e2e.HarnessOptions{
+		Admin:         e.sandbox.Admin,
+		App:           e.sandbox.App,
+		Exec:          e.sandbox.Exec,
+		Clock:         clock.NewFake(ref.ScenarioTime),
+		PolicyPath:    e.policyPath,
+		ExecutorRunID: "executor:eval:" + e.run.ID,
+		LedgerConfig:  e.rd.Config.Ledger,
+	})
+	if err != nil {
+		return failedE2EResult(facts.ProposalID, facts.ProposalRiskTier, err),
+			fmt.Errorf("%w: build harness: %v", e2e.ErrE2EFailed, err)
+	}
+
+	input := e2e.Input{
+		ProposalID:       facts.ProposalID,
+		CaseID:           ref.CaseID,
+		AgentClaimedTier: facts.ProposalRiskTier,
+	}
+	if caseFacts, err := harness.Loader.LoadCaseFacts(ctx, ref.CaseID); err == nil {
+		input.ScopeID = caseFacts.ScopeID
+		input.AsOf = statementAsOf(ctx, e.sandbox.App, caseFacts.ScopeID, ref.ScenarioTime)
+	}
+	return harness.RunCase(ctx, input)
+}
+
+// statementAsOf returns the latest statement-balance date at or before the
+// scenario instant for the case scope. A scope without a statement (for
+// example a PSP-only scope) yields the zero time, which makes the pipeline skip
+// tie-out instead of failing on a missing statement row. A non-zero unexplained
+// amount remains a diagnostic, not a pipeline error.
+func statementAsOf(ctx context.Context, pool *pgxpool.Pool, scopeID string,
+	scenario time.Time) time.Time {
+	if pool == nil || scopeID == "" || scenario.IsZero() {
+		return time.Time{}
+	}
+	var asOf time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT as_of_date
+		   FROM statement_balances
+		  WHERE scope_id = $1::uuid
+		    AND as_of_date <= $2::date
+		  ORDER BY as_of_date DESC
+		  LIMIT 1`, scopeID, scenario.UTC()).Scan(&asOf); err != nil {
+		return time.Time{}
+	}
+	return asOf.UTC()
+}
+
+// failedE2EResult builds a valid eval-e2e/v1 document for a failure that
+// happened before RunCase could return one (for example harness construction).
+func failedE2EResult(proposalID string, claimedTier *string, cause error) e2e.Result {
+	result := e2e.Result{
+		Schema:         e2e.SchemaVersion,
+		Proposal:       e2e.ProposalNone,
+		RequestStatus:  e2e.RequestStatusNone,
+		ApproverAction: e2e.ActionNone,
+		Failed:         true,
+		Error:          truncateError(cause),
+	}
+	if proposalID != "" && tools.IsUUID(proposalID) {
+		result.Proposal = e2e.ProposalPresent
+		result.ProposalID = strings.ToLower(proposalID)
+		result.AgentClaimedTier = claimedTier
+	}
+	if err := result.Validate(); err != nil {
+		// Never persist an invalid closed-schema document.
+		return e2e.Result{
+			Schema:         e2e.SchemaVersion,
+			Proposal:       e2e.ProposalNone,
+			RequestStatus:  e2e.RequestStatusNone,
+			ApproverAction: e2e.ActionNone,
+			Failed:         true,
+			Error:          truncateError(err),
+		}
+	}
+	return result
+}
 
 func (e *runExecution) loadFacts(ctx context.Context, ref sandbox.CaseRef,
 	report agentrun.Report) (caseFacts, error) {

@@ -33,6 +33,11 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(errOut, "usage: recon-eval run") {
 		t.Fatalf("run -h output = %q", errOut)
 	}
+	for _, phrase := range []string{"--e2e", "--suite", "agent", "e2e"} {
+		if !strings.Contains(errOut, phrase) {
+			t.Errorf("run -h output is missing %q", phrase)
+		}
+	}
 }
 
 // TestRunUsageErrors proves every flag/usage error exits 2 before database or
@@ -55,6 +60,10 @@ func TestRunUsageErrors(t *testing.T) {
 		"seed negative":      {"--seed", "-3"},
 		"resume malformed":   {"--resume", "not-a-uuid"},
 		"resume with repeat": {"--resume", "11111111-1111-4111-8111-111111111111", "--repeat", "2"},
+		"e2e with repeat":    {"--e2e", "--repeat", "2"},
+		"suite e2e repeat":   {"--suite", "e2e", "--repeat", "2"},
+		"e2e bad suite":      {"--e2e", "--suite", "matcher"},
+		"e2e false alias":    {"--e2e=false", "--suite", "e2e"},
 		"live no key":        {"--llm", "live", "--max-cost-usd", "1"},
 		"live zero cap":      {"--llm", "live", "--max-cost-usd", "0"},
 		"unknown model":      {"--model", "no-such-model"},

@@ -37,6 +37,8 @@ type runRow struct {
 	LLMKnown       bool
 	CapKnown       bool
 	CassetteKnown  bool
+	E2E            bool
+	E2EKnown       bool
 	StartedAt      time.Time
 	EndedAt        *time.Time
 	RepeatGroup    string
@@ -46,6 +48,9 @@ type runRow struct {
 type runConfigDocument struct {
 	Eval    evalSettings `json:"eval"`
 	Pricing llm.Snapshot `json:"pricing"`
+	// E2E marks an end-to-end run at config.e2e. It is omitted for agent runs
+	// so historical config bytes and readers are unchanged.
+	E2E bool `json:"e2e,omitempty"`
 }
 
 type evalSettings struct {
@@ -60,6 +65,7 @@ type evalSettings struct {
 }
 
 func buildRunConfig(opts Options, repeatIndex int) ([]byte, error) {
+	e2e := opts.E2E || opts.Suite == SuiteE2E
 	document := runConfigDocument{
 		Eval: evalSettings{
 			Suite:       opts.Suite,
@@ -72,6 +78,10 @@ func buildRunConfig(opts Options, repeatIndex int) ([]byte, error) {
 			CassetteDir: opts.CassetteDir,
 		},
 		Pricing: llm.PricingSnapshot(),
+		E2E:     e2e,
+	}
+	if e2e {
+		document.Eval.Suite = SuiteE2E
 	}
 	data, err := json.Marshal(document)
 	if err != nil {
@@ -108,9 +118,14 @@ func insertRun(ctx context.Context, pool *pgxpool.Pool, opts Options, rd *resolv
 		Seed:           rd.Manifest.Seed,
 		GitSHA:         gitSHA,
 		Config:         configJSON,
+		E2E:            opts.E2E || opts.Suite == SuiteE2E,
+		E2EKnown:       true,
 		StartedAt:      startedAt,
 		RepeatGroup:    repeatGroup,
 		RepeatIndex:    repeatIndex,
+	}
+	if row.E2E {
+		row.Suite = SuiteE2E
 	}
 	err = pool.QueryRow(ctx,
 		`INSERT INTO eval_runs
@@ -169,6 +184,12 @@ func loadRun(ctx context.Context, pool *pgxpool.Pool, id string) (runRow, error)
 	}
 	row.CassetteDir = cassetteDir
 	row.CassetteKnown = cassetteKnown
+	e2eMode, e2eKnown, err := parseStoredE2E(configJSON)
+	if err != nil {
+		return runRow{}, fmt.Errorf("eval/runner: parse config for run %s: %w", id, err)
+	}
+	row.E2E = e2eMode
+	row.E2EKnown = e2eKnown
 	return row, nil
 }
 
@@ -176,6 +197,7 @@ func loadRun(ctx context.Context, pool *pgxpool.Pool, id string) (runRow, error)
 // treat as authoritative. Pointer fields distinguish an absent value from an
 // explicit zero.
 type storedRunSettings struct {
+	E2E  *bool `json:"e2e"`
 	Eval struct {
 		LLM         string  `json:"llm"`
 		MaxCostUSD  *string `json:"max_cost_usd"`
@@ -232,6 +254,22 @@ func parseStoredCassetteDir(data []byte) (string, bool, error) {
 		return "", false, nil
 	}
 	return dir, true, nil
+}
+
+// parseStoredE2E reads the top-level config.e2e marker. A missing key means an
+// agent-era run (false, unknown); a present false is an explicit agent run.
+func parseStoredE2E(data []byte) (bool, bool, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return false, false, nil
+	}
+	var settings storedRunSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return false, false, fmt.Errorf("decode stored eval settings: %w", err)
+	}
+	if settings.E2E == nil {
+		return false, false, nil
+	}
+	return *settings.E2E, true, nil
 }
 
 // finishRun sets ended_at, merges a top-level patch into eval_runs.config, and
@@ -292,6 +330,21 @@ func loadSpent(ctx context.Context, pool *pgxpool.Pool, runID string) (decimal.D
 		return decimal.Zero, 0, fmt.Errorf("eval/runner: parse spent cost %q: %w", costText, err)
 	}
 	return spent, count, nil
+}
+
+// loadFailedE2ECount counts persisted e2e case failures. It is used after a
+// resume skips already-completed cases so a previously failed run stays
+// fail-closed instead of finalizing as a success.
+func loadFailedE2ECount(ctx context.Context, pool *pgxpool.Pool, runID string) (int, error) {
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*)
+		   FROM eval_case_results
+		  WHERE eval_run_id = $1::uuid
+		    AND detail->'e2e'->>'failed' = 'true'`, runID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("eval/runner: load failed e2e cases: %w", err)
+	}
+	return count, nil
 }
 
 func insertCaseResult(ctx context.Context, pool *pgxpool.Pool, runID string, result caseResultRow) error {

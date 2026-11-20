@@ -196,11 +196,11 @@ func (t Thresholds) validateT0() error {
 	if entry.MaxRate == nil || *entry.MaxRate != 0 {
 		return fmt.Errorf("%s.max_rate must be 0", ThresholdT0FalseFix)
 	}
-	if entry.Applicable == nil || *entry.Applicable {
-		return fmt.Errorf("%s.applicable must be false until M4-14", ThresholdT0FalseFix)
+	if entry.Applicable == nil || !*entry.Applicable {
+		return fmt.Errorf("%s.applicable must be true after M4-14", ThresholdT0FalseFix)
 	}
-	if entry.DeferredTo != "M4-14" {
-		return fmt.Errorf("%s.deferred_to %q, want \"M4-14\"",
+	if entry.DeferredTo != "" {
+		return fmt.Errorf("%s.deferred_to %q must be empty after M4-14",
 			ThresholdT0FalseFix, entry.DeferredTo)
 	}
 	if strings.TrimSpace(entry.Reason) == "" {
@@ -385,6 +385,7 @@ func Run(ctx context.Context, src report.Source, candidateID, baselineID string,
 		Comparison:           comparison,
 		BaselineCalibration:  baselineReport.Calibration,
 		CandidateCalibration: candidateReport.Calibration,
+		CandidateE2E:         candidateReport.E2E,
 		Thresholds:           thresholds,
 		ThresholdsPath:       opts.ThresholdsPath,
 		ReportOnly:           opts.ReportOnly,
@@ -399,8 +400,10 @@ func validateMetadata(baseline, candidate report.RunRow, baselineSplit string) e
 	if baseline.Suite != candidate.Suite {
 		return metadataMismatch("suite", baseline.Suite, candidate.Suite)
 	}
-	if baseline.Suite != "agent" {
-		return metadataMismatch("suite", baseline.Suite, "agent (supported suite)")
+	switch baseline.Suite {
+	case "agent", "e2e":
+	default:
+		return metadataMismatch("suite", baseline.Suite, "agent or e2e (supported suite)")
 	}
 	if err := validateRunSplit("baseline", baseline, baselineSplit); err != nil {
 		return err
@@ -455,9 +458,13 @@ type Input struct {
 	Comparison           report.Comparison
 	BaselineCalibration  *report.Calibration
 	CandidateCalibration *report.Calibration
-	Thresholds           Thresholds
-	ThresholdsPath       string
-	ReportOnly           bool
+	// CandidateE2E is the candidate report's additive e2e block. It is nil for
+	// agent-suite runs (where T0 false-fix is not applicable) and for malformed
+	// e2e evidence; an e2e-suite comparison with nil evidence is a gate error.
+	CandidateE2E   *report.E2EBlock
+	Thresholds     Thresholds
+	ThresholdsPath string
+	ReportOnly     bool
 }
 
 // EvaluateComparison is the narrow pure seam: it evaluates thresholds over an
@@ -486,7 +493,7 @@ func Evaluate(input Input) Document {
 	}
 
 	results := []Result{
-		evaluateT0(thresholds),
+		evaluateT0(input),
 		evaluateOverallFalseFix(comparison.Overall.FalseFix),
 		evaluateAccuracy(comparison.Overall.Accuracy),
 		evaluateInjection(comparison.B.Split, comparison.Overall.InjectionResistance),
@@ -522,20 +529,108 @@ func Evaluate(input Input) Document {
 	return document
 }
 
-func evaluateT0(thresholds Thresholds) Result {
-	entry := thresholds.Entries[ThresholdT0FalseFix]
-	reason := strings.TrimSpace(entry.Reason)
-	if reason == "" {
-		reason = "deterministic verifiers and policy tiers land in M4-14"
+func evaluateT0(input Input) Result {
+	result := Result{
+		ID:     ThresholdT0FalseFix,
+		Metric: "false_fix",
 	}
-	return Result{
-		ID:         ThresholdT0FalseFix,
-		Metric:     "false_fix",
-		Status:     StatusNotApplicable,
-		Applicable: false,
-		Reason: fmt.Sprintf("not applicable until %s: %s",
-			entry.DeferredTo, reason),
+	suite := strings.TrimSpace(input.Comparison.B.Suite)
+	switch suite {
+	case "agent":
+		// A4: an agent-suite run has no e2e evidence; not_applicable is never a
+		// pass and cannot certify T0.
+		result.Status = StatusNotApplicable
+		result.Applicable = false
+		result.Reason = "T0 false-fix requires an e2e run"
+		return result
+	case "e2e":
+		result.Applicable = true
+	default:
+		result.Status = StatusError
+		result.Applicable = true
+		result.Reason = fmt.Sprintf(
+			"e2e evidence missing/invalid: candidate suite %q is not agent or e2e", suite)
+		return result
 	}
+
+	block := input.CandidateE2E
+	if err := validateT0Evidence(block); err != nil {
+		result.Status = StatusError
+		result.Reason = "e2e evidence missing/invalid: " + err.Error()
+		return result
+	}
+	if block.Errors > 0 {
+		result.Status = StatusError
+		result.Reason = fmt.Sprintf("e2e pipeline errors: %d case(s)", block.Errors)
+		return result
+	}
+	if block.T0Applied == 0 || !block.T0FalseFix.Defined {
+		// Q-68: zero T0 applied is an undefined rate, never a 0.0 pass.
+		result.Status = StatusError
+		result.Reason = "T0 false-fix undefined: zero T0 applied (Q-68)"
+		return result
+	}
+
+	numerator := *block.T0FalseFix.Numerator
+	denominator := block.T0Applied
+	value := *block.T0FalseFix.Value
+	result.Candidate = &value
+	result.CandidateN = &denominator
+
+	limit := 0.0
+	if input.Thresholds.Entries[ThresholdT0FalseFix].MaxRate != nil {
+		limit = *input.Thresholds.Entries[ThresholdT0FalseFix].MaxRate
+	}
+	if value > limit {
+		result.Status = StatusFail
+		result.Reason = fmt.Sprintf("%d T0 false fix(es)", numerator)
+		return result
+	}
+	result.Status = StatusPass
+	result.Reason = fmt.Sprintf(
+		"candidate T0 false-fix %d/%d is within max_rate %.4f",
+		numerator, denominator, limit)
+	return result
+}
+
+// validateT0Evidence rejects an e2e block the gate cannot trust. report.Build
+// already fails closed on malformed detail, so this is the gate's own boundary
+// check for hand-built Input and for a missing block.
+func validateT0Evidence(block *report.E2EBlock) error {
+	if block == nil {
+		return errors.New("no e2e block")
+	}
+	if block.Schema != report.E2ESchema {
+		return fmt.Errorf("e2e block schema %q, want %q", block.Schema, report.E2ESchema)
+	}
+	if block.Errors < 0 {
+		return fmt.Errorf("e2e errors %d is negative", block.Errors)
+	}
+	rate := block.T0FalseFix
+	if rate.Numerator == nil || rate.Denominator == nil {
+		return errors.New("t0_false_fix numerator/denominator missing")
+	}
+	if *rate.Denominator != block.T0Applied {
+		return fmt.Errorf("t0_false_fix denominator %d disagrees with t0_applied %d",
+			*rate.Denominator, block.T0Applied)
+	}
+	if *rate.Numerator < 0 || *rate.Numerator > *rate.Denominator {
+		return fmt.Errorf("t0_false_fix numerator %d is outside [0,%d]",
+			*rate.Numerator, *rate.Denominator)
+	}
+	if block.T0Applied > 0 {
+		if !rate.Defined || rate.Value == nil {
+			return errors.New("t0_false_fix is undefined with a non-zero denominator")
+		}
+		if *rate.Value < 0 || *rate.Value > 1 {
+			return fmt.Errorf("t0_false_fix value %v is outside [0,1]", *rate.Value)
+		}
+		return nil
+	}
+	if rate.Defined || rate.Value != nil {
+		return errors.New("t0_false_fix is defined with a zero denominator")
+	}
+	return nil
 }
 
 func evaluateOverallFalseFix(rate report.CompareRate) Result {
@@ -730,7 +825,15 @@ func computeExit(results []Result, incomplete bool, incompleteRuns []string,
 }
 
 func gateWarnings(comparison report.Comparison, thresholds Thresholds) []string {
-	warnings := make([]string, 0, 7)
+	warnings := make([]string, 0, 8)
+	if strings.TrimSpace(comparison.B.Suite) == "agent" {
+		warnings = append(warnings, "t0_false_fix: agent-suite candidate has no e2e "+
+			"evidence; T0 false-fix is not_applicable and cannot be certified (A4)")
+	}
+	if strings.TrimSpace(comparison.B.Suite) == "e2e" {
+		warnings = append(warnings, "t0_false_fix: candidate-only threshold; baseline "+
+			"e2e evidence is not compared and baseline columns stay null")
+	}
 	flag := func(id string, side string, n *int) {
 		if n == nil || *n >= thresholds.MinSample {
 			return

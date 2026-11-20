@@ -15,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/TamasGorgics/recon-agent/eval/dataset"
+	"github.com/TamasGorgics/recon-agent/eval/e2e"
 	"github.com/TamasGorgics/recon-agent/eval/sandbox"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
@@ -73,6 +74,9 @@ func Run(ctx context.Context, opts Options, deps Deps) (Summary, error) {
 	if err := Validate(opts); err != nil {
 		return Summary{}, err
 	}
+	if err := SelectSuite(&opts); err != nil {
+		return Summary{}, err
+	}
 
 	var (
 		stored  *runRow
@@ -91,6 +95,9 @@ func Run(ctx context.Context, opts Options, deps Deps) (Summary, error) {
 			return Summary{}, err
 		}
 		if err := applyResumeOptions(&opts, row); err != nil {
+			return Summary{}, err
+		}
+		if err := SelectSuite(&opts); err != nil {
 			return Summary{}, err
 		}
 		lock, err = acquireRunLock(ctx, results, row.ID)
@@ -131,6 +138,10 @@ func Run(ctx context.Context, opts Options, deps Deps) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	// The agent's proposal validation must use the same adjustment allowlist as
+	// the sandbox world it runs against. The committed dataset uses
+	// currency-suffixed account codes; the generic config default does not.
+	runtimeCfg.Ledger = rd.Config.Ledger
 	root, err := moduleRoot(deps)
 	if err != nil {
 		return Summary{}, err
@@ -152,6 +163,18 @@ func Run(ctx context.Context, opts Options, deps Deps) (Summary, error) {
 				spent, count, err := loadSpent(ctx, results, stored.ID)
 				if err != nil {
 					return summary, err
+				}
+				if opts.E2E {
+					failed, err := loadFailedE2ECount(ctx, results, stored.ID)
+					if err != nil {
+						return summary, err
+					}
+					if failed > 0 {
+						return summary, markRunError(ctx, results, *stored, runClock, spent,
+							opts.MaxCostUSD, fmt.Errorf(
+								"%w: %d persisted case(s) failed e2e", e2e.ErrE2EFailed, failed),
+							logger)
+					}
 				}
 				aborted, err := finalizeRun(ctx, results, *stored, opts, runClock, spent,
 					count, false, logger)
@@ -210,10 +233,26 @@ func Run(ctx context.Context, opts Options, deps Deps) (Summary, error) {
 // applyResumeOptions makes the stored run authoritative for fields the caller
 // did not explicitly set, then rejects any conflicting explicit flag.
 func applyResumeOptions(opts *Options, stored runRow) error {
-	if opts.SuiteSet && opts.Suite != stored.Suite {
+	storedE2E := stored.E2E || stored.Suite == SuiteE2E
+	explicitE2E := opts.E2E || opts.Suite == SuiteE2E
+	if (opts.E2ESet || opts.SuiteSet) && explicitE2E != storedE2E {
+		return usagef("--e2e %t conflicts with stored run e2e mode %t", explicitE2E, storedE2E)
+	}
+	explicitSuite := opts.Suite
+	if opts.E2E && explicitSuite == SuiteAgent {
+		// --e2e with --suite agent is the documented alias for e2e.
+		explicitSuite = SuiteE2E
+	}
+	if opts.SuiteSet && explicitSuite != stored.Suite {
 		return usagef("--suite %q conflicts with stored run suite %q", opts.Suite, stored.Suite)
 	}
-	opts.Suite = stored.Suite
+	if storedE2E {
+		opts.Suite = SuiteE2E
+		opts.E2E = true
+	} else {
+		opts.Suite = stored.Suite
+		opts.E2E = false
+	}
 	if opts.SplitSet && opts.Split != stored.Split {
 		return usagef("--split %q conflicts with stored run split %q", opts.Split, stored.Split)
 	}
@@ -278,7 +317,12 @@ func applyResumeOptions(opts *Options, stored runRow) error {
 }
 
 func validateResumeFingerprint(opts Options, stored runRow, rd *resolvedDataset) error {
+	storedE2E := stored.E2E || stored.Suite == SuiteE2E
 	switch {
+	case opts.Suite != stored.Suite:
+		return usagef("--suite %q conflicts with stored run suite %q", opts.Suite, stored.Suite)
+	case opts.E2E != storedE2E:
+		return usagef("--e2e %t conflicts with stored run e2e mode %t", opts.E2E, storedE2E)
 	case opts.Split != stored.Split:
 		return usagef("--split %q conflicts with stored run split %q", opts.Split, stored.Split)
 	case opts.Model != stored.Model:
@@ -409,6 +453,20 @@ func executeRun(ctx context.Context, row runRow, opts Options, rd *resolvedDatas
 		cassetteDir:  summary.CassetteDir,
 		recordClient: recordClient,
 	}
+	root, err := moduleRoot(deps)
+	if err != nil {
+		_ = sb.Close(context.WithoutCancel(ctx))
+		return summary, markRunError(ctx, results, row, runClock, spent, opts.MaxCostUSD,
+			err, logger)
+	}
+	policyFile := strings.TrimSpace(runtimeCfg.Policy.File)
+	if policyFile == "" {
+		policyFile = e2e.DefaultPolicyPath
+	}
+	if !filepath.IsAbs(policyFile) {
+		policyFile = filepath.Join(root, policyFile)
+	}
+	execution.policyPath = policyFile
 	executed, aborted, poolErr := executePool(ctx, execution, pending)
 	closeErr := sb.Close(context.WithoutCancel(ctx))
 
@@ -430,6 +488,18 @@ func executeRun(ctx context.Context, row runRow, opts Options, rd *resolvedDatas
 	}
 	if poolErr != nil {
 		return summary, markRunError(ctx, results, row, runClock, summary.SpentUSD, opts.MaxCostUSD, poolErr, logger)
+	}
+	if opts.E2E {
+		failed, err := loadFailedE2ECount(ctx, results, row.ID)
+		if err != nil {
+			return summary, markRunError(ctx, results, row, runClock, summary.SpentUSD,
+				opts.MaxCostUSD, err, logger)
+		}
+		if failed > 0 {
+			return summary, markRunError(ctx, results, row, runClock, summary.SpentUSD,
+				opts.MaxCostUSD, fmt.Errorf("%w: %d case(s) failed e2e",
+					e2e.ErrE2EFailed, failed), logger)
+		}
 	}
 	finalAborted, err := finalizeRun(ctx, results, row, opts, runClock, summary.SpentUSD,
 		summary.Completed, aborted, logger)

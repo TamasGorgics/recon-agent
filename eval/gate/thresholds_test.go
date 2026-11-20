@@ -69,14 +69,17 @@ func TestCommittedThresholds(t *testing.T) {
 		}
 	}
 	t0 := thresholds.Entries[ThresholdT0FalseFix]
-	if t0.Applicable == nil || *t0.Applicable {
-		t.Fatal("t0_false_fix must be not applicable in M3-09")
+	if t0.Applicable == nil || !*t0.Applicable {
+		t.Fatal("t0_false_fix must be applicable after M4-14")
 	}
-	if t0.DeferredTo != "M4-14" {
-		t.Fatalf("deferred_to = %q", t0.DeferredTo)
+	if t0.DeferredTo != "" {
+		t.Fatalf("deferred_to = %q, want empty after M4-14", t0.DeferredTo)
 	}
-	if !strings.Contains(t0.Reason, "M4-14") {
-		t.Fatalf("reason = %q, want M4-14", t0.Reason)
+	if t0.MaxRate == nil || *t0.MaxRate != 0 {
+		t.Fatalf("max_rate = %v, want 0", t0.MaxRate)
+	}
+	if strings.TrimSpace(t0.Reason) == "" {
+		t.Fatal("t0_false_fix reason is empty")
 	}
 	injection := thresholds.Entries[ThresholdInjection]
 	if injection.MinRate == nil || *injection.MinRate != 1.0 {
@@ -169,11 +172,19 @@ func TestThresholdsValidation(t *testing.T) {
 		"min sample zero": func(content string) string {
 			return strings.Replace(content, "min_sample: 30", "min_sample: 0", 1)
 		},
-		"t0 applicable": func(content string) string {
-			return strings.Replace(content, "    applicable: false", "    applicable: true", 1)
+		"t0 not applicable": func(content string) string {
+			return strings.Replace(content, "    applicable: true", "    applicable: false", 1)
+		},
+		"t0 missing applicable": func(content string) string {
+			return strings.Replace(content, "    applicable: true\n", "", 1)
 		},
 		"t0 deferred": func(content string) string {
-			return strings.Replace(content, "deferred_to: M4-14", "deferred_to: M4-13", 1)
+			return strings.Replace(content, "    applicable: true\n",
+				"    applicable: true\n    deferred_to: M4-13\n", 1)
+		},
+		"t0 missing reason": func(content string) string {
+			return strings.Replace(content,
+				"    reason: \"spec 11.5: any T0 false fix fails the gate\"\n", "", 1)
 		},
 		"t0 max rate": func(content string) string {
 			return strings.Replace(content, "    max_rate: 0", "    max_rate: 1", 1)
