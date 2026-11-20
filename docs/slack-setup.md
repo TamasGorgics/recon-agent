@@ -9,12 +9,11 @@ Requirements: `docs/spec.md` section 8.3 and sections 10–12, and
 `internal/approval/slack/doc.go`; the recorded residuals and accepted
 boundaries are in `docs/open-questions.md` Q-97.
 
-> **Status: code complete, manual smoke PENDING.** The AC-15 manual smoke has
-> **not** been run in this repository/environment. M4-12 is not done until a
-> human with a real Slack workspace and tunnel runs the checklist in
-> [Manual smoke checklist](#manual-smoke-checklist-ac-15) and records the
-> result. Do not tick the roadmap M4-12 box on the strength of the automated
-> suite alone.
+> **Status: COMPLETE — human-confirmed PASS (2026-11-20).** A human with a real
+> Slack workspace and tunnel ran the checklist in
+> [Manual smoke checklist](#manual-smoke-checklist-ac-15) and confirmed a pass.
+> Commit/PR: M4-12 `192581e` / PR #24 (merged). The operator and workspace were
+> not supplied.
 
 ## What runs where
 
@@ -249,10 +248,11 @@ ORDER BY p.created_at DESC;
 
 ## Manual smoke checklist (AC-15)
 
-> **PENDING — HUMAN-GATED. NOT RUN.** This checklist cannot pass in this
-> environment. A human with a real Slack workspace and a public tunnel must
-> run it once and record the result below. Automated tests, fake Slack
-> servers, and sanitized fixtures do not satisfy AC-15.
+> **COMPLETE — human-confirmed PASS (2026-11-20).** A human with a real Slack
+> workspace and a public tunnel ran this checklist once and confirmed a pass;
+> the result is recorded below. Commit/PR: M4-12 `192581e` / PR #24 (merged).
+> Automated tests, fake Slack servers, and sanitized fixtures do not satisfy
+> AC-15; this result rests on the human confirmation.
 
 ### Known residuals before AC-15
 
@@ -328,7 +328,7 @@ T1 proposal exists (section 7).
 
 | Date | Slack workspace | Operator | API/outbox commit | Result | Notes/deviations |
 |---|---|---|---|---|---|
-| — | — | — | — | **PENDING — not run** | Human-gated; do not fabricate. |
+| 2026-11-20 | not supplied | not supplied | M4-12 `192581e` / PR #24 (merged) | **COMPLETE — human-confirmed PASS** | Human-confirmed. Operator and workspace were not supplied. |
 
 ## Troubleshooting
 
