@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"strings"
@@ -189,5 +190,108 @@ func TestValidateLiveGuardsNeverLeakKey(t *testing.T) {
 	opts.MaxCostUSD = decimal.RequireFromString("1")
 	if err := Validate(opts); err != nil {
 		t.Fatalf("live with key and cap: %v", err)
+	}
+}
+
+func TestSuiteSelectionMatrix(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		wantSuite string
+		wantE2E   bool
+		wantUsage bool
+	}{
+		{name: "default agent", wantSuite: SuiteAgent},
+		{name: "agent explicit", args: []string{"--suite", "agent"}, wantSuite: SuiteAgent},
+		{name: "e2e flag", args: []string{"--e2e"}, wantSuite: SuiteE2E, wantE2E: true},
+		{name: "suite e2e", args: []string{"--suite", "e2e"}, wantSuite: SuiteE2E, wantE2E: true},
+		{name: "both selectors agree", args: []string{"--e2e", "--suite", "e2e"},
+			wantSuite: SuiteE2E, wantE2E: true},
+		{name: "e2e plus agent suite", args: []string{"--e2e", "--suite", "agent"},
+			wantSuite: SuiteE2E, wantE2E: true},
+		{name: "incompatible suite", args: []string{"--e2e", "--suite", "matcher"}, wantUsage: true},
+		{name: "e2e false with suite e2e", args: []string{"--e2e=false", "--suite", "e2e"}, wantUsage: true},
+		{name: "repeat with e2e flag", args: []string{"--e2e", "--repeat", "2"}, wantUsage: true},
+		{name: "repeat with suite e2e", args: []string{"--suite", "e2e", "--repeat", "2"}, wantUsage: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := ParseOptions(tc.args, &bytes.Buffer{})
+			if err != nil {
+				t.Fatalf("ParseOptions(%v): %v", tc.args, err)
+			}
+			ApplyDefaults(&opts)
+			if err := Validate(opts); tc.wantUsage {
+				if !IsUsage(err) {
+					t.Fatalf("Validate(%v) = %v, want usage error", tc.args, err)
+				}
+				return
+			} else if err != nil {
+				t.Fatalf("Validate(%v): %v", tc.args, err)
+			}
+			if err := SelectSuite(&opts); err != nil {
+				t.Fatalf("SelectSuite(%v): %v", tc.args, err)
+			}
+			if opts.Suite != tc.wantSuite || opts.E2E != tc.wantE2E {
+				t.Fatalf("suite/e2e = %q/%t, want %q/%t", opts.Suite, opts.E2E,
+					tc.wantSuite, tc.wantE2E)
+			}
+		})
+	}
+}
+
+func TestBuildRunConfigE2EMarker(t *testing.T) {
+	base := Options{
+		Suite:       SuiteE2E,
+		Split:       dataset.Dev,
+		Repeat:      1,
+		Concurrency: 4,
+		LLM:         LLMCassette,
+		E2E:         true,
+	}
+	raw, err := buildRunConfig(base, 0)
+	if err != nil {
+		t.Fatalf("buildRunConfig e2e: %v", err)
+	}
+	var e2eDocument map[string]any
+	if err := json.Unmarshal(raw, &e2eDocument); err != nil {
+		t.Fatalf("unmarshal e2e config: %v", err)
+	}
+	if flagValue, ok := e2eDocument["e2e"].(bool); !ok || !flagValue {
+		t.Fatalf("e2e config marker = %#v, want true", e2eDocument["e2e"])
+	}
+	evalSection, _ := e2eDocument["eval"].(map[string]any)
+	if evalSection["suite"] != SuiteE2E {
+		t.Fatalf("e2e config suite = %#v, want %q", evalSection["suite"], SuiteE2E)
+	}
+
+	// A programmatic Suite=e2e without E2E still records the canonical marker.
+	derived := base
+	derived.E2E = false
+	raw, err = buildRunConfig(derived, 0)
+	if err != nil {
+		t.Fatalf("buildRunConfig derived: %v", err)
+	}
+	var derivedDocument map[string]any
+	if err := json.Unmarshal(raw, &derivedDocument); err != nil {
+		t.Fatalf("unmarshal derived config: %v", err)
+	}
+	if flagValue, ok := derivedDocument["e2e"].(bool); !ok || !flagValue {
+		t.Fatalf("derived e2e config marker = %#v, want true", derivedDocument["e2e"])
+	}
+
+	agent := base
+	agent.Suite = SuiteAgent
+	agent.E2E = false
+	raw, err = buildRunConfig(agent, 0)
+	if err != nil {
+		t.Fatalf("buildRunConfig agent: %v", err)
+	}
+	var agentDocument map[string]any
+	if err := json.Unmarshal(raw, &agentDocument); err != nil {
+		t.Fatalf("unmarshal agent config: %v", err)
+	}
+	if _, present := agentDocument["e2e"]; present {
+		t.Fatalf("agent config unexpectedly carries e2e: %#v", agentDocument["e2e"])
 	}
 }

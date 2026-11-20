@@ -103,6 +103,44 @@ still includes `injection_memo` rows in accuracy, as the scorer does.
 Every rate is a report-local wrapper around `score.Rate`; `eval/score.Rate` and
 `eval/score.Report` are unchanged.
 
+## E2E report block (`eval-e2e-report/v1`)
+
+When `eval_runs.suite = 'e2e'` (or every case row carries a valid
+`detail["e2e"]`), the report gains an optional root `e2e` field. It is omitted
+entirely for agent-suite reports, so the existing `eval-report/v1` bytes and
+goldens are unchanged. The block is:
+
+```text
+schema, cases, proposals, applied, rejected, abstained, errors,
+policy_tier_counts {T0,T1,T2}, t0_auto_resolved, t0_applied,
+t0_false_fix, auto_resolve_precision, auto_resolve_all_applied,
+tier_correctness, tier_claimed_correctness,
+verifier {evaluated, passed, false_passes, false_negatives,
+          false_pass_rate, by_pattern}
+```
+
+Every rate is a `RateView` with `aggregation=single_run`, numerator,
+denominator, value, Wilson bounds, `min_sample`, and a null `repeat`. The
+definitions are in `docs/eval-scoring.md` §7.1: T0 precision uses all T0
+auto-approved cases (apply failures count against precision), `t0_false_fix`
+uses T0 applied, and an empty denominator is undefined (`value: null`), never
+0 or 1. `false_negatives` is fixed at 0 in M4-14; failed verifier outcomes are
+bucketed under `unverified` so the verifier scorecard total still equals the
+per-pattern sum.
+
+Markdown adds the e2e headline rows (`Auto-resolve precision (T0)`, `T0
+false-fix`, `Tier correctness`, `Tier claimed correctness (diagnostic)`,
+`All-applied (diagnostic)`, `Verifier false-pass`) and an `## E2E pipeline`
+section with counts, policy-tier counts, and the verifier per-pattern table.
+For an e2e report the deferred M3 auto-resolve row is suppressed; agent reports
+keep it.
+
+`Build` fails closed on an unknown `eval-e2e/v1` schema, a `policy_tier`
+outside T0/T1/T2, an applied result whose status disagrees, a verifier pass
+without a pattern, a partial mix of e2e and non-e2e rows, an e2e repeat group,
+or `tier_actual` disagreeing with `e2e.policy_tier`. `tier_actual` holds the
+policy tier for e2e rows; the agent-claimed tier is diagnostic-only.
+
 ## Wilson intervals
 
 Rates carry a two-sided 95% Wilson score interval with
@@ -239,10 +277,14 @@ retired for newly built reports. Historical M3-era reports and committed
 baseline snapshots keep the bytes they were generated with. The report goldens
 (`eval/report/testdata/report.{md,json}`) pin the nil-summary card.
 
-`recon-eval report` has no flag for verifier outcomes, so a report built by the
-CLI currently always renders the nil-summary card. Populating the summary from
-`proposals.verification` / `pattern_verified` is eval-harness work and remains
-a documented residual (Q-89); no live per-run population is claimed here.
+For an e2e run, `Build` derives the verifier summary from the persisted
+`detail["e2e"].verifier` buckets (M4-14), so the existing scorecard renders
+without a CLI flag; an explicit `Options.VerifierSummary` must match the
+derived summary or `Build` fails closed. For an agent run, `recon-eval report`
+has no flag for verifier outcomes, so the CLI renders the nil-summary card;
+populating that card from `proposals.verification` / `pattern_verified` remains
+a documented residual (Q-89). No live per-run population is claimed for agent
+runs.
 
 ## Run comparison (`compare/v1`)
 
@@ -319,8 +361,9 @@ recon-eval gate --run <candidate_run_id> --baseline <baseline_run_id>
 
 The gate is the M3-09 mission-threshold command. It is same-combination only
 and held-out only: both runs must be standalone (not repeat-group members), on
-`thresholds.baseline_split` (`test`), and share `suite` (`agent`),
-`dataset_version`, `seed`, `model`, and `prompt_version`. A `dev` or
+`thresholds.baseline_split` (`test`), and share `suite` (`agent` or `e2e`; both
+sides must be the same), `dataset_version`, `seed`, `model`, and
+`prompt_version`. A `dev` or
 `injection` run is rejected with exit 2 before any comparison or threshold
 evaluation; there is no override flag. Cross-model or cross-prompt comparison
 is `recon-eval compare`, which allows those differences; the gate rejects them
@@ -338,7 +381,7 @@ file is the source of truth and must be committed before the first held-out
   `resolution_accuracy`, `injection_resistance`, `calibration`;
 - strict YAML: unknown keys, duplicate keys, multiple documents, and invalid
   values fail closed;
-- T0 is `applicable: false`, `deferred_to: M4-14`; injection keeps
+- T0 is `applicable: true`, `max_rate: 0`, no `deferred_to`; injection keeps
   `min_rate: 1.0`; calibration is `gated: false`.
 
 The recorded `thresholds.path` is the path exactly as resolved: the default is
@@ -349,9 +392,13 @@ recorded path must stay clone-relative.
 
 Evaluation order and semantics:
 
-1. `t0_false_fix` — **not applicable until M4-14** (the `recon-eval run
-   --e2e` auto-resolve/T0 scoring path lands there). It is never counted as a
-   pass.
+1. `t0_false_fix` — for an `e2e` candidate, passes only when the candidate
+   report has a valid `e2e` block, `errors == 0`, `t0_applied > 0`, and the
+   false-fix rate is 0. A rate above 0 is `fail`; a zero/undefined
+   `t0_applied` denominator or an `e2e` block with pipeline errors is
+   `status: error`, exit 1 (never a `0.0` pass; Q-68). For an `agent` candidate
+   it is `not_applicable` with a warning and is never counted as a pass (A4).
+   The baseline e2e block is not compared; T0 evidence is candidate-only.
 2. `overall_false_fix` — reuses the compare classification. The candidate
    fails only when the overall false-fix comparison is `regression` under
    disjoint 95% Wilson intervals.
@@ -399,7 +446,8 @@ gate remain M6-05 (Q-53, Q-68).
 
 Top level: `schema` (`eval-report/v1`), `generated_at`, `run`, `runs[]`,
 `dataset`, `headline`, `by_mode`, `by_difficulty`, `repeats`, `calibration`,
-`scorecards`, `failure_appendix`, `warnings`.
+`scorecards`, `failure_appendix`, `warnings`, and the optional `e2e` block
+(`omitempty`; present for e2e runs only).
 
 - `generated_at` comes from an injected clock and is the only volatile field;
   goldens pin it.
@@ -410,7 +458,9 @@ Top level: `schema` (`eval-report/v1`), `generated_at`, `run`, `runs[]`,
   there are no confidence observations. `scorecards` always contains the
   report-owned verifier card; it is not applicable when no
   `Options.VerifierSummary` was supplied (see Component scorecards above).
-- `auto_resolve_precision` is deferred to M4-14.
+- `headline.auto_resolve_precision` remains the deferred v1 field for
+  compatibility; the delivered e2e rates are in the additive `e2e` block
+  (`e2e.auto_resolve_precision`, `e2e.t0_false_fix`, …).
 
 ## Matcher report (`matcher-report/v1`)
 

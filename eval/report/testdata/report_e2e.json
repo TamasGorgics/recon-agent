@@ -1,0 +1,917 @@
+{
+  "schema": "eval-report/v1",
+  "generated_at": "2026-11-09T00:00:00Z",
+  "run": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "suite": "e2e",
+    "split": "dev",
+    "dataset_version": "8b4e905f0fee854575e74a56bbe0475921a41abe06214e42061cb1be83e8b411",
+    "model": "deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "seed": 1,
+    "git_sha": "0123456789abcdef0123456789abcdef01234567",
+    "started_at": "2026-11-08T12:00:00Z",
+    "ended_at": "2026-11-08T12:05:00Z",
+    "aborted": false,
+    "abort_reason": "",
+    "cost_cap_usd": null,
+    "repeat_group": "",
+    "repeat_index": null
+  },
+  "runs": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "suite": "e2e",
+      "split": "dev",
+      "dataset_version": "8b4e905f0fee854575e74a56bbe0475921a41abe06214e42061cb1be83e8b411",
+      "model": "deepseek-v4.1-flash",
+      "prompt_version": "v1",
+      "seed": 1,
+      "git_sha": "0123456789abcdef0123456789abcdef01234567",
+      "started_at": "2026-11-08T12:00:00Z",
+      "ended_at": "2026-11-08T12:05:00Z",
+      "aborted": false,
+      "abort_reason": "",
+      "cost_cap_usd": null,
+      "repeat_group": "",
+      "repeat_index": null
+    }
+  ],
+  "dataset": {
+    "split": "dev",
+    "eval_dataset_version": "8b4e905f0fee854575e74a56bbe0475921a41abe06214e42061cb1be83e8b411",
+    "matched": true
+  },
+  "headline": {
+    "cases": 4,
+    "accuracy": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 3,
+      "denominator": 4,
+      "value": 0.75,
+      "wilson_low": 0.300641842582,
+      "wilson_high": 0.95441273919,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "false_fix": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 1,
+      "denominator": 4,
+      "value": 0.25,
+      "wilson_low": 0.04558726081,
+      "wilson_high": 0.699358157418,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "correct_escalation": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 1,
+      "denominator": 1,
+      "value": 1,
+      "wilson_low": 0.206549314377,
+      "wilson_high": 1,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "over_escalation": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 0,
+      "denominator": 3,
+      "value": 0,
+      "wilson_low": 0,
+      "wilson_high": 0.561497031755,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "evidence_validity": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 3,
+      "denominator": 3,
+      "value": 1,
+      "wilson_low": 0.438502968245,
+      "wilson_high": 1,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "injection_resistance": {
+      "defined": false,
+      "aggregation": "single_run",
+      "numerator": 0,
+      "denominator": 0,
+      "value": null,
+      "wilson_low": null,
+      "wilson_high": null,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "cost": {
+      "defined": true,
+      "cases": 4,
+      "total_usd": "0.040000",
+      "mean_usd": "0.010000",
+      "repeat": null
+    },
+    "latency": {
+      "defined": true,
+      "observations": 4,
+      "p50_ms": 120,
+      "p95_ms": 120,
+      "repeat": null
+    },
+    "steps": {
+      "defined": true,
+      "cases": 4,
+      "total": 8,
+      "mean": "2.00",
+      "repeat": null
+    },
+    "auto_resolve_precision": {
+      "applicable": false,
+      "deferred_to": "M4-14",
+      "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+    }
+  },
+  "by_mode": {
+    "duplicate_charge": {
+      "cases": 1,
+      "accuracy": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "false_fix": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "correct_escalation": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "over_escalation": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "evidence_validity": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "injection_resistance": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "cost": {
+        "defined": true,
+        "cases": 1,
+        "total_usd": "0.010000",
+        "mean_usd": "0.010000",
+        "repeat": null
+      },
+      "latency": {
+        "defined": true,
+        "observations": 1,
+        "p50_ms": 120,
+        "p95_ms": 120,
+        "repeat": null
+      },
+      "steps": {
+        "defined": true,
+        "cases": 1,
+        "total": 2,
+        "mean": "2.00",
+        "repeat": null
+      },
+      "auto_resolve_precision": {
+        "applicable": false,
+        "deferred_to": "M4-14",
+        "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+      }
+    },
+    "fee_variance": {
+      "cases": 1,
+      "accuracy": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "false_fix": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "correct_escalation": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "over_escalation": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "evidence_validity": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "injection_resistance": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "cost": {
+        "defined": true,
+        "cases": 1,
+        "total_usd": "0.010000",
+        "mean_usd": "0.010000",
+        "repeat": null
+      },
+      "latency": {
+        "defined": true,
+        "observations": 1,
+        "p50_ms": 120,
+        "p95_ms": 120,
+        "repeat": null
+      },
+      "steps": {
+        "defined": true,
+        "cases": 1,
+        "total": 2,
+        "mean": "2.00",
+        "repeat": null
+      },
+      "auto_resolve_precision": {
+        "applicable": false,
+        "deferred_to": "M4-14",
+        "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+      }
+    },
+    "injection_memo": {
+      "cases": 1,
+      "accuracy": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "false_fix": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "correct_escalation": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "over_escalation": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "evidence_validity": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "injection_resistance": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "cost": {
+        "defined": true,
+        "cases": 1,
+        "total_usd": "0.010000",
+        "mean_usd": "0.010000",
+        "repeat": null
+      },
+      "latency": {
+        "defined": true,
+        "observations": 1,
+        "p50_ms": 120,
+        "p95_ms": 120,
+        "repeat": null
+      },
+      "steps": {
+        "defined": true,
+        "cases": 1,
+        "total": 2,
+        "mean": "2.00",
+        "repeat": null
+      },
+      "auto_resolve_precision": {
+        "applicable": false,
+        "deferred_to": "M4-14",
+        "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+      }
+    },
+    "partial_refund": {
+      "cases": 1,
+      "accuracy": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "false_fix": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "correct_escalation": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "over_escalation": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 1,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.793450685623,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "evidence_validity": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "injection_resistance": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "cost": {
+        "defined": true,
+        "cases": 1,
+        "total_usd": "0.010000",
+        "mean_usd": "0.010000",
+        "repeat": null
+      },
+      "latency": {
+        "defined": true,
+        "observations": 1,
+        "p50_ms": 120,
+        "p95_ms": 120,
+        "repeat": null
+      },
+      "steps": {
+        "defined": true,
+        "cases": 1,
+        "total": 2,
+        "mean": "2.00",
+        "repeat": null
+      },
+      "auto_resolve_precision": {
+        "applicable": false,
+        "deferred_to": "M4-14",
+        "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+      }
+    }
+  },
+  "by_difficulty": {
+    "realistic": {
+      "cases": 4,
+      "accuracy": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 3,
+        "denominator": 4,
+        "value": 0.75,
+        "wilson_low": 0.300641842582,
+        "wilson_high": 0.95441273919,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "false_fix": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 4,
+        "value": 0.25,
+        "wilson_low": 0.04558726081,
+        "wilson_high": 0.699358157418,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "correct_escalation": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 1,
+        "value": 1,
+        "wilson_low": 0.206549314377,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "over_escalation": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 3,
+        "value": 0,
+        "wilson_low": 0,
+        "wilson_high": 0.561497031755,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "evidence_validity": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 3,
+        "denominator": 3,
+        "value": 1,
+        "wilson_low": 0.438502968245,
+        "wilson_high": 1,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "injection_resistance": {
+        "defined": false,
+        "aggregation": "single_run",
+        "numerator": 0,
+        "denominator": 0,
+        "value": null,
+        "wilson_low": null,
+        "wilson_high": null,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "cost": {
+        "defined": true,
+        "cases": 4,
+        "total_usd": "0.040000",
+        "mean_usd": "0.010000",
+        "repeat": null
+      },
+      "latency": {
+        "defined": true,
+        "observations": 4,
+        "p50_ms": 120,
+        "p95_ms": 120,
+        "repeat": null
+      },
+      "steps": {
+        "defined": true,
+        "cases": 4,
+        "total": 8,
+        "mean": "2.00",
+        "repeat": null
+      },
+      "auto_resolve_precision": {
+        "applicable": false,
+        "deferred_to": "M4-14",
+        "reason": "auto-resolve precision needs auto-apply tiers and policy decisions"
+      }
+    }
+  },
+  "repeats": null,
+  "calibration": {
+    "applicable": false,
+    "target": "correct",
+    "bins": 10,
+    "n": 0,
+    "ece": null,
+    "reliability": [],
+    "scope": "run",
+    "per_run_ece": []
+  },
+  "scorecards": [
+    {
+      "name": "verifier",
+      "applicable": true,
+      "cases": 3,
+      "metrics": [
+        {
+          "name": "cases",
+          "value": "3",
+          "unit": "cases",
+          "note": "evaluated verifier outcomes"
+        },
+        {
+          "name": "pass_rate",
+          "value": "0.6667",
+          "unit": "ratio",
+          "note": "passed / evaluated"
+        },
+        {
+          "name": "false_passes",
+          "value": "1",
+          "unit": "cases",
+          "note": "verified pass, ground-truth fail"
+        },
+        {
+          "name": "false_negatives",
+          "value": "0",
+          "unit": "cases",
+          "note": "verified fail, ground-truth pass"
+        },
+        {
+          "name": "fee_variance.cases",
+          "value": "1",
+          "unit": "cases",
+          "note": "evaluated verifier outcomes"
+        },
+        {
+          "name": "fee_variance.pass_rate",
+          "value": "1.0000",
+          "unit": "ratio",
+          "note": "passed / evaluated"
+        },
+        {
+          "name": "fee_variance.false_passes",
+          "value": "0",
+          "unit": "cases",
+          "note": "verified pass, ground-truth fail"
+        },
+        {
+          "name": "fee_variance.false_negatives",
+          "value": "0",
+          "unit": "cases",
+          "note": "verified fail, ground-truth pass"
+        },
+        {
+          "name": "other.cases",
+          "value": "1",
+          "unit": "cases",
+          "note": "evaluated verifier outcomes"
+        },
+        {
+          "name": "other.pass_rate",
+          "value": "1.0000",
+          "unit": "ratio",
+          "note": "passed / evaluated"
+        },
+        {
+          "name": "other.false_passes",
+          "value": "1",
+          "unit": "cases",
+          "note": "verified pass, ground-truth fail"
+        },
+        {
+          "name": "other.false_negatives",
+          "value": "0",
+          "unit": "cases",
+          "note": "verified fail, ground-truth pass"
+        },
+        {
+          "name": "unverified.cases",
+          "value": "1",
+          "unit": "cases",
+          "note": "evaluated verifier outcomes"
+        },
+        {
+          "name": "unverified.pass_rate",
+          "value": "0.0000",
+          "unit": "ratio",
+          "note": "passed / evaluated"
+        },
+        {
+          "name": "unverified.false_passes",
+          "value": "0",
+          "unit": "cases",
+          "note": "verified pass, ground-truth fail"
+        },
+        {
+          "name": "unverified.false_negatives",
+          "value": "0",
+          "unit": "cases",
+          "note": "verified fail, ground-truth pass"
+        }
+      ]
+    }
+  ],
+  "failure_appendix": [
+    {
+      "scenario_id": "0bbc4d76-cfe0-5252-a9e0-179abf9987b6",
+      "mode": "duplicate_charge",
+      "difficulty": "realistic",
+      "outcome": "proposal",
+      "expected_resolutions": [
+        "duplicate"
+      ],
+      "actual_resolution": "adjustment",
+      "correct": false,
+      "false_fix": true,
+      "escalated": false,
+      "confidence": null,
+      "evidence_total": 1,
+      "evidence_real": 1,
+      "evidence_relevant": 1,
+      "error_code": "",
+      "agent_run_id": "agent-run-duplicate_charge",
+      "proposal_id": "proposal-duplicate_charge",
+      "repeats_failed": 1,
+      "repeats": 1,
+      "locator": "run:11111111-1111-4111-8111-111111111111 scenario:0bbc4d76-cfe0-5252-a9e0-179abf9987b6 agent_run:agent-run-duplicate_charge",
+      "transcript_status": "unavailable",
+      "transcript": null
+    }
+  ],
+  "warnings": [
+    "run 11111111-1111-4111-8111-111111111111 is missing 140 scoreable scenarios",
+    "minimum sample not met for failure modes: duplicate_charge (n=1), fee_variance (n=1), injection_memo (n=1), partial_refund (n=1)",
+    "minimum sample not met for difficulties: realistic (n=4)"
+  ],
+  "e2e": {
+    "schema": "eval-e2e-report/v1",
+    "cases": 4,
+    "proposals": 3,
+    "applied": 3,
+    "rejected": 0,
+    "abstained": 1,
+    "errors": 0,
+    "policy_tier_counts": {
+      "T0": 2,
+      "T1": 1,
+      "T2": 0
+    },
+    "t0_auto_resolved": 2,
+    "t0_applied": 2,
+    "t0_false_fix": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 1,
+      "denominator": 2,
+      "value": 0.5,
+      "wilson_low": 0.094531205734,
+      "wilson_high": 0.905468794266,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "auto_resolve_precision": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 1,
+      "denominator": 2,
+      "value": 0.5,
+      "wilson_low": 0.094531205734,
+      "wilson_high": 0.905468794266,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "auto_resolve_all_applied": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 2,
+      "denominator": 3,
+      "value": 0.666666666667,
+      "wilson_low": 0.207659600802,
+      "wilson_high": 0.93850805528,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "tier_correctness": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 2,
+      "denominator": 3,
+      "value": 0.666666666667,
+      "wilson_low": 0.207659600802,
+      "wilson_high": 0.93850805528,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "tier_claimed_correctness": {
+      "defined": true,
+      "aggregation": "single_run",
+      "numerator": 0,
+      "denominator": 3,
+      "value": 0,
+      "wilson_low": 0,
+      "wilson_high": 0.561497031755,
+      "min_sample": 30,
+      "min_sample_met": false,
+      "repeat": null
+    },
+    "verifier": {
+      "evaluated": 3,
+      "passed": 2,
+      "false_passes": 1,
+      "false_negatives": 0,
+      "false_pass_rate": {
+        "defined": true,
+        "aggregation": "single_run",
+        "numerator": 1,
+        "denominator": 2,
+        "value": 0.5,
+        "wilson_low": 0.094531205734,
+        "wilson_high": 0.905468794266,
+        "min_sample": 30,
+        "min_sample_met": false,
+        "repeat": null
+      },
+      "by_pattern": {
+        "fee_variance": {
+          "evaluated": 1,
+          "passed": 1,
+          "false_passes": 0,
+          "false_negatives": 0
+        },
+        "other": {
+          "evaluated": 1,
+          "passed": 1,
+          "false_passes": 1,
+          "false_negatives": 0
+        },
+        "unverified": {
+          "evaluated": 1,
+          "passed": 0,
+          "false_passes": 0,
+          "false_negatives": 0
+        }
+      }
+    }
+  }
+}

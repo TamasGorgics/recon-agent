@@ -349,7 +349,11 @@ func TestSandboxCloneLifecycleAndRoleBoundaries(t *testing.T) {
 		t.Fatalf("clone name %q is not an eval-only name", name)
 	}
 
-	for role, pool := range map[string]*pgxpool.Pool{db.RoleApp: sandbox.App, db.RoleAgentRO: sandbox.Agent} {
+	for role, pool := range map[string]*pgxpool.Pool{
+		db.RoleApp:      sandbox.App,
+		db.RoleAgentRO:  sandbox.Agent,
+		db.RoleExecutor: sandbox.Exec,
+	} {
 		var currentUser, superuser string
 		if err := pool.QueryRow(ctx,
 			`SELECT current_user, current_setting('is_superuser')`).

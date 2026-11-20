@@ -66,6 +66,7 @@ type flow struct {
 	ledger   *ledger.Service
 
 	scopeID    string
+	batchID    string
 	matchRunID string
 	external   match.RecordRef
 
@@ -122,12 +123,11 @@ func newFlow(t *testing.T) *flow {
 	}
 
 	batchSum := sha256.Sum256([]byte("m4-13-e2e-batch"))
-	var batchID string
 	if err := d.Pool.QueryRow(ctx,
 		`INSERT INTO settlement_batches
 		     (source, declared_total_minor, currency, file_hash, row_count, declared_row_count)
 		 VALUES ('psp_a', 0, 'USD', $1, 0, 0) RETURNING id::text`,
-		hex.EncodeToString(batchSum[:])).Scan(&batchID); err != nil {
+		hex.EncodeToString(batchSum[:])).Scan(&f.batchID); err != nil {
 		t.Fatalf("insert settlement batch: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func newFlow(t *testing.T) *flow {
 		      occurred_at, value_date, batch_id, raw, raw_hash)
 		 VALUES ('psp_a', $1, 'charge', 500, 'USD', 0, $2, $3::date, $4::uuid,
 		         '{}'::jsonb, 'm4-13-e2e-external')`,
-		recordID, clk.Now(), e2eValueDate, batchID); err != nil {
+		recordID, clk.Now(), e2eValueDate, f.batchID); err != nil {
 		t.Fatalf("insert external record: %v", err)
 	}
 	f.external = match.RecordRef{Source: "psp_a", SourceRecordID: recordID}
@@ -362,6 +362,19 @@ func TestCaseLifecycleAuditCompleteness(t *testing.T) {
 // Everything the proposal triggers afterwards runs through real services.
 func (f *flow) insertProposalFixture(ctx context.Context) {
 	f.t.Helper()
+	f.insertProposalFixtureWithLines(ctx, []map[string]any{
+		{"account_code": "fees_expense", "direction": "debit", "amount_minor": 500, "currency": "USD"},
+		{"account_code": "suspense", "direction": "credit", "amount_minor": 500, "currency": "USD"},
+	})
+}
+
+// insertProposalFixtureWithLines writes the agent run and a proposed adjustment
+// with the supplied balanced payload lines. The fixture-only mutations are the
+// same as insertProposalFixture; a gate can use it to give the applied entry a
+// real effect on the scope's clearing account without changing the real
+// approval, executor, audit, or ledger paths.
+func (f *flow) insertProposalFixtureWithLines(ctx context.Context, lines []map[string]any) {
+	f.t.Helper()
 	evidence := []string{"case:" + f.caseID}
 	resolved, err := agentproposal.ResolveState(ctx, f.db.Pool, f.caseID, evidence)
 	if err != nil {
@@ -379,12 +392,7 @@ func (f *flow) insertProposalFixture(ctx context.Context) {
 		f.t.Fatalf("insert agent run: %v", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"lines": []map[string]any{
-			{"account_code": "fees_expense", "direction": "debit", "amount_minor": 500, "currency": "USD"},
-			{"account_code": "suspense", "direction": "credit", "amount_minor": 500, "currency": "USD"},
-		},
-	})
+	payload, err := json.Marshal(map[string]any{"lines": lines})
 	if err != nil {
 		f.t.Fatalf("marshal proposal payload: %v", err)
 	}
@@ -544,6 +552,14 @@ func (f *flow) assertAuditRowCounts(ctx context.Context, ledgerTxnID string) {
 // audit, and ledger entries to the human approver.
 func (f *flow) assertTraceToApprover(ctx context.Context, ledgerTxnID string) {
 	f.t.Helper()
+	f.assertTraceToApproverIdentity(ctx, ledgerTxnID, f.approverID, e2eApproverName)
+}
+
+// assertTraceToApproverIdentity walks the committed ledger txn back through the
+// applied proposal, case, break, agent run, verification, policy, approval,
+// executor audit, and ledger entries to the expected approver identity.
+func (f *flow) assertTraceToApproverIdentity(ctx context.Context, ledgerTxnID, approverID, displayName string) {
+	f.t.Helper()
 	trace, err := traceability.ByLedgerTxn(ctx, f.app, ledgerTxnID)
 	if err != nil {
 		f.t.Fatalf("traceability.ByLedgerTxn: %v", err)
@@ -587,9 +603,10 @@ func (f *flow) assertTraceToApprover(ctx context.Context, ledgerTxnID string) {
 		f.t.Fatalf("trace approvals = %d, want 1", len(chain.Approvals))
 	}
 	appr := chain.Approvals[0]
-	if appr.Approver.ID != f.approverID || appr.Approver.DisplayName != e2eApproverName ||
+	if appr.Approver.ID != approverID || appr.Approver.DisplayName != displayName ||
 		appr.Approver.Role != "approver" || appr.Decision != string(approval.DecisionApproved) {
-		f.t.Fatalf("trace approval = %+v, want the seeded approver's approved decision", appr)
+		f.t.Fatalf("trace approval = %+v, want approver %s (%s) with an approved decision",
+			appr, approverID, displayName)
 	}
 	if chain.Executor.Audit == nil {
 		f.t.Fatal("trace executor audit is nil, want executor.applied")

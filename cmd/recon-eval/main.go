@@ -17,13 +17,16 @@ import (
 const usage = `usage: recon-eval <command> [arguments]
 
 Commands:
-  run              run the M3 agent eval on one committed dataset split
-                   usage: recon-eval run --suite agent --split dev|test|injection
+  run              run the eval on one committed dataset split
+                   usage: recon-eval run --suite agent|e2e [--e2e]
+                          --split dev|test|injection
                           --model <id> --prompt <version> --seed <n> --repeat <k>
                           --concurrency <n> --llm live|record|cassette
                           --max-cost-usd <decimal>
                           [--cassette-dir <path>] [--update-cassettes]
                           [--resume <eval_run_id>] [--dataset-dir <path>]
+                   --e2e runs the approval/approver/executor/tie-out pipeline
+                   after each agent run; --suite e2e is the equivalent alias
                    record = live execution plus cassette recording under
                           <cassette-dir>/<provider>/<model>/<prompt>/<sha256>.json
   report           render a Markdown + JSON eval report from durable results

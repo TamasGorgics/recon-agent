@@ -124,6 +124,9 @@ type Report struct {
 	Scorecards      []Scorecard            `json:"scorecards"`
 	FailureAppendix []AppendixCase         `json:"failure_appendix"`
 	Warnings        []string               `json:"warnings"`
+	// E2E is the additive e2e block. It is omitted (nil) for agent-suite
+	// reports, so their eval-report/v1 bytes and goldens are unchanged.
+	E2E *E2EBlock `json:"e2e,omitempty"`
 
 	// completeness is the structured provenance behind the human-readable
 	// completeness warnings. It is deliberately unexported and therefore not
@@ -358,10 +361,10 @@ type ScorecardMetric struct {
 // verifier accepted; FalsePasses are accepted outcomes whose ground truth was a
 // failure; FalseNegatives are rejected outcomes whose ground truth was a pass.
 type VerifierCounts struct {
-	Evaluated      int
-	Passed         int
-	FalsePasses    int
-	FalseNegatives int
+	Evaluated      int `json:"evaluated"`
+	Passed         int `json:"passed"`
+	FalsePasses    int `json:"false_passes"`
+	FalseNegatives int `json:"false_negatives"`
 }
 
 // VerifierSummary is the eval harness's explicit verifier scorecard input.
@@ -513,9 +516,10 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 		return Report{}, errors.New("eval/report: run id is required")
 	}
 	opts = normalizeOptions(opts)
-	verifierCard, err := verifierScorecard(opts.VerifierSummary)
-	if err != nil {
-		return Report{}, fmt.Errorf("eval/report: %w", err)
+	if opts.VerifierSummary != nil {
+		if err := opts.VerifierSummary.validate(); err != nil {
+			return Report{}, fmt.Errorf("eval/report: %w", err)
+		}
 	}
 
 	requested, err := src.LoadRun(ctx, runID)
@@ -566,6 +570,38 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 		runData = append(runData, newRunReport(run, results, resolved.Scenarios))
 	}
 
+	e2eRequired, err := e2eReportRequired(requested, byRun[requested.ID])
+	if err != nil {
+		return Report{}, err
+	}
+	var e2eBlock *E2EBlock
+	verifierSummary := opts.VerifierSummary
+	if e2eRequired {
+		if len(runs) != 1 {
+			return Report{}, fmt.Errorf(
+				"eval/report: run %s is an e2e repeat-group member; e2e rates are per standalone run",
+				requested.ID)
+		}
+		block, derivedSummary, err := buildE2EBlock(runData[0], opts.MinSample)
+		if err != nil {
+			return Report{}, err
+		}
+		if opts.VerifierSummary != nil &&
+			!verifierSummariesEqual(opts.VerifierSummary, derivedSummary) {
+			return Report{}, fmt.Errorf(
+				"eval/report: explicit verifier summary disagrees with e2e detail for run %s",
+				requested.ID)
+		}
+		e2eBlock = block
+		if verifierSummary == nil {
+			verifierSummary = derivedSummary
+		}
+	}
+	verifierCard, err := verifierScorecard(verifierSummary)
+	if err != nil {
+		return Report{}, fmt.Errorf("eval/report: %w", err)
+	}
+
 	warnings, completeness := initialWarnings(runs, runData, resolved)
 	report := Report{
 		Schema:      Schema,
@@ -582,6 +618,7 @@ func Build(ctx context.Context, src Source, runID string, opts Options) (Report,
 		Calibration:     nil,
 		Scorecards:      []Scorecard{verifierCard},
 		FailureAppendix: []AppendixCase{},
+		E2E:             e2eBlock,
 	}
 	if len(runData) > 1 || (len(runData) == 1 && runs[0].RepeatGroup != "") {
 		report.Repeats = buildRepeats(runData, opts.MinSample)

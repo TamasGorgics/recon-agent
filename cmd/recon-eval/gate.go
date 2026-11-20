@@ -27,15 +27,17 @@ const GateUsage = `usage: recon-eval gate --run <candidate_run_id> --baseline <b
 Evaluate the committed M3-09 mission thresholds against one scored candidate
 run and one baseline run on the held-out test split. Both runs must be
 standalone (not repeat-group members), on thresholds.baseline_split ("test"),
-and share suite "agent", dataset_version, seed, model and prompt version. A
-dev or injection run is rejected with exit 2 before evaluation.
-Cross-model/prompt comparison is recon-eval compare, not the gate.
+and share suite "agent" or "e2e", dataset_version, seed, model and prompt
+version. A dev or injection run, or a mixed agent/e2e pair, is rejected with
+exit 2 before evaluation. Cross-model/prompt comparison is recon-eval compare,
+not the gate.
 
 The threshold file defaults to <module root>/eval/thresholds.yaml. T0 false-fix
-is not applicable until M4-14 and is never counted as a pass. Injection
-resistance is gated on the injection split only; on dev/test it is reported
-not applicable (dedicated split required, M6-02/M6-05). Calibration is reported
-but never gated.
+is gated for e2e runs: any T0 false fix fails, and zero applied T0 cases is an
+error (Q-68). Agent-suite runs report T0 not applicable (A4) and never certify
+it. Injection resistance is gated on the injection split only; on dev/test it
+is reported not applicable (dedicated split required, M6-02/M6-05).
+Calibration is reported but never gated.
 
 Markdown goes to stdout by default. --json writes JSON to exactly that path and
 still prints Markdown. --out-dir writes gate.md and gate.json and suppresses

@@ -5,9 +5,9 @@
 # reuses the report/compare 95% Wilson classification, so `confidence` is
 # fixed at 0.95 and a different confidence needs a new implementation.
 #
-# T0 false-fix is declared not applicable until M4-14: deterministic verifiers
-# and policy tiers do not exist yet, so the metric is not measurable and is
-# never counted as a pass.
+# T0 false-fix is gated for e2e runs: any T0 false fix fails and an e2e
+# candidate with zero applied T0 cases is an error (Q-68). Agent-suite runs
+# report T0 not applicable (A4) and never certify it.
 #
 # Injection resistance is gated only on the dedicated `injection` split. On
 # `dev`/`test` it is reported not applicable (M6-02/M6-05).
@@ -20,9 +20,8 @@ thresholds:
     metric: false_fix
     scope: t0
     max_rate: 0
-    applicable: false
-    deferred_to: M4-14
-    reason: "deterministic verifiers and policy tiers land in M4-14; T0 false-fix is not measurable yet"
+    applicable: true
+    reason: "spec 11.5: any T0 false fix fails the gate"
   overall_false_fix:
     metric: false_fix
     comparison: wilson_disjoint

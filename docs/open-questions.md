@@ -329,3 +329,77 @@ Accepted post-merge M3-04 delta. No roadmap tick, migration, or grant change.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-97 | **QUEUED (M4-12 code complete; manual AC-15 smoke pending; post-review residuals F1–F4 recorded in the addendum above):** the Slack adapter is delivered as `internal/approval/slack` (Block Kit, Web API client, transport store, `approval.Channel` implementation, outbox handlers, signed interaction endpoint) plus the minimal `cmd/outbox` binary and `docs/slack-setup.md`. Recorded boundaries: (1) **Replay cache is per process (inherits Q-79):** `webhook.MemoryReplayCache` lives in one API process, so an exact duplicate or a captured request can land on a different replica and pass that replica's cache; decision idempotency (proposal row lock, `approvals_proposal_approver_key`, same-approver replay) is the guard, not the cache. A shared store (Redis/Postgres) is future hardening; the Q-83(2) exact-TTL boundary also still applies. (2) **The retry header is not signed:** `webhook.Options.ReplayExemptHeader = "X-Slack-Retry-Num"` skips only the replay marker when Slack retries. HMAC and the five-minute timestamp are always enforced. A captured valid signed request can be replayed with an added retry header; decision idempotency absorbs the duplicate. Binding a nonce into the signed body or a shared replay store is future hardening. (3) **200-on-business-refusal is deliberate:** authenticated unauthorized, stale/superseded/expired, co-maker, and conflicting-decision outcomes return `200` with a generic ephemeral message so Slack stops retrying; `400` is reserved for malformed input, `409` only for verifier replay, and `500` (Slack retries) for internal or audit failure. This differs from an RPC-style `409` but is the approved Slack contract. (4) **Late-decision expiry records a transition and changes the case, but writes no approval:** a click on a still-`pending_approval` proposal whose `expires_at` is already in the past passes the interaction handler's `stillActive` check (message ref, version, and status only — not time) and reaches `Decide`. `Decide` commits `pending_approval -> expired` through `approval/state` (one `proposal.transition` audit with actor `system:expiry`, reason `expired`) and runs the M4-10 lifecycle hook in the same transaction, so the case follows the retry/expiry path. It writes **no** `approvals` row and no `approval.decided` audit, returns `ErrExpired` without a `DecisionResult`, and enqueues nothing, so the API answers `200` with the ephemeral "This approval is no longer active." and an already-posted message can keep its buttons until a later `approval.cancel` or cleanup. This is intentional M4-11 behavior, not a bug: do not turn the expiry click into a no-op or an approval write. Only a fresh approve/reject/request-info commits an `approval.update`. (5) **`external_ref` is frozen as `<channel_id>:<ts>`:** exactly one colon, non-empty unpadded halves, no scheme prefix, stored only in `approval_messages.external_ref`; `approvals.external_ref` stays NULL for Slack and there are no `proposal_version`/`close_reason` columns. A future ticket adapter may need a different ref shape. (6) **At-least-once post/insert window:** the `approval_messages` row is inserted only after a successful `chat.postMessage`, so a crash between the Slack call and the insert can duplicate the message; `client_msg_id = proposal_id` is a best-effort dedupe, not a guarantee. A cancel that arrives between the post and the insert can still no-op; the post-check/withdraw path mitigates it, and delivery remains at-least-once, never exactly once. (7) **`cmd/outbox` is a minimal separate binary:** it is not a mode of `cmd/worker`, so deployment/supervision must run two binaries and outbox-only hosts need no agent/LLM credentials. It registers `approval.request`, `approval.update`, and `approval.cancel`; any unregistered topic still dead-letters (Q-91(4)). Extending `cmd/worker` later remains possible. (8) **Reason-aware Decide is additive:** `DecisionOptions{Reason, InfoRequested}`, `DecideWithOptions`, and `InfoRequestedHook` are new; `Decide` keeps its M4-11 signature and semantics. The HTTP API `reason` remains bounded but reserved/unpersisted for non-Slack callers (Q-94(1)); only the Slack path carries a human reason into the audit/update. (9) **Request-info reason/audit fields:** `approvals` has no reason column. Durable evidence is the proposal `rejected` with transition reason `info_requested`, the case `waiting_info` (actor `system:case-lifecycle`, attempts unchanged, no retry/escalation), one `approval.decided` audit with `info_requested:true` plus `reason` only when supplied, and one `approval.update` outbox row. A nil `InfoRequestedHook` fails closed with `ErrInfoRequestedUnsupported` before any write. (10) **`Channel` is implemented but is neither the production delivery path nor the crypto boundary:** `internal/approval/slack/channel.go` implements `approval.Channel` (`RequestApproval`, `HandleCallback`, `Cancel`) for interface compatibility and tests; production posting/updates run through the outbox handlers. `HandleCallback` parses an already-authenticated form body; production authentication is the signed `POST /v1/slack/interactions` middleware. It does not verify a signature or touch the replay cache, so do not double-verify or consume the replay marker twice. `approval.CallbackDecision` has no InfoRequested flag, so request-info maps to `DecisionRejected` with reason `info_requested`; callers needing the case lifecycle must use `DecideWithOptions`. (11) **T2 is skipped, not dead-lettered:** `approval.request` with `channel="ticket"` is acknowledged and skipped because M4-12 has no ticket adapter; a T2 row must not be treated as a delivery failure. (12) **Fixtures are sanitized recorded-shape payloads:** the `testdata` Block Kit, client, and interaction fixtures are built from Slack's documented `block_actions`/Web API shapes, not captured from a live workspace; the interaction captures include styled buttons (`style="primary"`/`style="danger"`), which the strict decoder accepts as documented button metadata and never trusts; the manual smoke is the real-workspace validation. (13) **Update/cancel ordering is not guaranteed:** outbox topics have no cross-topic ordering; cancellation is treated as terminal and handlers re-check state after the Slack call, but a narrow transient message flip is still possible. (14) **Manual AC-15 smoke is human-gated and PENDING:** the checklist and results table are in `docs/slack-setup.md`; no result is recorded. M4-12 code does not add a production demo/CLI trigger that creates a T1 proposal and calls `approval.Service.Request`; M4-14 wires the end-to-end pipeline, so the smoke must use M4-14 or a reviewed local harness. Code-complete is not task-done, and the roadmap M4-12 box stays unticked until a human records date, workspace, operator, commit, and result. (15) **Scope and no spec edit:** M4-12 does not implement `eval/approver`, `recon-eval run --e2e`, `TestMilestone4Gate`, OTel, or a scheduler; the only migration is `20261120100000_m4_12_approval_messages.sql`; `docs/spec.md` is untouched. | M4-13 / M4-14 / M5-06 / ops / API consumers | Keep the frozen `external_ref` and `approval_messages` shape; treat delivery as at-least-once and decisions as idempotent; keep the 200-on-business-refusal and 409-only-replay matrix; wire a shared replay store and explicit expiry message cleanup in later hardening; supervise `cmd/outbox` as its own binary; do not rely on the unsigned retry header for authentication; keep `reason` reserved for non-Slack callers; record the AC-15 result in `docs/slack-setup.md` before ticking M4-12; leave M4-13/M4-14 scope and `docs/spec.md` untouched. |
+
+## M4-14 simulated approver and end-to-end pipeline (Q-98)
+
+**Q-98 addendum (W6 docs phase; A8 docs exception).** M4-14 is delivered as
+`eval/approver`, the `recon-eval run --e2e` pipeline/runner/report path, the
+`t0_false_fix` gate, and `TestMilestone4Gate`. This supersedes Q-68's
+`t0_false_fix: applicable: false` deferral: the threshold is now applicable and
+a zero T0 denominator is a gate error. The residuals below are recorded
+boundaries, not release blockers. Each names its consumer and follow-up owner.
+
+- **Record-only dev evidence; no committed eval cassettes (A5).** The 12 M2
+  fixture cassettes remain the only replayable corpus. A dev-split
+  `--llm cassette` run has no cassettes and fails closed with `cassette_miss`;
+  the W6 evidence report is a `RECORD-ONLY / TEST-FIXTURE` render from the
+  committed `TestPostgresE2EReportEndToEnd` fixture, not a byte-deterministic
+  dev replay and not a gate proof. Committing eval-run cassettes or a pinned
+  dev world remains Q-53/Q-68/M6-05.
+- **T0 denominators and zero-denominator error (A3).** Auto-resolve precision
+  uses T0 auto-approved cases as its denominator (apply failures count against
+  precision); `t0_false_fix` uses T0 auto-approved **and applied** cases. An
+  empty T0 applied denominator is gate `status: error`, exit 1 (Q-68), never a
+  `0.0` pass. Agent-suite runs remain A4 `not_applicable` with a warning.
+- **Additive `eval-report/v1` e2e block (A2).** `report.e2e`
+  (`eval-e2e-report/v1`) is optional and omitted for agent runs; the existing
+  `headline.auto_resolve_precision` stays the deferred v1 field. Agent-suite
+  goldens are unchanged; e2e consumers read `report.e2e.*`. Malformed detail,
+  an unknown schema, or `tier_actual != e2e.policy_tier` fails `Build` closed.
+- **Synthetic approver identity/source (A6).** The seeded row is fixed UUID
+  `00000000-0000-4000-8000-00000000e2e1`, role `approver`, active, no Slack or
+  ticket ids; it is seeded only in eval sandbox clones through the admin pool.
+  `Service.Decide` is called with source `e2e`, so `approvals.channel = "e2e"`
+  and the audit actor is `human:<uuid>`; four-eyes still rejects an
+  agent/co-maker id. A non-human audit actor would need a schema change and is
+  out of scope.
+- **Verifier false-pass wiring (A7).** `verifier.passed` is the observable
+  `pattern_verified IS NOT NULL` signal; false passes are `passed &&
+  false_fix`. Failed verifier outcomes have no verified pattern and use the
+  reserved `unverified` bucket so `VerifierSummary.Total == sum(ByPattern)`
+  holds. `false_negatives` is fixed at 0 in M4-14; the metric is reported, not
+  gated.
+- **`tier_actual` semantic scope.** For e2e rows `tier_actual` stores the
+  policy tier; the agent-claimed `proposals.risk_tier` is only
+  `detail.e2e.agent_claimed_tier`. Historical agent rows keep the old
+  agent-claimed meaning, so report/gate consumers must not assume one meaning
+  across suites. `tier_correctness` is reported with a Wilson interval and
+  `min_sample`; it is not gated in M4-14 (A10).
+- **E2e repeat aggregation is unsupported.** Rates are per standalone run;
+  `--e2e` with `--repeat > 1` is a usage error (exit 2), and `report.Build`
+  fails closed on an e2e repeat group. Repeat means/intervals remain an M6-05
+  follow-up.
+- **Tie-out seeding and zero.** A zero tie-out on an empty ledger is
+  meaningless. `TestMilestone4Gate` seeds a statement balance (500 USD) and
+  asserts non-empty ledger/external open items, a real +500 clearing effect,
+  post-apply `Unexplained == 0`, and a ±1 statement perturbation control. The
+  plan's "pre-apply non-zero" expectation is mathematically incompatible with a
+  post-apply zero for one balanced adjustment (both ledger balance and
+  ledger-only rise by the same amount); the non-trivial inputs and the
+  perturbation control are the accepted evidence (W5.3).
+- **No live Slack or network.** `FakeChannel` records the request and is proven
+  not to decide; the decision comes from `approver.Act` →
+  `approval.Service.Decide` → `executor.Apply`. The outbox rows stay
+  undelivered (`attempts = 0`) and no Slack token, adapter, httptest server, or
+  worker runs in the new tests. A real-workspace smoke remains M4-12/AC-15
+  (human-gated) and is not claimed here.
+- **M4-14 boundaries.** No production synthetic-approver seeding, demo path,
+  scheduler, OTel, or new migration; `docs/spec.md` is untouched. The e2e
+  pipeline is eval-only, the approver is truth-blind, and the sole report/gate
+  schema change is the additive e2e block. `docs/eval-scoring.md` and
+  `docs/eval-report.md` are updated for the delivered metrics and gate
+  behavior.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-98 | **RESOLVED (M4-14), with the recorded boundaries in the addendum above:** the simulated approver, `recon-eval run --e2e`, additive e2e scoring/report block, applicable `t0_false_fix` gate, and `TestMilestone4Gate` are delivered and covered by unit/integration tests. Recorded residuals: (1) dev evidence is record-only/test-fixture; no eval cassettes are committed and no byte-deterministic dev replay is claimed (Q-53/Q-68); (2) T0 precision and false-fix use asymmetric denominators, and a zero T0 applied denominator is gate `error`/exit 1, never a pass (Q-68/A3); (3) `eval-report/v1` gains only an optional `e2e` block, agent goldens are unchanged, and malformed detail or tier disagreement fails closed (A2); (4) the synthetic approver uses fixed UUID `00000000-0000-4000-8000-00000000e2e1`, source `e2e`, audit actor `human:<uuid>`, seeded only in eval clones (A6); (5) verifier false-pass is `passed && false_fix`, failed outcomes use the `unverified` bucket, and false negatives stay 0 (A7); (6) `tier_actual` is the policy tier for e2e rows and the claimed tier is diagnostic (A10); (7) e2e repeat aggregation is unsupported and rejected; (8) tie-out evidence seeds a statement balance and asserts non-empty open items plus a perturbation control (W5.3); (9) no live Slack/network is used and outbox delivery remains intentionally undelivered; (10) M4-14 adds no migration, production seeding, scheduler, OTel, spec edit, or non-additive report change. | M4-15 / M6-05 / M6-06 / M4-12 AC-15 / eval consumers / ops | Keep the record-only evidence boundary and the M2 fixture as the replay proof; do not treat a zero T0 denominator as a pass; keep the e2e block additive and fail-closed; use the fixed synthetic approver and `e2e` source; keep verifier negatives at 0 until the M4-15/M6-05 definition; read `tier_actual` by suite; reject e2e repeats; keep statement-seeded tie-out evidence; keep the decision path off `FakeChannel` and the outbox undelivered in tests; leave `docs/spec.md` untouched and add no migration for M4-14. |

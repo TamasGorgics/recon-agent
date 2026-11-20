@@ -300,3 +300,90 @@ func failingFalseFixComparison() report.Comparison {
 	comparison.Overall.FalseFix = gateRate("false_fix", false, 0, 100, 10, 100)
 	return comparison
 }
+
+// e2eComparison is the same passing comparison with an e2e candidate suite.
+func e2eComparison() report.Comparison {
+	comparison := passingComparison()
+	comparison.A.Suite = "e2e"
+	comparison.B.Suite = "e2e"
+	return comparison
+}
+
+// t0Block builds the minimal valid e2e evidence the gate consumes. A zero
+// denominator is represented exactly like report.singleRateView does: defined
+// false, no value, numerator/denominator still present.
+func t0Block(t0Applied, falseFixes, pipelineErrors int) *report.E2EBlock {
+	numerator, denominator := falseFixes, t0Applied
+	view := report.RateView{
+		Aggregation: "single_run",
+		Numerator:   &numerator,
+		Denominator: &denominator,
+	}
+	if t0Applied > 0 {
+		value := float64(falseFixes) / float64(t0Applied)
+		view.Defined = true
+		view.Value = &value
+	}
+	return &report.E2EBlock{
+		Schema:         report.E2ESchema,
+		Cases:          t0Applied,
+		Errors:         pipelineErrors,
+		T0AutoResolved: t0Applied,
+		T0Applied:      t0Applied,
+		T0FalseFix:     view,
+	}
+}
+
+// completeE2EGateSource is the agent fixture converted to two identical e2e
+// runs. The first t0Applied scoreable rows are T0/applied; the first falseFixes
+// of those are false fixes. Every row carries a valid eval-e2e/v1 detail so
+// report.Build can produce the real E2E block the gate consumes.
+func completeE2EGateSource(t *testing.T, t0Applied, falseFixes int) (
+	*gateFixtureSource, report.RunRow, report.RunRow) {
+	t.Helper()
+	baseline := gateRunRow(t, gateRunA, 2)
+	candidate := gateRunRow(t, gateRunB, 2)
+	baseline.Suite = "e2e"
+	candidate.Suite = "e2e"
+	rows := append(
+		completeE2EGateRows(t, baseline.ID, t0Applied, falseFixes),
+		completeE2EGateRows(t, candidate.ID, t0Applied, falseFixes)...)
+	return &gateFixtureSource{
+		runs: []report.RunRow{baseline, candidate},
+		rows: rows,
+	}, baseline, candidate
+}
+
+func completeE2EGateRows(t *testing.T, runID string, t0Applied, falseFixes int) []report.CaseRow {
+	t.Helper()
+	rows := completeGateRows(t, runID)
+	if t0Applied > len(rows) {
+		t.Fatalf("t0Applied %d exceeds %d scoreable rows", t0Applied, len(rows))
+	}
+	for index := range rows {
+		row := &rows[index]
+		tier, action := "T1", "approve"
+		if index < t0Applied {
+			tier, action = "T0", "skip_t0"
+		}
+		if index < falseFixes {
+			row.Correct = false
+			row.FalseFix = true
+		}
+		tierValue := tier
+		row.TierExpected = &tierValue
+		row.TierActual = &tierValue
+		row.Detail["e2e"] = map[string]any{
+			"schema":             "eval-e2e/v1",
+			"proposal":           "present",
+			"request_status":     "applied",
+			"policy_tier":        tier,
+			"agent_claimed_tier": tier,
+			"approver_action":    action,
+			"applied":            true,
+			"failed":             false,
+			"error":              "",
+		}
+	}
+	return rows
+}

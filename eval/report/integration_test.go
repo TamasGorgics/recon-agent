@@ -192,6 +192,156 @@ func countCaseRows(t *testing.T, pool *pgxpool.Pool) int {
 	return count
 }
 
+func TestPostgresE2EReportEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	truth, manifest := devDataset(t)
+	scenarios := map[string]dataset.ScenarioTruth{
+		"duplicate_charge": scenarioByMode(t, truth, "duplicate_charge"),
+		"fee_variance":     scenarioByMode(t, truth, "fee_variance"),
+		"partial_refund":   scenarioByMode(t, truth, "partial_refund"),
+	}
+
+	database := testdb.New(t)
+	app, err := db.OpenRole(ctx, db.RoleApp, database.DSNFor(db.RoleApp))
+	if err != nil {
+		t.Fatalf("open app role: %v", err)
+	}
+	t.Cleanup(app.Close)
+	pool := app.Pool
+
+	started := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	ended := started.Add(5 * time.Minute)
+	var runID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO eval_runs
+		     (suite, split, dataset_version, model, prompt_version, seed,
+		      git_sha, config, started_at, ended_at)
+		 VALUES ('e2e', 'dev', $1, 'test-model', 'v1', $2, NULL,
+		         '{"e2e":true}'::jsonb, $3, $4)
+		 RETURNING id::text`,
+		manifest.EvalDatasetVersion, manifest.Seed, started, ended).Scan(&runID); err != nil {
+		t.Fatalf("insert e2e run: %v", err)
+	}
+
+	t0, t1 := "T0", "T1"
+	insertCase := func(scenario dataset.ScenarioTruth, correct, falseFix bool,
+		tierActual *string, detail map[string]any) {
+		t.Helper()
+		e2e := map[string]any{
+			"schema":             "eval-e2e/v1",
+			"proposal":           "present",
+			"proposal_id":        "00000000-0000-4000-8000-000000000001",
+			"request_status":     "applied",
+			"policy_tier":        tierActual,
+			"agent_claimed_tier": t1,
+			"approver_action":    "approve",
+			"applied":            true,
+			"failed":             false,
+			"error":              "",
+		}
+		if tierActual != nil && *tierActual == "T0" {
+			e2e["approver_action"] = "skip_t0"
+		}
+		for key, value := range detail {
+			e2e[key] = value
+		}
+		detail["e2e"] = e2e
+		detail["actual_resolution"] = "adjustment"
+		detail["expected_resolutions"] = scenario.ExpectedResolutions
+		detail["allows_escalate"] = containsString(scenario.ExpectedResolutions, "escalate")
+		detail["resolvable_truth"] = resolvableTruth(scenario.ExpectedResolutions)
+		detail["has_proposal"] = true
+		detail["outcome"] = "proposal"
+		detail["agent_run_id"] = "agent-run-" + scenario.Mode
+		detail["evidence_total"] = 1
+		detail["evidence_real"] = 1
+		detail["evidence_relevant"] = 1
+		detail["evidence_valid"] = true
+		encoded, err := json.Marshal(detail)
+		if err != nil {
+			t.Fatalf("marshal detail: %v", err)
+		}
+		tierExpected := scenario.ExpectedTier
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO eval_case_results
+			     (eval_run_id, scenario_id, failure_mode, correct, false_fix, escalated,
+			      tier_expected, tier_actual, confidence, cost_usd, latency_ms, steps, detail)
+			 VALUES ($1::uuid, $2, $3, $4, $5, false, $6, $7, NULL,
+			         '0.010000'::numeric, 120, 2, $8::jsonb)`,
+			runID, scenario.ScenarioID, scenario.Mode, correct, falseFix,
+			tierExpected, tierActual, encoded); err != nil {
+			t.Fatalf("insert e2e case result: %v", err)
+		}
+	}
+
+	insertCase(scenarios["fee_variance"], true, false, &t0, map[string]any{
+		"verifier": map[string]any{
+			"evaluated": true, "passed": true, "pattern": "fee_variance",
+		},
+	})
+	insertCase(scenarios["duplicate_charge"], false, true, &t0, map[string]any{
+		"verifier": map[string]any{
+			"evaluated": true, "passed": true, "pattern": "other",
+		},
+	})
+	insertCase(scenarios["partial_refund"], true, false, &t1, map[string]any{
+		"verifier": map[string]any{
+			"evaluated": true, "passed": false, "pattern": "",
+		},
+	})
+
+	before := countCaseRows(t, pool)
+	built, err := Build(ctx, NewPostgresSource(pool), runID, Options{
+		DatasetDir: devDatasetDir(t),
+		Clock:      fixtureClock(t),
+	})
+	after := countCaseRows(t, pool)
+	if before != after {
+		t.Fatalf("e2e report wrote case rows: %d -> %d", before, after)
+	}
+	if err != nil {
+		t.Fatalf("Build e2e report: %v", err)
+	}
+	if built.E2E == nil {
+		t.Fatal("e2e block is nil")
+	}
+	if built.E2E.Cases != 3 || built.E2E.T0Applied != 2 ||
+		built.E2E.Verifier.Evaluated != 3 || built.E2E.Verifier.Passed != 2 {
+		t.Fatalf("e2e block = %+v", built.E2E)
+	}
+	if len(built.Scorecards) != 1 || !built.Scorecards[0].Applicable {
+		t.Fatalf("verifier scorecard = %+v", built.Scorecards)
+	}
+	markdown, err := RenderMarkdown(built)
+	if err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
+	if !strings.Contains(string(markdown), "## E2E pipeline") {
+		t.Fatalf("markdown missing e2e section:\n%s", markdown)
+	}
+	jsonBytes, err := RenderJSON(built)
+	if err != nil {
+		t.Fatalf("RenderJSON: %v", err)
+	}
+	if !strings.Contains(string(jsonBytes), `"e2e": {`) {
+		t.Fatalf("JSON missing e2e block:\n%s", jsonBytes)
+	}
+
+	// An unknown detail schema on an e2e run must fail closed.
+	if _, err := database.Pool.Exec(ctx,
+		`UPDATE eval_case_results
+		    SET detail = jsonb_set(detail, '{e2e,schema}', '"eval-e2e/v2"')
+		  WHERE eval_run_id = $1::uuid`, runID); err != nil {
+		t.Fatalf("corrupt e2e schema: %v", err)
+	}
+	if _, err := Build(ctx, NewPostgresSource(pool), runID, Options{
+		DatasetDir: devDatasetDir(t),
+		Clock:      fixtureClock(t),
+	}); err == nil || !strings.Contains(err.Error(), "schema") {
+		t.Fatalf("unknown e2e schema error = %v", err)
+	}
+}
+
 func TestPostgresCompareEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	truth, manifest := devDataset(t)

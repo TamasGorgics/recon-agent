@@ -31,7 +31,18 @@ func contains(values []string, wanted string) bool {
 	return false
 }
 
+func warningsContain(warnings []string, wanted string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, wanted) {
+			return true
+		}
+	}
+	return false
+}
+
 func floatPtr(value float64) *float64 { return &value }
+
+func intPtr(value int) *int { return &value }
 
 func TestGateSelfPass(t *testing.T) {
 	thresholds := committedThresholds(t)
@@ -61,11 +72,17 @@ func TestGateSelfPass(t *testing.T) {
 	if t0.Status != StatusNotApplicable || t0.Applicable {
 		t.Fatalf("t0 = %+v, want not_applicable/applicable=false", t0)
 	}
-	if !strings.Contains(t0.Reason, "M4-14") {
+	if !strings.Contains(t0.Reason, "requires an e2e run") {
 		t.Fatalf("t0 reason = %q", t0.Reason)
 	}
 	if contains(document.Exit.PassedIDs, ThresholdT0FalseFix) {
 		t.Fatal("T0 is counted as a pass")
+	}
+	if !contains(document.Exit.NotApplicableIDs, ThresholdT0FalseFix) {
+		t.Fatalf("not applicable IDs = %v", document.Exit.NotApplicableIDs)
+	}
+	if !warningsContain(document.Warnings, "agent-suite candidate") {
+		t.Fatalf("agent-suite T0 warning missing: %v", document.Warnings)
 	}
 	injection := findResult(t, document, ThresholdInjection)
 	if injection.Status != StatusNotApplicable || injection.Applicable {
@@ -146,11 +163,17 @@ func TestGateT0NeverPasses(t *testing.T) {
 	if t0.Applicable {
 		t.Fatal("T0 marked applicable")
 	}
-	if !strings.Contains(t0.Reason, "M4-14") {
+	if !strings.Contains(t0.Reason, "requires an e2e run") {
 		t.Fatalf("reason = %q", t0.Reason)
 	}
 	if contains(document.Exit.PassedIDs, ThresholdT0FalseFix) {
 		t.Fatal("T0 appeared in passed IDs")
+	}
+	if !contains(document.Exit.NotApplicableIDs, ThresholdT0FalseFix) {
+		t.Fatalf("not applicable IDs = %v", document.Exit.NotApplicableIDs)
+	}
+	if !warningsContain(document.Warnings, "agent-suite candidate") {
+		t.Fatalf("agent-suite T0 warning missing: %v", document.Warnings)
 	}
 }
 
@@ -407,6 +430,10 @@ func TestGateMetadataMismatch(t *testing.T) {
 			mutate: func(_, candidate *report.RunRow) { candidate.Suite = "matcher" },
 			field:  "suite", baseline: "agent", candidate: "matcher",
 		},
+		"cross suite": {
+			mutate: func(_, candidate *report.RunRow) { candidate.Suite = "e2e" },
+			field:  "suite", baseline: "agent", candidate: "e2e",
+		},
 		"split": {
 			mutate: func(_, candidate *report.RunRow) { candidate.Split = dataset.Dev },
 			field:  "split", baseline: "test", candidate: "dev",
@@ -507,7 +534,7 @@ func TestGateDeterministicDocument(t *testing.T) {
 		t.Fatalf("generated_at not pinned by the injected clock:\n%s", firstJSON)
 	}
 	for _, marker := range []string{
-		"not applicable until M4-14",
+		"only an e2e run can certify T0",
 		"Injection resistance: n/a on test",
 		"Calibration is reported, not gated",
 	} {
@@ -515,4 +542,229 @@ func TestGateDeterministicDocument(t *testing.T) {
 			t.Fatalf("markdown missing %q:\n%s", marker, firstMD)
 		}
 	}
+}
+
+func TestGateThresholdIDsStable(t *testing.T) {
+	want := []string{
+		ThresholdT0FalseFix,
+		ThresholdOverallFalseFix,
+		ThresholdAccuracy,
+		ThresholdInjection,
+		ThresholdCalibration,
+	}
+	wantIDs := []string{
+		"t0_false_fix",
+		"overall_false_fix",
+		"resolution_accuracy",
+		"injection_resistance",
+		"calibration",
+	}
+	if len(ThresholdIDs) != len(want) {
+		t.Fatalf("ThresholdIDs = %v, want %v", ThresholdIDs, want)
+	}
+	for index := range want {
+		if ThresholdIDs[index] != want[index] || want[index] != wantIDs[index] {
+			t.Fatalf("ThresholdIDs[%d] = %q, want %q", index, ThresholdIDs[index], wantIDs[index])
+		}
+	}
+
+	document := EvaluateComparison(passingComparison(), committedThresholds(t), false)
+	if len(document.Results) != len(want) {
+		t.Fatalf("results = %d, want %d", len(document.Results), len(want))
+	}
+	for index := range want {
+		if document.Results[index].ID != want[index] {
+			t.Fatalf("result %d = %q, want %q", index, document.Results[index].ID, want[index])
+		}
+	}
+	for id, status := range map[string]string{
+		ThresholdOverallFalseFix: StatusPass,
+		ThresholdAccuracy:        StatusPass,
+		ThresholdInjection:       StatusNotApplicable,
+		ThresholdCalibration:     StatusNotApplicable,
+	} {
+		if got := findResult(t, document, id).Status; got != status {
+			t.Fatalf("%s status = %q, want %q (non-T0 behavior changed)", id, got, status)
+		}
+	}
+}
+
+func TestGateT0E2EMatrix(t *testing.T) {
+	thresholds := committedThresholds(t)
+	invalidSchema := t0Block(8, 0, 0)
+	invalidSchema.Schema = "eval-e2e-report/v2"
+
+	cases := []struct {
+		name           string
+		block          *report.E2EBlock
+		wantStatus     string
+		wantCode       int
+		wantApplicable bool
+		wantReason     string
+		wantCandidate  *float64
+		wantCandidateN *int
+	}{
+		{
+			name: "pass zero false fixes", block: t0Block(8, 0, 0),
+			wantStatus: StatusPass, wantCode: 0, wantApplicable: true,
+			wantCandidate: floatPtr(0), wantCandidateN: intPtr(8),
+		},
+		{
+			name: "fail one false fix", block: t0Block(8, 1, 0),
+			wantStatus: StatusFail, wantCode: 1, wantApplicable: true,
+			wantReason: "1 T0 false fix(es)", wantCandidate: floatPtr(0.125),
+			wantCandidateN: intPtr(8),
+		},
+		{
+			name: "undefined zero T0 applied", block: t0Block(0, 0, 0),
+			wantStatus: StatusError, wantCode: 1, wantApplicable: true,
+			wantReason: "T0 false-fix undefined: zero T0 applied (Q-68)",
+		},
+		{
+			name: "pipeline errors", block: t0Block(8, 0, 2),
+			wantStatus: StatusError, wantCode: 1, wantApplicable: true,
+			wantReason: "e2e pipeline errors: 2 case(s)",
+		},
+		{
+			name: "missing e2e block", block: nil,
+			wantStatus: StatusError, wantCode: 1, wantApplicable: true,
+			wantReason: "e2e evidence missing/invalid",
+		},
+		{
+			name: "invalid e2e schema", block: invalidSchema,
+			wantStatus: StatusError, wantCode: 1, wantApplicable: true,
+			wantReason: "e2e evidence missing/invalid",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			document := Evaluate(Input{
+				Comparison:   e2eComparison(),
+				CandidateE2E: testCase.block,
+				Thresholds:   thresholds,
+			})
+			result := findResult(t, document, ThresholdT0FalseFix)
+			if result.Status != testCase.wantStatus {
+				t.Fatalf("status = %q, want %q; result=%+v",
+					result.Status, testCase.wantStatus, result)
+			}
+			if result.Applicable != testCase.wantApplicable {
+				t.Fatalf("applicable = %t, want %t", result.Applicable, testCase.wantApplicable)
+			}
+			if document.Exit.Code != testCase.wantCode {
+				t.Fatalf("exit = %d, want %d; reasons=%v",
+					document.Exit.Code, testCase.wantCode, document.Exit.Reasons)
+			}
+			if testCase.wantReason != "" && !strings.Contains(result.Reason, testCase.wantReason) {
+				t.Fatalf("reason = %q, want substring %q", result.Reason, testCase.wantReason)
+			}
+			if testCase.wantCandidate != nil {
+				if result.Candidate == nil || *result.Candidate != *testCase.wantCandidate {
+					t.Fatalf("candidate = %v, want %v", result.Candidate, *testCase.wantCandidate)
+				}
+			}
+			if testCase.wantCandidateN != nil {
+				if result.CandidateN == nil || *result.CandidateN != *testCase.wantCandidateN {
+					t.Fatalf("candidate_n = %v, want %d", result.CandidateN, *testCase.wantCandidateN)
+				}
+			}
+			switch testCase.wantStatus {
+			case StatusPass:
+				if !contains(document.Exit.PassedIDs, ThresholdT0FalseFix) {
+					t.Fatalf("passed IDs = %v", document.Exit.PassedIDs)
+				}
+			case StatusFail:
+				if !contains(document.Exit.FailedIDs, ThresholdT0FalseFix) {
+					t.Fatalf("failed IDs = %v", document.Exit.FailedIDs)
+				}
+			case StatusError:
+				if !contains(document.Exit.ErrorIDs, ThresholdT0FalseFix) ||
+					!contains(document.Exit.FailedIDs, ThresholdT0FalseFix) {
+					t.Fatalf("exit = %+v", document.Exit)
+				}
+			}
+		})
+	}
+}
+
+func TestGateT0E2EReportOnly(t *testing.T) {
+	document := Evaluate(Input{
+		Comparison:   e2eComparison(),
+		CandidateE2E: t0Block(8, 1, 0),
+		Thresholds:   committedThresholds(t),
+		ReportOnly:   true,
+	})
+	if document.Exit.Code != 0 {
+		t.Fatalf("report-only exit = %d, want 0; reasons=%v",
+			document.Exit.Code, document.Exit.Reasons)
+	}
+	if !document.Exit.ReportOnly {
+		t.Fatal("report-only marker missing")
+	}
+	result := findResult(t, document, ThresholdT0FalseFix)
+	if result.Status != StatusFail {
+		t.Fatalf("status = %q, want fail", result.Status)
+	}
+	if !contains(document.Exit.FailedIDs, ThresholdT0FalseFix) {
+		t.Fatalf("report-only failed IDs = %v", document.Exit.FailedIDs)
+	}
+}
+
+// TestGateT0E2EReportWiring drives the real report.Build E2E block through
+// Run, so the gate consumes Report.E2E rather than a hand-built rate.
+func TestGateT0E2EReportWiring(t *testing.T) {
+	thresholds := committedThresholds(t)
+	run := func(t *testing.T, t0Applied, falseFixes int) Document {
+		t.Helper()
+		src, baseline, candidate := completeE2EGateSource(t, t0Applied, falseFixes)
+		document, err := Run(context.Background(), src, candidate.ID, baseline.ID,
+			thresholds, Options{DatasetDir: testSplitDir(t), Clock: gateClock(t)})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if document.Candidate.Suite != "e2e" {
+			t.Fatalf("candidate suite = %q", document.Candidate.Suite)
+		}
+		return document
+	}
+
+	t.Run("clean e2e candidate passes", func(t *testing.T) {
+		document := run(t, 8, 0)
+		if document.Exit.Code != 0 {
+			t.Fatalf("exit = %d, want 0; reasons=%v",
+				document.Exit.Code, document.Exit.Reasons)
+		}
+		result := findResult(t, document, ThresholdT0FalseFix)
+		if result.Status != StatusPass || !result.Applicable {
+			t.Fatalf("T0 = %+v, want pass/applicable", result)
+		}
+		if result.Candidate == nil || *result.Candidate != 0 ||
+			result.CandidateN == nil || *result.CandidateN != 8 {
+			t.Fatalf("T0 candidate = %v/%v, want 0/8", result.Candidate, result.CandidateN)
+		}
+	})
+
+	t.Run("e2e false fix candidate fails on T0", func(t *testing.T) {
+		document := run(t, 8, 1)
+		if document.Exit.Code != 1 {
+			t.Fatalf("exit = %d, want 1; reasons=%v",
+				document.Exit.Code, document.Exit.Reasons)
+		}
+		result := findResult(t, document, ThresholdT0FalseFix)
+		if result.Status != StatusFail || !result.Applicable {
+			t.Fatalf("T0 = %+v, want fail/applicable", result)
+		}
+		if result.Candidate == nil || *result.Candidate != 0.125 ||
+			result.CandidateN == nil || *result.CandidateN != 8 {
+			t.Fatalf("T0 candidate = %v/%v, want 0.125/8", result.Candidate, result.CandidateN)
+		}
+		if !strings.Contains(result.Reason, "1 T0 false fix(es)") {
+			t.Fatalf("reason = %q", result.Reason)
+		}
+		for _, id := range []string{ThresholdOverallFalseFix, ThresholdAccuracy} {
+			if got := findResult(t, document, id).Status; got != StatusPass {
+				t.Fatalf("%s status = %q, want pass (non-T0 behavior changed)", id, got)
+			}
+		}
+	})
 }

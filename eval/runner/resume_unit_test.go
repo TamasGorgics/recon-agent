@@ -142,3 +142,101 @@ func TestApplyResumeOptionsRequiresCapProvenance(t *testing.T) {
 		t.Fatalf("explicit unlimited cap = %s, want 0", opts.MaxCostUSD)
 	}
 }
+
+func TestParseStoredE2E(t *testing.T) {
+	mode, known, err := parseStoredE2E([]byte(`{"e2e":true}`))
+	if err != nil || !known || !mode {
+		t.Fatalf("parseStoredE2E true = %t/%t/%v", mode, known, err)
+	}
+	mode, known, err = parseStoredE2E([]byte(`{"e2e":false}`))
+	if err != nil || !known || mode {
+		t.Fatalf("parseStoredE2E false = %t/%t/%v", mode, known, err)
+	}
+	mode, known, err = parseStoredE2E([]byte(`{"eval":{"suite":"e2e"}}`))
+	if err != nil || known || mode {
+		t.Fatalf("parseStoredE2E missing = %t/%t/%v", mode, known, err)
+	}
+	if _, _, err := parseStoredE2E([]byte(`{"e2e":"yes"}`)); err == nil {
+		t.Fatal("parseStoredE2E accepted a non-bool marker")
+	}
+}
+
+func TestApplyResumeOptionsRestoresE2E(t *testing.T) {
+	opts := Options{Resume: "11111111-1111-4111-8111-111111111111"}
+	ApplyDefaults(&opts)
+	stored := resumeFixtureRow()
+	stored.Suite = SuiteE2E
+	stored.E2E = true
+	stored.E2EKnown = true
+	if err := applyResumeOptions(&opts, stored); err != nil {
+		t.Fatalf("applyResumeOptions e2e: %v", err)
+	}
+	if opts.Suite != SuiteE2E || !opts.E2E {
+		t.Fatalf("restored suite/e2e = %q/%t, want e2e/true", opts.Suite, opts.E2E)
+	}
+}
+
+func TestApplyResumeOptionsRejectsE2EConflicts(t *testing.T) {
+	agentRow := resumeFixtureRow()
+	e2eRow := resumeFixtureRow()
+	e2eRow.Suite = SuiteE2E
+	e2eRow.E2E = true
+	e2eRow.E2EKnown = true
+
+	cases := []struct {
+		name   string
+		opts   Options
+		stored runRow
+		want   string
+	}{
+		{
+			name:   "explicit e2e on agent run",
+			opts:   Options{Resume: "11111111-1111-4111-8111-111111111111", E2E: true, E2ESet: true},
+			stored: agentRow,
+			want:   "e2e",
+		},
+		{
+			name:   "explicit e2e false on e2e run",
+			opts:   Options{Resume: "11111111-1111-4111-8111-111111111111", E2E: false, E2ESet: true},
+			stored: e2eRow,
+			want:   "e2e",
+		},
+		{
+			name: "explicit agent suite on e2e run",
+			opts: Options{
+				Resume:   "11111111-1111-4111-8111-111111111111",
+				Suite:    SuiteAgent,
+				SuiteSet: true,
+			},
+			stored: e2eRow,
+			want:   "e2e",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := tc.opts
+			ApplyDefaults(&opts)
+			err := applyResumeOptions(&opts, tc.stored)
+			if !IsUsage(err) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("applyResumeOptions = %v, want usage containing %q", err, tc.want)
+			}
+		})
+	}
+
+	// --e2e with --suite agent is the documented alias and may resume an e2e
+	// run even though the stored suite is canonical e2e.
+	opts := Options{
+		Resume:   "11111111-1111-4111-8111-111111111111",
+		Suite:    SuiteAgent,
+		SuiteSet: true,
+		E2E:      true,
+		E2ESet:   true,
+	}
+	ApplyDefaults(&opts)
+	if err := applyResumeOptions(&opts, e2eRow); err != nil {
+		t.Fatalf("e2e alias resume: %v", err)
+	}
+	if opts.Suite != SuiteE2E || !opts.E2E {
+		t.Fatalf("alias resume suite/e2e = %q/%t, want e2e/true", opts.Suite, opts.E2E)
+	}
+}

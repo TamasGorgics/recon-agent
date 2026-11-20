@@ -358,3 +358,48 @@ func TestGateNonTestSplitExitsTwo(t *testing.T) {
 		t.Fatalf("dev-vs-dev --report-only code = %d, want 2; stderr=%q", code, stderr)
 	}
 }
+
+func TestGateMixedSuiteExitsTwo(t *testing.T) {
+	root, err := report.FindModuleRoot()
+	if err != nil {
+		t.Fatalf("find module root: %v", err)
+	}
+	thresholds, err := gate.LoadThresholds(filepath.Join(root, "eval", "thresholds.yaml"))
+	if err != nil {
+		t.Fatalf("load thresholds: %v", err)
+	}
+	now := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	src := devGateSource{
+		cliGateBaseline: {
+			ID: cliGateBaseline, Suite: "agent", Split: dataset.Test,
+			DatasetVersion: "dataset", Seed: 2, Model: "model", PromptVersion: "v1",
+		},
+		cliGateCandidate: {
+			ID: cliGateCandidate, Suite: "e2e", Split: dataset.Test,
+			DatasetVersion: "dataset", Seed: 2, Model: "model", PromptVersion: "v1",
+		},
+	}
+	deps := gateDeps{
+		OpenSource: func(context.Context) (report.Source, func(), error) {
+			return src, func() {}, nil
+		},
+		LoadThresholds: func(string) (gate.Thresholds, error) { return thresholds, nil },
+		Run:            gate.Run,
+		ModuleRoot:     root,
+		Clock:          clock.NewFake(now),
+	}
+	code, _, stderr := runGateCLI(t, deps, validGateArgs()...)
+	if code != 2 {
+		t.Fatalf("mixed-suite code = %d, want 2; stderr=%q", code, stderr)
+	}
+	for _, want := range []string{"suite", `"agent"`, `"e2e"`} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr %q does not contain %q", stderr, want)
+		}
+	}
+
+	code, _, stderr = runGateCLI(t, deps, validGateArgs("--report-only")...)
+	if code != 2 {
+		t.Fatalf("mixed-suite --report-only code = %d, want 2; stderr=%q", code, stderr)
+	}
+}
