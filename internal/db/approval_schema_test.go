@@ -153,11 +153,14 @@ func TestM401Schema(t *testing.T) {
 	}
 
 	// No extra M4-01-prefixed table (the rest of the schema is owned by M1-M3).
+	// M4-12 deliberately adds approval_messages under the same prefix; it is
+	// not part of the M4-01 ownership set.
 	rows, err := d.Pool.Query(ctx,
 		`SELECT table_name FROM information_schema.tables
 		  WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
 		    AND (table_name LIKE 'approv%' OR table_name LIKE 'applied%'
-		         OR table_name LIKE 'outbox%' OR table_name LIKE 'policy%')`)
+		         OR table_name LIKE 'outbox%' OR table_name LIKE 'policy%')
+		    AND table_name <> 'approval_messages'`)
 	if err != nil {
 		t.Fatalf("list M4-01 tables: %v", err)
 	}

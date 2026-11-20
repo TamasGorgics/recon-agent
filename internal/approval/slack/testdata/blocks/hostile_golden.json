@@ -1,0 +1,96 @@
+{
+  "channel": "C0123456789",
+  "text": "Approval required: case ffffffff — adjustment 5000.00 USD (T1)",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "Approval required · ffffffff"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Case* ffffffff · *Type* adjustment · *Value* 5000.00 USD · *Priority* 9\n*Breaks* 4 · *Primary* amount_mismatch\u0026lt;script\u0026gt; · *Delta* -12.50 USD · *Age* 3h"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Delta (break)* -12.50 USD\n*Expected (verifier)* 5000.00 USD · *Actual (verifier)* 5012.50 USD · *Verifier currency* USD"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Evidence*\n• ext:bank:abc123\n• \u0026lt;script\u0026gt;alert(1)\u0026lt;/script\u0026gt;\n• ext:bank:def456\u0026amp;x\n• ledger_txn:11111111-2222-3333-4444-555555555555\n• fee_schedule:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n+2 more"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Pattern* fee_variance\u0026lt;script\u0026gt; (claimed, unverified) · *Result* not verified\n*Verifier reason* fee_mismatch \u0026lt;script\u0026gt; \u0026amp; \"quoted\""
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Agent rationale*\nFee \u0026lt;script\u0026gt;alert(\"x\")\u0026lt;/script\u0026gt; \u0026amp; variance — the agent says this is fine. AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Risk tier* T1 · *Policy rule* high_value\u0026lt;script\u0026gt; · *Proposal version* 7 · *Expires* 2026-11-20T10:00:00Z · *Proposal* 99999999"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "\u003chttps://cases.example.test/v1/cases/ffffffff-eeee-dddd-cccc-bbbbbbbbbbbb|View case file\u003e"
+      }
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Approve"
+          },
+          "action_id": "approval_approve",
+          "value": "99999999-8888-7777-6666-555555555555:7",
+          "style": "primary"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Reject"
+          },
+          "action_id": "approval_reject",
+          "value": "99999999-8888-7777-6666-555555555555:7",
+          "style": "danger"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Request info"
+          },
+          "action_id": "approval_request_info",
+          "value": "99999999-8888-7777-6666-555555555555:7"
+        }
+      ]
+    }
+  ]
+}

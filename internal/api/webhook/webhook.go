@@ -57,6 +57,12 @@ type Options struct {
 	MaxBodyBytes int64
 	// Replay is the replay marker store; nil creates a new in-memory cache.
 	Replay ReplayCache
+	// ReplayExemptHeader names an optional header that marks a provider retry
+	// of an already-accepted request (for example "X-Slack-Retry-Num"). When
+	// exactly one value is present and non-empty, only the replay-marker check
+	// is skipped; the signature and timestamp checks always run. Empty means
+	// no exemption, preserving the original behavior.
+	ReplayExemptHeader string
 	// Clock supplies the current time. Nil defaults to clock.Real{} at the
 	// call site so tests can inject clock.Fake.
 	Clock clock.Clock
@@ -69,8 +75,8 @@ type Options struct {
 
 // String renders the non-secret options; Secret is always replaced.
 func (o Options) String() string {
-	return fmt.Sprintf("webhook.Options{signature_header:%q,timestamp_header:%q,prefix:%q,tolerance:%s,max_body_bytes:%d,secret:<redacted>}",
-		o.SignatureHeader, o.TimestampHeader, o.Prefix, o.Tolerance, o.MaxBodyBytes)
+	return fmt.Sprintf("webhook.Options{signature_header:%q,timestamp_header:%q,prefix:%q,tolerance:%s,max_body_bytes:%d,replay_exempt_header:%q,secret:<redacted>}",
+		o.SignatureHeader, o.TimestampHeader, o.Prefix, o.Tolerance, o.MaxBodyBytes, o.ReplayExemptHeader)
 }
 
 // GoString keeps %#v from falling back to the raw struct fields.
@@ -87,6 +93,7 @@ type Verifier struct {
 	secret          []byte
 	signatureHeader string
 	timestampHeader string
+	replayExempt    string
 	prefix          string
 	tolerance       time.Duration
 	maxBodyBytes    int64
@@ -149,6 +156,7 @@ func New(opts Options) (*Verifier, error) {
 		secret:          bytes.Clone(opts.Secret),
 		signatureHeader: opts.SignatureHeader,
 		timestampHeader: opts.TimestampHeader,
+		replayExempt:    strings.TrimSpace(opts.ReplayExemptHeader),
 		prefix:          prefix,
 		tolerance:       tolerance,
 		maxBodyBytes:    maxBody,
@@ -224,18 +232,35 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if err := v.replay.CheckAndStore(replayKey(timestampText, signature), now, 2*v.tolerance); err != nil {
-			if errors.Is(err, ErrReplay) {
-				v.reject(w, r, http.StatusConflict, CodeReplay, MessageReplay, "replay")
+		// A provider retry (Slack sends X-Slack-Retry-Num) repeats an already
+		// accepted signed request byte-for-byte. The HMAC and timestamp checks
+		// above still apply; only the cache marker is skipped so the
+		// idempotent downstream handler can observe the retry.
+		if !v.exemptFromReplay(r) {
+			if err := v.replay.CheckAndStore(replayKey(timestampText, signature), now, 2*v.tolerance); err != nil {
+				if errors.Is(err, ErrReplay) {
+					v.reject(w, r, http.StatusConflict, CodeReplay, MessageReplay, "replay")
+					return
+				}
+				v.reject(w, r, http.StatusConflict, CodeConflict, MessageConflict, "cache_full")
 				return
 			}
-			v.reject(w, r, http.StatusConflict, CodeConflict, MessageConflict, "cache_full")
-			return
 		}
 
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// exemptFromReplay reports whether the configured retry header carries exactly
+// one non-empty value. The header is advisory: it can only skip the replay
+// marker after the signature and timestamp have already been validated.
+func (v *Verifier) exemptFromReplay(r *http.Request) bool {
+	if v.replayExempt == "" {
+		return false
+	}
+	values := r.Header.Values(v.replayExempt)
+	return len(values) == 1 && strings.TrimSpace(values[0]) != ""
 }
 
 func (v *Verifier) reject(w http.ResponseWriter, r *http.Request, status int, code, message, reason string) {
@@ -311,8 +336,8 @@ func writeFallbackError(w http.ResponseWriter, _ *http.Request, status int, code
 }
 
 func (v Verifier) redacted() string {
-	return fmt.Sprintf("webhook.Verifier{signature_header:%q,timestamp_header:%q,prefix:%q,tolerance:%s,max_body_bytes:%d,secret:<redacted>}",
-		v.signatureHeader, v.timestampHeader, v.prefix, v.tolerance, v.maxBodyBytes)
+	return fmt.Sprintf("webhook.Verifier{signature_header:%q,timestamp_header:%q,replay_exempt_header:%q,prefix:%q,tolerance:%s,max_body_bytes:%d,secret:<redacted>}",
+		v.signatureHeader, v.timestampHeader, v.replayExempt, v.prefix, v.tolerance, v.maxBodyBytes)
 }
 
 // String keeps accidental formatting of a Verifier from exposing the secret.

@@ -31,6 +31,22 @@ type RequestResult struct {
 	LimitsReason string
 }
 
+// DecisionOptions carries the additive inputs of a decision. The zero value is
+// the frozen M4-11 behavior. Reason is optional context; InfoRequested turns a
+// rejection into a request for more information, which must not consume a case
+// attempt or escalate.
+type DecisionOptions struct {
+	// Reason is optional human context. It is trimmed, capped at 2000 runes,
+	// and rejected if it contains control or format characters. For a normal
+	// rejection it becomes the proposal transition reason; for an approval it
+	// is audit-only; for InfoRequested it is audit-only and the transition
+	// reason is the constant "info_requested".
+	Reason string
+	// InfoRequested requires DecisionRejected. It selects the case lifecycle's
+	// RequestInfo hook instead of OnProposalClosed.
+	InfoRequested bool
+}
+
 // DecisionResult is the outcome of a human decision. Replayed is true when the
 // same approver repeated the same decision and the service wrote nothing;
 // DecidedAt is then the stored decision time.
@@ -65,6 +81,16 @@ type CallbackDecision struct {
 	ApproverID string
 	Source     string
 	Reason     string
+}
+
+// Approver is the public identity view returned by ApproverBySlackUserID and
+// other channel identity lookups. It deliberately omits api_key_id and the
+// channel-specific external identifiers: callers may act as this approver but
+// never receive credential material.
+type Approver struct {
+	ID     string
+	Role   string
+	Active bool
 }
 
 // Channel delivers approval requests, decodes callbacks, and withdraws a

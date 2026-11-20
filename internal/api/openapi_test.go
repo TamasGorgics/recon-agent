@@ -17,6 +17,7 @@ import (
 
 type openAPIOperation struct {
 	Security      *[]map[string][]string `yaml:"security"`
+	XAuthKind     string                 `yaml:"x-auth-kind"`
 	XRequiredRole string                 `yaml:"x-required-role"`
 	Responses     map[string]yaml.Node   `yaml:"responses"`
 }
@@ -43,15 +44,16 @@ var httpMethods = map[string]struct{}{
 // contributes 400/413/415 where a body is read, and service failures contribute
 // 500. Public health handlers have no failure path and never return 500.
 var openAPIStatusSets = map[string][]string{
-	"GET " + RouteHealthz:           {"200"},
-	"GET " + RouteMetrics:           {"200"},
-	"POST " + RouteIngest:           {"200", "400", "401", "403", "413", "415", "500"},
-	"POST " + RouteReconcile:        {"200", "400", "401", "403", "404", "413", "415", "500"},
-	"GET " + RouteCases:             {"200", "400", "401", "403", "500"},
-	"GET " + RouteCaseFile:          {"200", "400", "401", "403", "404", "500"},
-	"GET " + RouteProposals:         {"200", "400", "401", "403", "500"},
-	"POST " + RouteProposalDecision: {"200", "400", "401", "403", "404", "409", "413", "415", "500"},
-	"POST " + RouteSwitches:         {"200", "400", "401", "403", "413", "415", "500"},
+	"GET " + RouteHealthz:            {"200"},
+	"GET " + RouteMetrics:            {"200"},
+	"POST " + RouteIngest:            {"200", "400", "401", "403", "413", "415", "500"},
+	"POST " + RouteReconcile:         {"200", "400", "401", "403", "404", "413", "415", "500"},
+	"GET " + RouteCases:              {"200", "400", "401", "403", "500"},
+	"GET " + RouteCaseFile:           {"200", "400", "401", "403", "404", "500"},
+	"GET " + RouteProposals:          {"200", "400", "401", "403", "500"},
+	"POST " + RouteProposalDecision:  {"200", "400", "401", "403", "404", "409", "413", "415", "500"},
+	"POST " + RouteSlackInteractions: {"200", "400", "401", "409", "413", "500"},
+	"POST " + RouteSwitches:          {"200", "400", "401", "403", "413", "415", "500"},
 }
 
 func loadOpenAPI(t *testing.T) openAPIDocument {
@@ -120,7 +122,8 @@ func TestOpenAPIRouteContract(t *testing.T) {
 
 func assertOpenAPIOperation(t *testing.T, route Route, operation openAPIOperation) {
 	t.Helper()
-	if route.Role == "" {
+	switch route.Auth {
+	case AuthPublic:
 		if operation.Security == nil || len(*operation.Security) != 0 {
 			t.Fatalf("public route %s %s must have security: []", route.Method, route.Pattern)
 		}
@@ -132,23 +135,52 @@ func assertOpenAPIOperation(t *testing.T, route Route, operation openAPIOperatio
 				t.Fatalf("public route %s %s documents %s", route.Method, route.Pattern, status)
 			}
 		}
-		return
-	}
-
-	if operation.Security == nil || len(*operation.Security) != 1 {
-		t.Fatalf("protected route %s %s must declare bearer security", route.Method, route.Pattern)
-	}
-	bearer, ok := (*operation.Security)[0]["bearerAuth"]
-	if !ok || len(bearer) != 0 {
-		t.Fatalf("protected route %s %s security = %+v", route.Method, route.Pattern, *operation.Security)
-	}
-	if operation.XRequiredRole != string(route.Role) {
-		t.Fatalf("route %s %s x-required-role = %q, want %q", route.Method, route.Pattern, operation.XRequiredRole, route.Role)
-	}
-	for _, status := range []string{"200", "400", "401", "403", "500"} {
-		if _, ok := operation.Responses[status]; !ok {
-			t.Fatalf("route %s %s is missing the %s response", route.Method, route.Pattern, status)
+	case AuthSignature:
+		// A signature route is unauthenticated from the API-key perspective:
+		// it must not advertise bearerAuth, must name its own auth kind, and
+		// has no role-based 403 path. 401 still applies to a bad signature.
+		if operation.Security == nil || len(*operation.Security) != 0 {
+			t.Fatalf("signature route %s %s must have security: []", route.Method, route.Pattern)
 		}
+		if operation.XAuthKind != "slack-signature" {
+			t.Fatalf("signature route %s %s x-auth-kind = %q, want slack-signature",
+				route.Method, route.Pattern, operation.XAuthKind)
+		}
+		if operation.XRequiredRole != "none" {
+			t.Fatalf("signature route %s %s x-required-role = %q", route.Method, route.Pattern, operation.XRequiredRole)
+		}
+		if _, ok := operation.Responses["401"]; !ok {
+			t.Fatalf("signature route %s %s is missing the 401 response", route.Method, route.Pattern)
+		}
+		if _, ok := operation.Responses["403"]; ok {
+			t.Fatalf("signature route %s %s documents role-based 403", route.Method, route.Pattern)
+		}
+		if _, ok := operation.Responses["200"]; !ok {
+			t.Fatalf("signature route %s %s is missing the 200 response", route.Method, route.Pattern)
+		}
+		for _, entry := range *operation.Security {
+			if _, usesBearer := entry["bearerAuth"]; usesBearer {
+				t.Fatalf("signature route %s %s advertises bearerAuth", route.Method, route.Pattern)
+			}
+		}
+	case AuthAPIKey:
+		if operation.Security == nil || len(*operation.Security) != 1 {
+			t.Fatalf("protected route %s %s must declare bearer security", route.Method, route.Pattern)
+		}
+		bearer, ok := (*operation.Security)[0]["bearerAuth"]
+		if !ok || len(bearer) != 0 {
+			t.Fatalf("protected route %s %s security = %+v", route.Method, route.Pattern, *operation.Security)
+		}
+		if operation.XRequiredRole != string(route.Role) {
+			t.Fatalf("route %s %s x-required-role = %q, want %q", route.Method, route.Pattern, operation.XRequiredRole, route.Role)
+		}
+		for _, status := range []string{"200", "400", "401", "403", "500"} {
+			if _, ok := operation.Responses[status]; !ok {
+				t.Fatalf("route %s %s is missing the %s response", route.Method, route.Pattern, status)
+			}
+		}
+	default:
+		t.Fatalf("route %s %s has an unknown auth kind %d", route.Method, route.Pattern, route.Auth)
 	}
 }
 

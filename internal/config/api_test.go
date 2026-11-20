@@ -165,6 +165,10 @@ func TestValidateAPIRuntime(t *testing.T) {
 	cfg := defaults()
 	cfg.Database.AppURL = "postgres://app:app@localhost:5432/recon?sslmode=disable"
 	cfg.API.Keys = []APIKey{{ID: "dev", Role: RoleAdmin}}
+	cfg.Slack = SlackConfig{
+		BotToken:      "test-bot-token",
+		SigningSecret: "test-signing-secret",
+	}
 	if err := cfg.ValidateAPIRuntime(); err != nil {
 		t.Fatalf("ValidateAPIRuntime: %v", err)
 	}

@@ -52,6 +52,14 @@ type Policy struct {
 // a hook error rolls the whole decision back.
 type ProposalClosedHook func(ctx context.Context, tx pgx.Tx, proposalID, proposalStatus, reason string) error
 
+// InfoRequestedHook is the M4-10 lifecycle callback invoked inside
+// DecideWithOptions's transaction when DecisionOptions.InfoRequested is true.
+// It replaces ProposalClosedHook for that path: the case moves to waiting_info
+// instead of consuming an attempt or escalating. A nil hook fails closed
+// before any write (ErrInfoRequestedUnsupported); a hook error rolls the whole
+// decision back.
+type InfoRequestedHook func(ctx context.Context, tx pgx.Tx, proposalID string) error
+
 // Options is the approval service dependency set. Pool and State must use the
 // recon_app role; TTL zero means the policy document's proposal_ttl_hours.
 type Options struct {
@@ -66,6 +74,11 @@ type Options struct {
 	// the decision transaction after a rejection or a late-decision expiry; a
 	// returned error aborts the decision.
 	OnProposalClosed ProposalClosedHook
+	// InfoRequestedHook is optional M4-10 lifecycle integration for
+	// DecisionOptions.InfoRequested. It replaces OnProposalClosed on that path
+	// and runs inside the decision transaction; a nil hook fails closed with
+	// ErrInfoRequestedUnsupported before any write.
+	InfoRequestedHook InfoRequestedHook
 }
 
 // Service routes proposed proposals through verification, policy, and limits,
@@ -83,6 +96,7 @@ type Service struct {
 	systemActor audit.Actor
 	expiryActor audit.Actor
 	onClosed    ProposalClosedHook
+	onInfo      InfoRequestedHook
 }
 
 // NewService validates its dependencies and returns a read-mostly approval
@@ -142,6 +156,7 @@ func NewService(opts Options) (*Service, error) {
 		systemActor: systemActor,
 		expiryActor: expiryActor,
 		onClosed:    opts.OnProposalClosed,
+		onInfo:      opts.InfoRequestedHook,
 	}, nil
 }
 

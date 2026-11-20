@@ -213,7 +213,9 @@ func (c APIConfig) Validate() error {
 
 // ValidateAPIRuntime requires only the configuration the API process uses. It
 // deliberately does not require DATABASE_URL, DATABASE_AGENT_URL,
-// OPENCODE_API_KEY, or worker/synth fields.
+// OPENCODE_API_KEY, or worker/synth fields. M4-12 adds the two Slack secrets
+// the interaction handler needs (bot token and signing secret); the outbox-only
+// channel ID and case-file URL stay optional for the API.
 func (c Config) ValidateAPIRuntime() error {
 	if strings.TrimSpace(c.Database.AppURL) == "" {
 		return errors.New("config: database.app_url is required (set DATABASE_APP_URL or database.app_url in CONFIG_FILE)")
@@ -232,6 +234,15 @@ func (c Config) ValidateAPIRuntime() error {
 	}
 	if err := c.Match.Validate(); err != nil {
 		return err
+	}
+	if err := c.Slack.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.Slack.BotToken) == "" {
+		return errors.New("config: slack.bot_token is required for the API (set SLACK_BOT_TOKEN)")
+	}
+	if strings.TrimSpace(c.Slack.SigningSecret) == "" {
+		return errors.New("config: slack.signing_secret is required for the API (set SLACK_SIGNING_SECRET)")
 	}
 	return nil
 }

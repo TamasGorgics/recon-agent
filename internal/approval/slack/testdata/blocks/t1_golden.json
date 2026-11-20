@@ -1,0 +1,96 @@
+{
+  "channel": "C0123456789",
+  "text": "Approval required: case aaaaaaaa — write_off 1234.56 USD (T1)",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "Approval required · aaaaaaaa"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Case* aaaaaaaa · *Type* write_off · *Value* 1234.56 USD · *Priority* 2\n*Break* external_only · *Delta* 12.50 USD · *Age* 3d 4h"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Delta (break)* 12.50 USD\n*Expected (verifier)* 112.50 USD · *Actual (verifier)* 125.00 USD · *Verifier currency* USD"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Evidence*\n• ext:bank:abc123\n• ledger_txn:11111111-2222-3333-4444-555555555555"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Pattern* fee_variance (verified) · *Result* pass"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Agent rationale*\nThe bank fee is 12.50 USD higher than the fee schedule and the ledger transaction matches the external settlement."
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Risk tier* T1 · *Policy rule* high_value · *Proposal version* 3 · *Expires* 2026-11-20T10:00:00Z · *Proposal* 11111111"
+      }
+    },
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "\u003chttps://cases.example.test/v1/cases/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee|View case file\u003e"
+      }
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Approve"
+          },
+          "action_id": "approval_approve",
+          "value": "11111111-2222-3333-4444-555555555555:3",
+          "style": "primary"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Reject"
+          },
+          "action_id": "approval_reject",
+          "value": "11111111-2222-3333-4444-555555555555:3",
+          "style": "danger"
+        },
+        {
+          "type": "button",
+          "text": {
+            "type": "plain_text",
+            "text": "Request info"
+          },
+          "action_id": "approval_request_info",
+          "value": "11111111-2222-3333-4444-555555555555:3"
+        }
+      ]
+    }
+  ]
+}

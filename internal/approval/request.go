@@ -26,6 +26,10 @@ const (
 	ActionProposalPolicy = "proposal.policy"
 	// TopicApprovalRequest is the outbox topic M4-12 delivers to Slack/ticket.
 	TopicApprovalRequest = "approval.request"
+	// TopicApprovalUpdate is the outbox topic for an in-place decided-message
+	// update. The decision path that enqueues it lands in a later wave; the
+	// Slack handler consumes it now.
+	TopicApprovalUpdate = "approval.update"
 	// ReasonApprovalRequired is the pending_approval transition reason.
 	ReasonApprovalRequired = "approval_required"
 )

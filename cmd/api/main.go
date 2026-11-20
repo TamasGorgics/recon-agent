@@ -1,5 +1,5 @@
 // Command api runs the reconciliation HTTP API. It opens only the recon_app
-// role pool, serves the nine documented routes, and shuts down gracefully on
+// role pool, serves the ten documented routes, and shuts down gracefully on
 // SIGINT/SIGTERM.
 package main
 
@@ -12,9 +12,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/TamasGorgics/recon-agent/internal/api"
+	"github.com/TamasGorgics/recon-agent/internal/api/webhook"
 	"github.com/TamasGorgics/recon-agent/internal/approval"
+	"github.com/TamasGorgics/recon-agent/internal/approval/slack"
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/bizdays"
@@ -137,16 +140,54 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("build proposal state service: %w", err)
 	}
 	approvalService, err := approval.NewService(approval.Options{
-		Pool:             app.Pool,
-		Clock:            clk,
-		State:            stateService,
-		Verifier:         approval.VerifierAdapter{Service: verificationService},
-		Limits:           limitService,
-		Policy:           approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
-		OnProposalClosed: lifecycleService.OnProposalClosed,
+		Pool:              app.Pool,
+		Clock:             clk,
+		State:             stateService,
+		Verifier:          approval.VerifierAdapter{Service: verificationService},
+		Limits:            limitService,
+		Policy:            approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
+		OnProposalClosed:  lifecycleService.OnProposalClosed,
+		InfoRequestedHook: lifecycleService.RequestInfo,
 	})
 	if err != nil {
 		return fmt.Errorf("build approval service: %w", err)
+	}
+
+	slackClient, err := slack.NewClient(slack.ClientOptions{
+		BotToken: cfg.Slack.BotToken,
+		Clock:    clk,
+	})
+	if err != nil {
+		return fmt.Errorf("build slack client: %w", err)
+	}
+	interactions, err := slack.NewInteractionHandler(slack.InteractionOptions{
+		DB:        app.Pool,
+		Queryer:   app.Pool,
+		Decisions: approvalService,
+		Client:    slackClient,
+		Clock:     clk,
+		Logger:    logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build slack interaction handler: %w", err)
+	}
+	// One verifier for the process: the replay cache is intentionally shared
+	// across concurrent Slack callbacks. X-Slack-Retry-Num exempts a Slack
+	// retry from the replay marker only; HMAC and timestamp are always
+	// checked.
+	signatureVerifier, err := webhook.New(webhook.Options{
+		Secret:             []byte(cfg.Slack.SigningSecret),
+		SignatureHeader:    "X-Slack-Signature",
+		TimestampHeader:    "X-Slack-Request-Timestamp",
+		Tolerance:          5 * time.Minute,
+		MaxBodyBytes:       1 << 20,
+		Replay:             webhook.NewMemoryReplayCache(0),
+		ReplayExemptHeader: "X-Slack-Retry-Num",
+		Clock:              clk,
+		Logger:             logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build slack signature verifier: %w", err)
 	}
 
 	store := api.NewPostgresStore(app.Pool)
@@ -163,6 +204,9 @@ func run(ctx context.Context) error {
 		Proposals:  store,
 		Switches:   api.NewSwitchWriter(app.Pool, clk),
 		Decisions:  approvalService,
+
+		SignatureAuth:     signatureVerifier.Middleware,
+		SlackInteractions: interactions,
 	})
 	if err != nil {
 		return fmt.Errorf("build api: %w", err)

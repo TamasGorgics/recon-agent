@@ -21,7 +21,11 @@ import (
 	"github.com/TamasGorgics/recon-agent/migrations"
 )
 
-const m406MigrationVersion = 20261114120000
+const (
+	m406MigrationVersion = 20261114120000
+	// m406PreviousVersion is the M4-05 read-grant version directly below M4-06.
+	m406PreviousVersion = 20261113091000
+)
 
 // m406ExecutorViews is exactly the ResolveState read surface this migration
 // grants to recon_executor.
@@ -286,17 +290,15 @@ func TestExecutorReadGrantMigrationDown(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("configure goose dialect: %v", err)
 	}
-	// M4-13 (actor-id format) and M4-11 (the app expires_at grant) are newer
-	// than the M4-06 read grant. Unwind both first so the third Down is the
-	// M4-06 migration under test.
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("migrate M4-13 down: %v", err)
+	// Newer migrations (M4-13, M4-11, M4-12, and later) sort above the M4-06
+	// read grant. Unwind down to M4-05's read-grant version so the M4-06
+	// migration is the one removed.
+	currentVersion, err := goose.GetDBVersionContext(ctx, sqlDB)
+	if err != nil {
+		t.Fatalf("read current migration version: %v", err)
 	}
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("migrate M4-11 down: %v", err)
-	}
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("migrate M4-06 down: %v", err)
+	if err := goose.DownToContext(ctx, sqlDB, ".", m406PreviousVersion); err != nil {
+		t.Fatalf("migrate down to before M4-06: %v", err)
 	}
 	for _, view := range m406ExecutorViews {
 		if m406TablePrivilege(t, d, db.RoleExecutor, view, "SELECT") {
@@ -313,14 +315,8 @@ func TestExecutorReadGrantMigrationDown(t *testing.T) {
 		t.Error("Down revoked recon_app's M4-05 verifier view grant")
 	}
 
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("migrate M4-06 up: %v", err)
-	}
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("migrate M4-11 up: %v", err)
-	}
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("migrate M4-13 up: %v", err)
+	if err := goose.UpToContext(ctx, sqlDB, ".", currentVersion); err != nil {
+		t.Fatalf("restore migrations through %d: %v", currentVersion, err)
 	}
 	for _, view := range m406ExecutorViews {
 		if !m406TablePrivilege(t, d, db.RoleExecutor, view, "SELECT") {

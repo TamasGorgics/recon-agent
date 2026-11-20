@@ -1,0 +1,82 @@
+{
+  "type": "block_actions",
+  "team": {
+    "id": "T01234567",
+    "domain": "example"
+  },
+  "user": {
+    "id": "U-APPROVER",
+    "username": "approver",
+    "name": "approver",
+    "team_id": "T01234567"
+  },
+  "api_app_id": "A01234567",
+  "token": "verification-token-redacted",
+  "container": {
+    "type": "message",
+    "message_ts": "1732041600.123456",
+    "channel_id": "CSLACK1",
+    "is_ephemeral": false
+  },
+  "trigger_id": "trigger-id-redacted",
+  "response_url": "https://hooks.slack.com/actions/T01234567/redacted",
+  "actions": [
+    {
+      "type": "button",
+      "block_id": "approval-actions",
+      "action_id": "approval_approve",
+      "text": {
+        "type": "plain_text",
+        "text": "Approve",
+        "emoji": true
+      },
+      "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:1",
+      "style": "primary",
+      "action_ts": "1732041600.123456"
+    }
+  ],
+  "channel": {
+    "id": "CSLACK1",
+    "name": "approvals"
+  },
+  "message": {
+    "type": "message",
+    "subtype": "bot_message",
+    "text": "Approval required: case 12345678 — link 12.34 USD (T1)",
+    "ts": "1732041600.123456",
+    "username": "Recon",
+    "bot_id": "B01234567",
+    "blocks": [
+      {
+        "type": "actions",
+        "block_id": "approval-actions",
+        "elements": [
+          {
+            "type": "button",
+            "action_id": "approval_approve",
+            "text": {
+              "type": "plain_text",
+              "text": "Approve"
+            },
+            "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:1",
+            "style": "primary"
+          },
+          {
+            "type": "button",
+            "action_id": "approval_reject",
+            "text": {
+              "type": "plain_text",
+              "text": "Reject"
+            },
+            "value": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:1",
+            "style": "danger"
+          }
+        ]
+      }
+    ]
+  },
+  "state": {
+    "values": {}
+  },
+  "is_enterprise_install": false
+}

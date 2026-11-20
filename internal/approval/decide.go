@@ -2,10 +2,13 @@ package approval
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -13,12 +16,17 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/db"
+	"github.com/TamasGorgics/recon-agent/internal/outbox"
 )
 
 // Decision vocabulary owned by the approval service.
 const (
 	// ActionApprovalDecided is the audit action for one human decision.
 	ActionApprovalDecided = "approval.decided"
+	// ActionApprovalDenied is the audit action for a channel callback whose
+	// Slack identity has no active approver/admin mapping. The handler writes
+	// it without touching the proposal, case, or approvals row.
+	ActionApprovalDenied = "approval.denied"
 	// ReasonExpired is the pending_approval -> expired transition reason used
 	// when a late decision finds the proposal past its TTL.
 	ReasonExpired = "expired"
@@ -26,6 +34,9 @@ const (
 	// Decide requires a non-empty source, so this is only a defensive default
 	// for the state machine's reason-required rejected edge.
 	ReasonDecisionRejected = "decision_rejected"
+	// ReasonInfoRequested is the proposal transition reason for a request for
+	// information. The human-supplied reason, when present, is audit-only.
+	ReasonInfoRequested = "info_requested"
 )
 
 // approverIdentity is the approvers row Decide needs. APIKeyID is the optional
@@ -37,16 +48,26 @@ type approverIdentity struct {
 	APIKeyID *string
 }
 
-// Decide records one human approved/rejected decision. Validation and approver
-// resolution happen before any write, and the decision itself runs in one
-// transaction: the proposal is locked, a late decision expires the proposal
-// instead, four-eyes is checked against audit_log, the approvals row and
-// human-actor state transition are written, and approval.decided is appended.
+// Decide records one human approved/rejected decision with the frozen M4-11
+// semantics. It is exactly DecideWithOptions with zero options, so existing
+// callers and tests are unchanged.
+func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, approverID, source string) (DecisionResult, error) {
+	return s.DecideWithOptions(ctx, proposalID, d, approverID, source, DecisionOptions{})
+}
+
+// DecideWithOptions records one human approved/rejected decision plus the
+// additive DecisionOptions. Validation and approver resolution happen before
+// any write, and the decision itself runs in one transaction: the proposal is
+// locked, a late decision expires the proposal instead, four-eyes is checked
+// against audit_log, the approvals row and human-actor state transition are
+// written, the optional lifecycle hook runs, approval.decided is appended, and
+// one approval.update outbox row is enqueued.
 //
 // Idempotency: a repeated click by the same approver with the same decision is
-// a replay that writes nothing and returns the stored decided_at. Any other
-// decision on an already decided proposal is ErrDecisionConflict.
-func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, approverID, source string) (DecisionResult, error) {
+// a replay that writes nothing, calls no hook, enqueues no update, and returns
+// the stored decided_at. Any other decision on an already decided proposal is
+// ErrDecisionConflict.
+func (s *Service) DecideWithOptions(ctx context.Context, proposalID string, d Decision, approverID, source string, opts DecisionOptions) (DecisionResult, error) {
 	if s == nil {
 		return DecisionResult{}, fmt.Errorf("%w: nil service", ErrInvalidRequest)
 	}
@@ -60,6 +81,18 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 	source, err := validateDecisionInput(d, source)
 	if err != nil {
 		return DecisionResult{}, err
+	}
+	if opts.InfoRequested && d != DecisionRejected {
+		return DecisionResult{}, fmt.Errorf(
+			"%w: info_requested requires a rejected decision, got %q", ErrInvalidRequest, d)
+	}
+	reason, err := validateDecisionReason(opts.Reason)
+	if err != nil {
+		return DecisionResult{}, err
+	}
+	opts.Reason = reason
+	if opts.InfoRequested && s.onInfo == nil {
+		return DecisionResult{}, fmt.Errorf("%w: proposal %s", ErrInfoRequestedUnsupported, proposalID)
 	}
 
 	approver, err := s.loadApproverByID(ctx, approverID)
@@ -121,12 +154,19 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 			}
 
 			target := state.StatusApproved
-			reason := ""
-			if d == DecisionRejected {
+			transitionReason := ""
+			switch {
+			case opts.InfoRequested:
 				target = state.StatusRejected
-				reason = source
-				if strings.TrimSpace(reason) == "" {
-					reason = ReasonDecisionRejected
+				transitionReason = ReasonInfoRequested
+			case d == DecisionRejected:
+				target = state.StatusRejected
+				transitionReason = opts.Reason
+				if strings.TrimSpace(transitionReason) == "" {
+					transitionReason = source
+				}
+				if strings.TrimSpace(transitionReason) == "" {
+					transitionReason = ReasonDecisionRejected
 				}
 			}
 
@@ -167,22 +207,42 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 				To:              target,
 				ExpectedVersion: proposal.Version,
 				Actor:           human,
-				Reason:          reason,
+				Reason:          transitionReason,
 			})
 			if err != nil {
 				return fmt.Errorf("approval: transition proposal %s: %w", proposalID, err)
 			}
 
 			// M4-10 owns the case lifecycle. A rejected decision advances the
-			// case (retry or escalation) in this same transaction; a hook error
-			// rolls back the approval row, proposal transition, and audits.
+			// case (retry or escalation) in this same transaction; a request
+			// for information takes the dedicated hook instead, so it can move
+			// the case to waiting_info without consuming an attempt. A hook
+			// error rolls back the approval row, proposal transition, and
+			// audits.
 			if target == state.StatusRejected {
-				if err := s.notifyProposalClosed(ctx, tx, proposalID,
-					string(state.StatusRejected), reason); err != nil {
+				if opts.InfoRequested {
+					if err := s.notifyInfoRequested(ctx, tx, proposalID); err != nil {
+						return err
+					}
+				} else if err := s.notifyProposalClosed(ctx, tx, proposalID,
+					string(state.StatusRejected), transitionReason); err != nil {
 					return err
 				}
 			}
 
+			auditAfter := map[string]any{
+				"status":      string(target),
+				"version":     updated.Version,
+				"decision":    string(d),
+				"source":      source,
+				"approver_id": approver.ID,
+			}
+			if opts.Reason != "" {
+				auditAfter["reason"] = opts.Reason
+			}
+			if opts.InfoRequested {
+				auditAfter["info_requested"] = true
+			}
 			if _, err := audit.Append(ctx, tx, audit.Entry{
 				Actor:      human,
 				Action:     ActionApprovalDecided,
@@ -192,16 +252,24 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 					"status":  string(state.StatusPendingApproval),
 					"version": proposal.Version,
 				},
-				After: map[string]any{
-					"status":      string(target),
-					"version":     updated.Version,
-					"decision":    string(d),
-					"source":      source,
-					"approver_id": approver.ID,
-				},
+				After:     auditAfter,
 				Timestamp: now,
 			}); err != nil {
 				return fmt.Errorf("approval: append decision audit: %w", err)
+			}
+
+			if err := enqueueApprovalUpdate(ctx, tx, approvalUpdatePayload{
+				ProposalID:    proposalID,
+				CaseID:        proposal.CaseID,
+				Decision:      string(d),
+				Status:        string(target),
+				Source:        source,
+				ApproverID:    approver.ID,
+				DecidedAt:     decidedAt.UTC().Format(time.RFC3339Nano),
+				InfoRequested: opts.InfoRequested,
+				Reason:        opts.Reason,
+			}); err != nil {
+				return err
 			}
 
 			result = DecisionResult{
@@ -263,6 +331,78 @@ func (s *Service) notifyProposalClosed(ctx context.Context, tx pgx.Tx,
 		return fmt.Errorf("approval: proposal-closed hook for %s: %w", proposalID, err)
 	}
 	return nil
+}
+
+// notifyInfoRequested invokes the dedicated request-info hook instead of
+// OnProposalClosed. Construction of a decision with InfoRequested already
+// required a non-nil hook; the nil check is retained as a fail-closed guard.
+func (s *Service) notifyInfoRequested(ctx context.Context, tx pgx.Tx, proposalID string) error {
+	if s.onInfo == nil {
+		return fmt.Errorf("%w: proposal %s", ErrInfoRequestedUnsupported, proposalID)
+	}
+	if err := s.onInfo(ctx, tx, proposalID); err != nil {
+		return fmt.Errorf("approval: info-requested hook for %s: %w", proposalID, err)
+	}
+	return nil
+}
+
+// approvalUpdatePayload is the approval.update outbox contract from spec 6.1.
+// Reason is optional and omitted when empty; DecidedAt is RFC3339Nano UTC.
+type approvalUpdatePayload struct {
+	ProposalID    string `json:"proposal_id"`
+	CaseID        string `json:"case_id"`
+	Decision      string `json:"decision"`
+	Status        string `json:"status"`
+	Source        string `json:"source"`
+	ApproverID    string `json:"approver_id"`
+	DecidedAt     string `json:"decided_at"`
+	InfoRequested bool   `json:"info_requested"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+func approvalUpdateKey(proposalID string) string {
+	return TopicApprovalUpdate + ":" + proposalID
+}
+
+// enqueueApprovalUpdate writes the decided-message update in the decision
+// transaction. A duplicate key while the proposal was just transitioned is
+// drift, never success: returning an error rolls the decision back. The Slack
+// handler no-ops when no approval_messages row exists (for example T2).
+func enqueueApprovalUpdate(ctx context.Context, tx pgx.Tx, payload approvalUpdatePayload) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("approval: encode approval update: %w", err)
+	}
+	key := approvalUpdateKey(payload.ProposalID)
+	inserted, err := outbox.EnqueueAggregate(ctx, tx, "proposal", payload.ProposalID,
+		TopicApprovalUpdate, encoded, key)
+	if err != nil {
+		return fmt.Errorf("approval: enqueue approval update: %w", err)
+	}
+	if !inserted {
+		return fmt.Errorf("%w: %s already exists", ErrDecisionConflict, key)
+	}
+	return nil
+}
+
+// validateDecisionReason trims and validates the optional decision reason. The
+// state authority independently bounds the transition reason; this check runs
+// before any write and also covers audit-only reasons. Control and format
+// characters are rejected because a Slack-rendered reason must stay printable
+// and unambiguous.
+func validateDecisionReason(reason string) (string, error) {
+	trimmed := strings.TrimSpace(reason)
+	if len([]rune(trimmed)) > maxDecisionReasonRunes {
+		return "", fmt.Errorf("%w: reason exceeds %d runes",
+			ErrInvalidRequest, maxDecisionReasonRunes)
+	}
+	for _, r := range trimmed {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return "", fmt.Errorf("%w: reason contains control or format character U+%04X",
+				ErrInvalidRequest, r)
+		}
+	}
+	return trimmed, nil
 }
 
 // DecideByAPIKey maps a configured API key id to the approvers row and then
@@ -478,6 +618,36 @@ func (s *Service) loadApproverByAPIKey(ctx context.Context, apiKeyID string) (ap
 		return approverIdentity{}, fmt.Errorf("approval: load approver by API key: %w", err)
 	}
 	return validateApprover(approver)
+}
+
+// ApproverBySlackUserID resolves a Slack user id to its approvers row. The
+// returned Approver exposes only the internal id, role, and active flag; API
+// key material and external ids never leave the service. A missing row,
+// non-approver role, or inactive row is a typed unauthorized outcome, so
+// channel handlers can audit the denial without calling Decide.
+func (s *Service) ApproverBySlackUserID(ctx context.Context, slackUserID string) (Approver, error) {
+	if s == nil {
+		return Approver{}, fmt.Errorf("%w: nil service", ErrInvalidRequest)
+	}
+	if slackUserID == "" || strings.TrimSpace(slackUserID) != slackUserID ||
+		utf8.RuneCountInString(slackUserID) > maxSlackUserIDRunes {
+		return Approver{}, fmt.Errorf(
+			"%w: slack user id must be non-empty, unpadded, and at most %d characters",
+			ErrInvalidRequest, maxSlackUserIDRunes)
+	}
+	approver, err := scanApprover(s.pool.QueryRow(ctx,
+		`SELECT `+approverColumns+` FROM approvers WHERE slack_user_id = $1`, slackUserID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Approver{}, fmt.Errorf("%w: no approver is mapped to that Slack user", ErrApproverNotFound)
+	}
+	if err != nil {
+		return Approver{}, fmt.Errorf("approval: load approver by Slack user id: %w", err)
+	}
+	validated, err := validateApprover(approver)
+	if err != nil {
+		return Approver{}, err
+	}
+	return Approver{ID: validated.ID, Role: validated.Role, Active: validated.Active}, nil
 }
 
 func scanApprover(row pgx.Row) (approverIdentity, error) {

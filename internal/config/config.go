@@ -43,6 +43,10 @@ var envBindings = []envBinding{
 	{EnvOpenCodeModel, func(c *Config, v string) error { c.LLM.Model = v; return nil }},
 	{EnvAPIKeys, applyAPIKeysEnv},
 	{EnvPolicyFile, func(c *Config, v string) error { c.Policy.File = v; return nil }},
+	{EnvSlackBotToken, func(c *Config, v string) error { c.Slack.BotToken = v; return nil }},
+	{EnvSlackSigningSecret, func(c *Config, v string) error { c.Slack.SigningSecret = v; return nil }},
+	{EnvSlackChannelID, func(c *Config, v string) error { c.Slack.ChannelID = v; return nil }},
+	{EnvSlackCaseFileBaseURL, func(c *Config, v string) error { c.Slack.CaseFileBaseURL = v; return nil }},
 }
 
 // DefaultLogLevel is used when neither YAML nor the environment sets a level.
@@ -64,14 +68,16 @@ type Config struct {
 	Verifier        VerifierConfig        `yaml:"verifier"`
 	AutoApplyLimits AutoApplyLimitsConfig `yaml:"auto_apply_limits"`
 	Cases           CasesConfig           `yaml:"cases"`
+	Slack           SlackConfig           `yaml:"slack"`
 }
 
-// String renders Config without credentials: database DSNs and the LLM API key
-// are replaced, and API key digests are summarized by count. This keeps
-// accidental %v/%+v logging from exposing secrets.
+// String renders Config without credentials: database DSNs, the LLM API key,
+// and the Slack bot token/signing secret are replaced, and API key digests are
+// summarized by count. This keeps accidental %v/%+v logging from exposing
+// secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s, Cases:%+v}",
-		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits, c.Cases)
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s, Cases:%+v, Slack:%s}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits, c.Cases, c.Slack)
 }
 
 // Format implements fmt.Formatter so every verb, including %#v, uses the
@@ -141,6 +147,7 @@ func LoadFile(path string) (Config, error) {
 	cfg.Worker = normalizeWorkerConfig(cfg.Worker)
 	cfg.Verifier = cfg.Verifier.WithDefaults()
 	cfg.AutoApplyLimits = cfg.AutoApplyLimits.WithDefaults()
+	cfg.Slack = cfg.Slack.Normalized()
 	return cfg, nil
 }
 
@@ -178,6 +185,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.API.Validate(); err != nil {
+		return err
+	}
+	if err := c.Slack.Validate(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.Policy.File) == "" {
