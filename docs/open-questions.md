@@ -623,3 +623,115 @@ M5-01 contract. M5-02+ (replay, metrics, reports, retention) is out of scope.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-99 | **RESOLVED (M5-01) for the implementation; spec §3.1 amendment deferred to a future spec revision:** `proposals.trace_id` is a roadmap-required schema delta recorded in the addendum above (nullable, no backfill, no index, no new grant). M5-01 also records the frozen boundaries: trace-ID correlation only for async policy/executor (no `traceparent`/links); Phoenix 22 `4318:6006` mapping with dev-only `PHOENIX_ENABLE_AUTH=false`; level-3 UI visibility PENDING a human check (the roadmap box stays unticked); OTLP/HTTP default with gRPC via env; payload capture off by default and never prompts/memos/args; no inbound server span so `X-Trace-ID` may differ; `cmd/outbox` unwired; no global provider mutation; OTel v1.47.0 pinned; level-2 demo receipt recorded with 15 spans and no UI claim; no M5-02+ scope. Residual follow-ups (under-limit UTF-8, remote span-context hardening, evidence-process notes) are listed in the addendum above. | Spec §3.1 / M5-01 / docs consumers / ops | Amend spec §3.1 for `proposals.trace_id` only in a future spec revision; keep the correlation-only, capture-off, dev-only-Phoenix, and no-global-provider contracts; keep the M5-01 box unticked until a human records the Phoenix UI check; do not cite level 2 as level 3; close the two technical residuals before relying on payload capture or inbound trace propagation. |
+
+## M5-02 Replay (Q-100)
+
+**Q-100 addendum (Wave 5 docs phase; developer-owned, lead-approved; no
+`docs/spec.md` edit).** `docs/spec.md` §§12 and 19 require replay; the delivered
+M5-02 contract and its boundaries are recorded here. The specification text
+itself is unchanged. M5-03+ (metrics, dashboards, reports, retention) is out of
+scope.
+
+- **Read-only diagnostic, one load then no DB.** `recon replay` is a diagnostic,
+  not a restore or re-apply path. The CLI opens the application role, loads the
+  run in exactly one `REPEATABLE READ READ ONLY` transaction, commits it, and
+  closes the pool. `replay.ExactReplay(recording, config)` and
+  `replay.Rerun(...)` take no pool, transaction, DB-carrying context, or
+  executor; a closed-pool test proves replay still succeeds after the load.
+  Replay writes no rows, executes no recorded tool, and never touches live data.
+- **Exact is limited to `outcome='proposal'` with a stored proposal.** Any other
+  outcome, or a proposal outcome with no stored proposal row, is exit 2
+  `unsupported_run`; replay never fabricates an identity or placeholder proposal
+  to manufacture a match.
+- **Digest field set.** `proposal_hash` is SHA-256 over canonical JSON of
+  `{type, payload, rationale, evidence (sorted unique), confidence (4dp string),
+  pattern_claimed}`, with JSON `null` and `""` distinct. `state_hash`,
+  `idempotency_key`, timestamps, and stored IDs are excluded. The digest is
+  versioned by this record, not by a schema column; changing a normalization
+  rule changes all historical digests.
+- **`state_hash` is diagnostic only.** Exact replay reports the recorded
+  `proposals.state_hash` (and flags a malformed value with `state_hash_invalid`)
+  but never compares it for identity. A run whose `state_hash` would differ is
+  still identical; replay must not read post-recording DB state.
+- **Idempotency key.** Exact replay recomputes the key and reports a key-only
+  difference as `proposal_field_diff(field=idempotency_key)`. That single
+  difference is non-identity-breaking (`identical` stays true), but it is still
+  a divergence and the CLI exits 1. Rerun compares the digest only and never
+  requires key equality, because a rerun produces a new proposal.
+- **Tool-call arguments are part of exact identity.** For the seed `get_case`
+  call, every investigation call, and the proposal call, exact replay
+  canonicalizes the model-requested arguments and compares them with the stored
+  `tool_calls.args` (sorted keys, `UseNumber`, `null` distinct from `""`; empty
+  arguments normalized to `{}` exactly as the recorder stores them). A mismatch
+  is a `tool_result_mismatch` hard stop with `field=args` and `identical=false`.
+  A recorded response cannot preserve empty-vs-literal-`null` arguments (both
+  serialize as `null`); that malformed-call-only ambiguity accepts either stored
+  spelling. A proposal tool call is terminal only when the recorded call
+  succeeded, so an invalid-arguments proposal followed by a repair and a valid
+  proposal replays identically.
+- **Integrity hashes are not authentication (non-blocking trust boundary).**
+  `result_canonical_hash` (and the args comparison) is stored beside the data
+  it protects. A writer who can consistently rewrite both the data and its hash
+  — or both `tool_calls.args` and the arguments inside `llm_calls.response` —
+  can make exact replay report identical. Replay detects inconsistent corruption
+  and partial edits, not an authorized consistent rewrite. M5-02 adds no
+  signature, MAC, or external anchor; operators must rely on database
+  privileges, audit, and retention controls.
+- **Canonical tool-result hash migration and legacy rows.** The only M5-02
+  migration is `20261123120000_m5_02_tool_result_canonical_hash.sql`:
+  `tool_calls.result_canonical_hash TEXT NULL`, no backfill, no index, no new
+  grant (the existing table-level `recon_app` SELECT/INSERT covers it).
+  `result_hash` hashes the original Go envelope bytes and cannot be recomputed
+  from JSONB; `RecordToolCall` now also stores SHA-256 over canonical JSON of
+  the loaded result. A non-NULL mismatch is `tool_result_mismatch` and a hard
+  stop. A NULL legacy row reports the non-breaking
+  `tool_result_hash_unavailable` diagnostic; arguments/content checks still
+  apply.
+- **20-run gate and committed fixture.** The done-when evidence is the seeded
+  integration test `TestTwentyRunExactReplayGate`: a fresh test DB, the M2
+  fixture, 20 distinct cases over three scenarios split 7/7/6, the production
+  agent loop recording through the real recorder, then `LoadRecording` +
+  `ExactReplay`; it requires 20/20 identical. The committed
+  `internal/replay/testdata/recording_v1.json` (schema 1, run
+  `77777777-7777-4777-8777-777777777777`, prompt v1, outcome proposal) is the
+  small engine/CLI fixture; its loader is test-only and no production package
+  imports it. The scenarios/gate are test-only and need a test database.
+- **`llm_calls` limitation: replay is code/config-coupled.** `llm_calls` stores
+  `request_hash`, the response, and usage, but not the full request body,
+  provider, or base URL. Exact replay must rebuild each request with the current
+  code, prompt, model choice (from each recorded `response.requested_model`),
+  temperature/token config, provider, and base URL. A change to any of those, or
+  to request-building code, can make an old run unreplayable and surfaces as
+  `request_hash_mismatch`. That is a faithful mismatch, not noise; operators
+  must check config/code drift before treating it as a decision change.
+- **Cassette-default rerun, explicit live.** Rerun defaults to reading
+  `eval/cassettes` and never touches the network; a miss is exit 2
+  `cassette_miss`, never a divergence. `--live` is the only provider path and
+  requires `OPENCODE_API_KEY` in the process environment; a config file cannot
+  supply it (`yaml:"-"`), and `.env` is never read. Tests/CI never use `--live`.
+  Missing key is exit 2 `live_key_missing`. `--model` and `--prompt` override
+  the recorded values; `--cassette-dir` is a delivered extension that selects a
+  different cassette directory (default `eval/cassettes`).
+- **Rerun stops at the proposal.** The first proposal tool call is terminal for
+  rerun: it rebuilds the proposal through the production normalization path,
+  compares the digest, and stops. A model-requested tool call with no unconsumed
+  matching recording is the `tool_call_unrecorded` hard stop and is never
+  executed. Rerun has no executor and writes no DB row.
+- **Exit 0/1/2.** `0` no divergences (and equal digests in exact mode); `1` the
+  divergence list is non-empty, with the full report still on stdout —
+  including a key-only `proposal_field_diff` that keeps `identical=true`; `2`
+  usage/config/load/DB/`unsupported_run`/`cassette_miss`/`live_key_missing`
+  error, stderr only even with `--json` (no partial JSON on stdout). Exit status
+  follows the divergence list per spec §5; divergence is a completed replay
+  that differs, not an operational failure.
+- **Telemetry disabled.** The replay path never initializes the OTel provider
+  and exports no spans; a counting OTLP endpoint test asserts zero hits. Replay
+  is a diagnostic command, not a traced case run.
+- **No M5-03+ scope and no `docs/spec.md` edit.** M5-02 adds no metrics,
+  dashboards, reports, retention job, scheduler, or other roadmap task. The
+  specification text is unchanged; this Q-100 entry and `docs/replay.md` are the
+  delivered documentation.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-100 | **RESOLVED (M5-02) for the implementation; spec §12/§19 wording left unchanged:** replay is a read-only diagnostic limited to `outcome='proposal'` with a stored proposal; one `REPEATABLE READ READ ONLY` load then no DB; digest covers `{type,payload,rationale,evidence(sorted unique),confidence(4dp),pattern_claimed}` and excludes `state_hash`/`idempotency_key`/timestamps; `state_hash` is diagnostic only; exact recomputes the key and reports a key-only diff without changing `identical` (but the command still exits 1); exact compares every model-requested tool-call argument set with stored `tool_calls.args` (`tool_result_mismatch(field=args)` hard stop) and mirrors the malformed-proposal repair flow; rerun compares digest only, stops at the proposal, and is cassette-default with process-env-only `OPENCODE_API_KEY` for `--live`; exit follows the divergence list (0 none, 1 any including a key-only diff, 2 usage/load) with stderr-only exit 2; the canonical tool-result hash migration is the only schema change and legacy NULL rows get the `tool_result_hash_unavailable` diagnostic; hashes stored beside the data are not authentication (a consistent rewrite passes — non-blocking trust boundary, no signature/MAC added); the 20/20 seeded gate and `recording_v1.json` fixture are the evidence; `llm_calls` lacks the full request/provider/base URL, so replay is code/config-coupled and config drift shows as `request_hash_mismatch`; telemetry is disabled; no M5-03+ scope and no `docs/spec.md` edit. | Spec §12/§19 / M5-02 / docs consumers / ops | Keep replay read-only and exact-restricted; keep the digest field set, `state_hash` diagnostic, and key-only relaxation; keep cassette-default rerun with process-env `--live`; keep exit 0/1/2 and stderr-only exit 2; keep the canonical hash migration and legacy diagnostic; cite only the 20/20 gate and committed fixture as replay evidence; treat config drift as a real `request_hash_mismatch`; keep telemetry off; amend `docs/spec.md` only in a future spec revision if the owners choose to. |

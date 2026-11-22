@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -235,22 +236,34 @@ type Execer interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
+// RecorderDB is the full database surface required by DBRecorder: writes plus
+// single-row reads. The read obtains PostgreSQL's JSONB text representation of
+// the result so the canonical hash matches a later replay. It is satisfied by
+// *pgxpool.Pool and pgx.Tx.
+type RecorderDB interface {
+	Execer
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // DBRecorder writes tool_calls rows through the recon_app pool. It is
 // deliberately separate from Queryer so handlers can never receive it.
 type DBRecorder struct {
-	execer Execer
+	db RecorderDB
 }
 
 // NewDBRecorder returns a recorder backed by the application pool.
-func NewDBRecorder(execer Execer) *DBRecorder {
-	return &DBRecorder{execer: execer}
+func NewDBRecorder(db RecorderDB) *DBRecorder {
+	return &DBRecorder{db: db}
 }
 
 // RecordToolCall inserts one tool_calls row. Args and Result are passed as
 // strings to explicit ::jsonb casts; passing []byte would make pgx encode
-// bytea and fail the JSONB column.
+// bytea and fail the JSONB column. The canonical hash is computed from the
+// JSONB text representation of the result, not from the pre-insert bytes, so
+// re-reading the stored value and re-canonicalising it reproduces the same
+// hash.
 func (r *DBRecorder) RecordToolCall(ctx context.Context, call ToolCall) error {
-	if r == nil || r.execer == nil {
+	if r == nil || r.db == nil {
 		return errors.New("tools: recorder has no database pool")
 	}
 	args := call.Args
@@ -260,6 +273,16 @@ func (r *DBRecorder) RecordToolCall(ctx context.Context, call ToolCall) error {
 	result := call.Result
 	if len(result) == 0 {
 		result = marshalErrorEnvelope(CodeInternalError, defaultMessage(CodeInternalError))
+	}
+
+	var storedResult string
+	if err := r.db.QueryRow(ctx, `SELECT ($1::jsonb)::text`, string(result)).
+		Scan(&storedResult); err != nil {
+		return fmt.Errorf("tools: normalize tool result JSONB: %w", err)
+	}
+	canonicalHash, err := CanonicalJSONHash([]byte(storedResult))
+	if err != nil {
+		return fmt.Errorf("tools: canonical tool result: %w", err)
 	}
 
 	var errorCode any
@@ -272,14 +295,16 @@ func (r *DBRecorder) RecordToolCall(ctx context.Context, call ToolCall) error {
 		return fmt.Errorf("tools: encode injection flags: %w", err)
 	}
 
-	_, err = r.execer.Exec(ctx,
+	_, err = r.db.Exec(ctx,
 		`INSERT INTO tool_calls
-		     (agent_run_id, seq, tool_name, args, result, result_hash, error,
-		      injection_flags, started_at, duration_ms)
-		 VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8::jsonb,
-		         $9, $10)`,
+		     (agent_run_id, seq, tool_name, args, result, result_hash,
+		      result_canonical_hash, error, injection_flags, started_at,
+		      duration_ms)
+		 VALUES ($1::uuid, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb,
+		         $10, $11)`,
 		call.RunID, call.Seq, call.ToolName, string(args), string(result),
-		call.ResultHash, errorCode, string(flags), call.StartedAt, call.DurationMS)
+		call.ResultHash, canonicalHash, errorCode, string(flags),
+		call.StartedAt, call.DurationMS)
 	if err != nil {
 		return fmt.Errorf("tools: insert tool call: %w", err)
 	}

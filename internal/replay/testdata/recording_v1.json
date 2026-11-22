@@ -1,0 +1,298 @@
+{
+  "schema": 1,
+  "run": {
+    "id": "77777777-7777-4777-8777-777777777777",
+    "case_id": "88888888-8888-4888-8888-888888888888",
+    "model": "deepseek-v4.1-flash",
+    "prompt_version": "v1",
+    "outcome": "proposal",
+    "started_at": "2026-06-01T10:00:00Z",
+    "ended_at": "2026-06-01T10:00:07Z"
+  },
+  "llm_calls": [
+    {
+      "seq": 1,
+      "model": "deepseek-v4.1-flash",
+      "request_hash": "5641a23b437705550c5ce1234cbcae9863a2d55788d65218ec6563ce18f9cc20",
+      "response": {
+        "id": "",
+        "provider": "opencode",
+        "requested_model": "deepseek-v4.1-flash",
+        "actual_model": "deepseek-v4.1-flash",
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "name": "lookup_external_record",
+              "arguments": {
+                "record_id": "fee-1",
+                "source": "psp_m2"
+              }
+            }
+          ]
+        },
+        "stop_reason": "tool_calls",
+        "usage": {
+          "prompt_tokens": 180,
+          "completion_tokens": 24,
+          "total_tokens": 204,
+          "reasoning_tokens": 0,
+          "cached_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_5m_tokens": 0,
+          "cache_write_1h_tokens": 0,
+          "api_cost": "0",
+          "list_cost": "0",
+          "list_cost_reported": false,
+          "computed_cost": "0",
+          "cost_usd": "0",
+          "allowance": "0",
+          "allowance_reported": false
+        },
+        "latency_ns": 4000000,
+        "attempts": 0
+      },
+      "usage": {
+        "prompt_tokens": 180,
+        "completion_tokens": 24,
+        "total_tokens": 204,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_5m_tokens": 0,
+        "cache_write_1h_tokens": 0,
+        "api_cost": "0",
+        "list_cost": "0",
+        "list_cost_reported": false,
+        "computed_cost": "0",
+        "cost_usd": "0",
+        "allowance": "0",
+        "allowance_reported": false
+      },
+      "started_at": "2026-06-01T10:00:02Z",
+      "duration_ms": 4
+    },
+    {
+      "seq": 2,
+      "model": "deepseek-v4.1-flash",
+      "request_hash": "95944d99fdf036bcdb2139b8d23c49318cfeeb897ff3a20bcc037cddc9019bf7",
+      "response": {
+        "id": "",
+        "provider": "opencode",
+        "requested_model": "deepseek-v4.1-flash",
+        "actual_model": "deepseek-v4.1-flash",
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_2",
+              "name": "request_info",
+              "arguments": {
+                "case_id": "88888888-8888-4888-8888-888888888888",
+                "confidence": 0.5,
+                "evidence": [
+                  "case:88888888-8888-4888-8888-888888888888"
+                ],
+                "question": "Which settlement reference matches this case?",
+                "rationale": "Need the settlement reference before deciding."
+              }
+            }
+          ]
+        },
+        "stop_reason": "tool_calls",
+        "usage": {
+          "prompt_tokens": 220,
+          "completion_tokens": 32,
+          "total_tokens": 252,
+          "reasoning_tokens": 0,
+          "cached_tokens": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_5m_tokens": 0,
+          "cache_write_1h_tokens": 0,
+          "api_cost": "0",
+          "list_cost": "0",
+          "list_cost_reported": false,
+          "computed_cost": "0",
+          "cost_usd": "0",
+          "allowance": "0",
+          "allowance_reported": false
+        },
+        "latency_ns": 6000000,
+        "attempts": 0
+      },
+      "usage": {
+        "prompt_tokens": 220,
+        "completion_tokens": 32,
+        "total_tokens": 252,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_5m_tokens": 0,
+        "cache_write_1h_tokens": 0,
+        "api_cost": "0",
+        "list_cost": "0",
+        "list_cost_reported": false,
+        "computed_cost": "0",
+        "cost_usd": "0",
+        "allowance": "0",
+        "allowance_reported": false
+      },
+      "started_at": "2026-06-01T10:00:05Z",
+      "duration_ms": 6
+    }
+  ],
+  "tool_calls": [
+    {
+      "seq": 1,
+      "tool_name": "get_case",
+      "args": {
+        "case_id": "88888888-8888-4888-8888-888888888888"
+      },
+      "result": {
+        "data": {
+          "attempts": 0,
+          "breaks": [
+            {
+              "currency": "USD",
+              "delta_minor": 10,
+              "detected_at": "2026-01-15T00:00:00Z",
+              "external_refs": [
+                {
+                  "source": "psp_m2",
+                  "source_record_id": "fee-1"
+                }
+              ],
+              "id": "b0000000-0000-4000-8000-000000000001",
+              "ledger_txn_ids": [
+                "c0000000-0000-4000-8000-000000000001"
+              ],
+              "scope_id": "90000000-0000-4000-8000-000000000001",
+              "side": "amount_mismatch",
+              "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "status": "in_case"
+            }
+          ],
+          "created_at": "2026-01-15T00:00:00Z",
+          "currency": "USD",
+          "escalation_reason": null,
+          "id": "88888888-8888-4888-8888-888888888888",
+          "priority": 30,
+          "resolution_type": null,
+          "resolved_at": null,
+          "status": "in_agent",
+          "value_minor": 10,
+          "version": 0
+        },
+        "refs": [
+          "case:88888888-8888-4888-8888-888888888888",
+          "ledger_txn:c0000000-0000-4000-8000-000000000001",
+          "ext:psp_m2:fee-1"
+        ],
+        "truncated": false,
+        "untrusted_fields": []
+      },
+      "result_hash": "da8d623e89813aaf00eaff90d540b3147d7779fb1063ec9f8fff4f565b44fb51",
+      "result_canonical_hash": "da8d623e89813aaf00eaff90d540b3147d7779fb1063ec9f8fff4f565b44fb51",
+      "error": null,
+      "injection_flags": [],
+      "started_at": "2026-06-01T10:00:00Z",
+      "duration_ms": 0
+    },
+    {
+      "seq": 2,
+      "tool_name": "lookup_external_record",
+      "args": {
+        "record_id": "fee-1",
+        "source": "psp_m2"
+      },
+      "result": {
+        "data": {
+          "amount_minor": 10000,
+          "currency": "USD",
+          "fee_minor": 20,
+          "id": "f0000000-0000-4000-8000-000000000001",
+          "kind": "charge",
+          "occurred_at": "2026-01-15T00:00:00Z",
+          "raw": {
+            "memo": "Synthetic monthly processing charge",
+            "reference": "fee-1"
+          },
+          "settled_at": "2026-01-15T00:00:00Z",
+          "source": "psp_m2",
+          "source_record_id": "fee-1",
+          "untrusted_fields": [
+            "memo"
+          ],
+          "value_date": "2026-01-15"
+        },
+        "refs": [
+          "ext:psp_m2:fee-1"
+        ],
+        "truncated": false,
+        "untrusted_fields": [
+          "memo"
+        ]
+      },
+      "result_hash": "6a3f308e3342b3bb9227e76c1570eb4b1671867d3ff055e39a8c289ea9088455",
+      "result_canonical_hash": "6a3f308e3342b3bb9227e76c1570eb4b1671867d3ff055e39a8c289ea9088455",
+      "error": null,
+      "injection_flags": [],
+      "started_at": "2026-06-01T10:00:03Z",
+      "duration_ms": 0
+    },
+    {
+      "seq": 3,
+      "tool_name": "request_info",
+      "args": {
+        "case_id": "88888888-8888-4888-8888-888888888888",
+        "confidence": 0.5,
+        "evidence": [
+          "case:88888888-8888-4888-8888-888888888888"
+        ],
+        "question": "Which settlement reference matches this case?",
+        "rationale": "Need the settlement reference before deciding."
+      },
+      "result": {
+        "data": {
+          "idempotency_key": "c680f49d791f999aea125296d0f56857da6390ec2b3dcf68e79f445dbdaf3a09",
+          "status": "recorded"
+        },
+        "refs": [],
+        "truncated": false,
+        "untrusted_fields": []
+      },
+      "result_hash": "0c18244b5662ac096d5e79e054e62887cac43a466c60ca62936b7ddaffd48195",
+      "result_canonical_hash": "0c18244b5662ac096d5e79e054e62887cac43a466c60ca62936b7ddaffd48195",
+      "error": null,
+      "injection_flags": [],
+      "started_at": "2026-06-01T10:00:06Z",
+      "duration_ms": 0
+    }
+  ],
+  "proposal": {
+    "id": "99999999-9999-4999-8999-999999999999",
+    "type": "request_info",
+    "payload": {
+      "question": "Which settlement reference matches this case?"
+    },
+    "rationale": "Need the settlement reference before deciding.",
+    "evidence": [
+      "case:88888888-8888-4888-8888-888888888888"
+    ],
+    "confidence": "0.5000",
+    "pattern_claimed": null,
+    "state_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "idempotency_key": "c680f49d791f999aea125296d0f56857da6390ec2b3dcf68e79f445dbdaf3a09"
+  }
+}

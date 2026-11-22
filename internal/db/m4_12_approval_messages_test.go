@@ -331,8 +331,8 @@ func TestM412ApprovalMessagesMigrationDown(t *testing.T) {
 		t.Fatalf("re-apply M4-12 Up: %v", err)
 	}
 	// goose.Up migrates to the latest embedded version, not just M4-12.
-	if version := m412GooseVersion(t, d); version != m501MigrationVersion {
-		t.Fatalf("version after re-Up = %d, want latest %d", version, m501MigrationVersion)
+	if version := m412GooseVersion(t, d); version != m502MigrationVersion {
+		t.Fatalf("version after re-Up = %d, want latest %d", version, m502MigrationVersion)
 	}
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT to_regclass('public.approval_messages') IS NOT NULL`).Scan(&exists); err != nil {

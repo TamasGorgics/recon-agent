@@ -45,32 +45,9 @@ func (*linkTool) Description() string {
 func (*linkTool) InputSchema() json.RawMessage { return schemaLink }
 
 func (t *linkTool) Call(ctx context.Context, run *tools.RunContext, args json.RawMessage) (tools.Result, error) {
-	var request struct {
-		commonArgs
-		LedgerTxnID  *string   `json:"ledger_txn_id"`
-		LedgerTxnIDs *[]string `json:"ledger_txn_ids"`
-		ExternalRef  string    `json:"external_ref"`
-	}
-	if err := decodeArguments(args, &request); err != nil {
+	record, err := decodeRecordRequest("link", args)
+	if err != nil {
 		return tools.Result{}, err
-	}
-	if (request.LedgerTxnID == nil) == (request.LedgerTxnIDs == nil) {
-		return tools.Result{}, invalidArgumentsError("exactly one of ledger_txn_id or ledger_txn_ids is required")
-	}
-	record := recordRequest{
-		kind:        "link",
-		caseID:      request.CaseID,
-		rationale:   request.Rationale,
-		evidence:    request.Evidence,
-		confidence:  request.Confidence,
-		pattern:     request.pattern(),
-		externalRef: request.ExternalRef,
-	}
-	if request.LedgerTxnID != nil {
-		record.ledgerTxnID = *request.LedgerTxnID
-	} else {
-		record.ledgerTxnIDs = *request.LedgerTxnIDs
-		record.linkSet = true
 	}
 	return t.deps.record(ctx, run, record)
 }
@@ -90,22 +67,11 @@ func (*adjustmentTool) Description() string {
 func (*adjustmentTool) InputSchema() json.RawMessage { return schemaAdjustment }
 
 func (t *adjustmentTool) Call(ctx context.Context, run *tools.RunContext, args json.RawMessage) (tools.Result, error) {
-	var request struct {
-		commonArgs
-		Lines []lineInput `json:"lines"`
-	}
-	if err := decodeArguments(args, &request); err != nil {
+	record, err := decodeRecordRequest("adjustment", args)
+	if err != nil {
 		return tools.Result{}, err
 	}
-	return t.deps.record(ctx, run, recordRequest{
-		kind:       "adjustment",
-		caseID:     request.CaseID,
-		rationale:  request.Rationale,
-		evidence:   request.Evidence,
-		confidence: request.Confidence,
-		pattern:    request.pattern(),
-		lines:      request.Lines,
-	})
+	return t.deps.record(ctx, run, record)
 }
 
 // ---------------------------------------------------------------------------
@@ -123,22 +89,11 @@ func (*writeOffTool) Description() string {
 func (*writeOffTool) InputSchema() json.RawMessage { return schemaWriteOff }
 
 func (t *writeOffTool) Call(ctx context.Context, run *tools.RunContext, args json.RawMessage) (tools.Result, error) {
-	var request struct {
-		commonArgs
-		Lines []lineInput `json:"lines"`
-	}
-	if err := decodeArguments(args, &request); err != nil {
+	record, err := decodeRecordRequest("write_off", args)
+	if err != nil {
 		return tools.Result{}, err
 	}
-	return t.deps.record(ctx, run, recordRequest{
-		kind:       "write_off",
-		caseID:     request.CaseID,
-		rationale:  request.Rationale,
-		evidence:   request.Evidence,
-		confidence: request.Confidence,
-		pattern:    request.pattern(),
-		lines:      request.Lines,
-	})
+	return t.deps.record(ctx, run, record)
 }
 
 // ---------------------------------------------------------------------------
@@ -156,27 +111,11 @@ func (*duplicateTool) Description() string {
 func (*duplicateTool) InputSchema() json.RawMessage { return schemaDuplicate }
 
 func (t *duplicateTool) Call(ctx context.Context, run *tools.RunContext, args json.RawMessage) (tools.Result, error) {
-	var request struct {
-		commonArgs
-		ExternalRef string  `json:"external_ref"`
-		DuplicateOf *string `json:"duplicate_of"`
-	}
-	if err := decodeArguments(args, &request); err != nil {
+	record, err := decodeRecordRequest("duplicate", args)
+	if err != nil {
 		return tools.Result{}, err
 	}
-	duplicateOf := ""
-	if request.DuplicateOf != nil {
-		duplicateOf = *request.DuplicateOf
-	}
-	return t.deps.record(ctx, run, recordRequest{
-		kind:        "duplicate",
-		caseID:      request.CaseID,
-		rationale:   request.Rationale,
-		evidence:    request.Evidence,
-		confidence:  request.Confidence,
-		externalRef: request.ExternalRef,
-		duplicateOf: duplicateOf,
-	})
+	return t.deps.record(ctx, run, record)
 }
 
 // ---------------------------------------------------------------------------
@@ -194,21 +133,11 @@ func (*requestInfoTool) Description() string {
 func (*requestInfoTool) InputSchema() json.RawMessage { return schemaRequestInfo }
 
 func (t *requestInfoTool) Call(ctx context.Context, run *tools.RunContext, args json.RawMessage) (tools.Result, error) {
-	var request struct {
-		commonArgs
-		Question string `json:"question"`
-	}
-	if err := decodeArguments(args, &request); err != nil {
+	record, err := decodeRecordRequest("request_info", args)
+	if err != nil {
 		return tools.Result{}, err
 	}
-	return t.deps.record(ctx, run, recordRequest{
-		kind:       "request_info",
-		caseID:     request.CaseID,
-		rationale:  request.Rationale,
-		evidence:   request.Evidence,
-		confidence: request.Confidence,
-		question:   request.Question,
-	})
+	return t.deps.record(ctx, run, record)
 }
 
 // ---------------------------------------------------------------------------

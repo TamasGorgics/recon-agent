@@ -16,7 +16,10 @@ import (
 	"github.com/TamasGorgics/recon-agent/migrations"
 )
 
-const m501MigrationVersion = 20261122120000
+const (
+	m501MigrationVersion = 20261122120000
+	m501PreviousVersion  = 20261120100000
+)
 
 // TestM501ProposalTraceIDMigration proves the M5-01 schema delta: the nullable
 // proposals.trace_id column exists at the latest version, Down removes it, a
@@ -35,13 +38,13 @@ func TestM501ProposalTraceIDMigration(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("goose dialect: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m501MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m501MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m502MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m502MigrationVersion)
 	}
 
-	// Down only the M5-01 migration, then insert a legacy proposal row without
-	// the column.
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	// Down to (and including) the M5-01 migration, then insert a legacy
+	// proposal row without the column.
+	if err := goose.DownToContext(ctx, sqlDB, ".", m501PreviousVersion); err != nil {
 		t.Fatalf("goose down M5-01: %v", err)
 	}
 	if m501ColumnExists(t, d) {
@@ -60,7 +63,7 @@ func TestM501ProposalTraceIDMigration(t *testing.T) {
 		t.Fatalf("insert legacy proposal: %v", err)
 	}
 
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+	if err := goose.UpToContext(ctx, sqlDB, ".", m501MigrationVersion); err != nil {
 		t.Fatalf("goose up M5-01: %v", err)
 	}
 	if !m501ColumnExists(t, d) {
@@ -112,7 +115,7 @@ func TestM501ProposalTraceIDMigration(t *testing.T) {
 	}
 
 	// Down removes the column without disturbing other proposal columns.
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	if err := goose.DownToContext(ctx, sqlDB, ".", m501PreviousVersion); err != nil {
 		t.Fatalf("second goose down M5-01: %v", err)
 	}
 	if m501ColumnExists(t, d) {
