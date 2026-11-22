@@ -9,12 +9,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/limits"
 	"github.com/TamasGorgics/recon-agent/internal/policy"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 var loadedConfigHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -79,6 +81,9 @@ type Options struct {
 	// and runs inside the decision transaction; a nil hook fails closed with
 	// ErrInfoRequestedUnsupported before any write.
 	InfoRequestedHook InfoRequestedHook
+	// Telemetry is the optional tracing provider. A nil provider yields a
+	// no-op tracer and changes no service behavior.
+	Telemetry *telemetry.Provider
 }
 
 // Service routes proposed proposals through verification, policy, and limits,
@@ -97,6 +102,7 @@ type Service struct {
 	expiryActor audit.Actor
 	onClosed    ProposalClosedHook
 	onInfo      InfoRequestedHook
+	tracer      trace.Tracer
 }
 
 // NewService validates its dependencies and returns a read-mostly approval
@@ -157,6 +163,7 @@ func NewService(opts Options) (*Service, error) {
 		expiryActor: expiryActor,
 		onClosed:    opts.OnProposalClosed,
 		onInfo:      opts.InfoRequestedHook,
+		tracer:      opts.Telemetry.Tracer("recon-agent/approval"),
 	}, nil
 }
 

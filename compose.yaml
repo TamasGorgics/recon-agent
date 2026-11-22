@@ -5,6 +5,11 @@
 # the four NOLOGIN group roles and four local-only development logins (M1-04,
 # ADR 0005). Existing volumes must be recreated with `docker compose down -v`
 # or the script run manually; see compose/initdb/01-roles.sql.
+#
+# Phoenix is the local OTLP trace viewer for M5-01. It is dev-only: auth is
+# intentionally disabled so the local demo needs no credentials. Published
+# ports are bound to 127.0.0.1 so an unauthenticated Phoenix is never exposed
+# on the LAN; do not widen these bindings on an untrusted network.
 services:
   postgres:
     image: postgres:16.15
@@ -23,5 +28,27 @@ services:
       timeout: 3s
       retries: 30
 
+  phoenix:
+    # Pinned reviewed tag (spec §8.1); never `latest`. Phoenix 22 serves the
+    # UI and REST/GraphQL API on 6006, OTLP/gRPC on 4317, and OTLP/HTTP on
+    # 6006/v1/traces — the image exposes no 4318. Mapping host 4318 to the
+    # container's 6006 keeps the spec's OTEL_EXPORTER_OTLP_ENDPOINT contract:
+    # http://localhost:4318 uses the exporter's automatic /v1/traces path.
+    image: arizephoenix/phoenix:22.0.1
+    environment:
+      PHOENIX_WORKING_DIR: /data
+      # Local demo only. Phoenix 21+ enables auth when PHOENIX_HOST is
+      # non-loopback (the image sets PHOENIX_HOST=::), which would reject
+      # OTLP exports with 401 and require a UI login. Host ports below are
+      # loopback-bound, so auth stays off only for the local dev service.
+      PHOENIX_ENABLE_AUTH: "false"
+    ports:
+      - "127.0.0.1:6006:6006" # UI, REST API, GraphQL
+      - "127.0.0.1:4317:4317" # OTLP/gRPC
+      - "127.0.0.1:4318:6006" # OTLP/HTTP; Phoenix serves /v1/traces on the UI port
+    volumes:
+      - recon-phoenix-data:/data
+
 volumes:
   recon-pgdata:
+  recon-phoenix-data:

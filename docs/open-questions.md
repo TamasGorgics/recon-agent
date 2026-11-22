@@ -498,3 +498,128 @@ changes a gated metric.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-98 | **RESOLVED (M4-14), with the recorded boundaries in the addendum above:** the simulated approver, `recon-eval run --e2e`, additive e2e scoring/report block, applicable `t0_false_fix` gate, and `TestMilestone4Gate` are delivered and covered by unit/integration tests. Recorded residuals: (1) dev evidence is record-only/test-fixture; no eval cassettes are committed and no byte-deterministic dev replay is claimed (Q-53/Q-68); (2) T0 precision and false-fix use asymmetric denominators, and a zero T0 applied denominator is gate `error`/exit 1, never a pass (Q-68/A3); (3) `eval-report/v1` gains only an optional `e2e` block, agent goldens are unchanged, and malformed detail or tier disagreement fails closed (A2); (4) the synthetic approver uses fixed UUID `00000000-0000-4000-8000-00000000e2e1`, source `e2e`, audit actor `human:<uuid>`, seeded only in eval clones (A6); (5) verifier false-pass is `passed && false_fix`, failed outcomes use the `unverified` bucket, and false negatives stay 0 (A7); (6) `tier_actual` is the policy tier for e2e rows and the claimed tier is diagnostic (A10); (7) e2e repeat aggregation is unsupported and rejected; (8) tie-out evidence seeds a statement balance and asserts non-empty open items plus a perturbation control (W5.3); (9) no live Slack/network is used and outbox delivery remains intentionally undelivered; (10) M4-14 adds no migration, production seeding, scheduler, OTel, spec edit, or non-additive report change. | M4-15 / M6-05 / M6-06 / M4-12 AC-15 / eval consumers / ops | Keep the record-only evidence boundary and the M2 fixture as the replay proof; do not treat a zero T0 denominator as a pass; keep the e2e block additive and fail-closed; use the fixed synthetic approver and `e2e` source; keep verifier negatives at 0 until the M4-15/M6-05 definition; read `tier_actual` by suite; reject e2e repeats; keep statement-seeded tie-out evidence; keep the decision path off `FakeChannel` and the outbox undelivered in tests; leave `docs/spec.md` untouched and add no migration for M4-14. |
+
+## M5-01 OpenTelemetry tracing (Q-99)
+
+**Q-99 addendum (Wave 5 docs phase; developer-owned, lead-approved; no
+`docs/spec.md` edit).** `docs/spec.md` §3.1 does not list
+`proposals.trace_id`, but spec §12 and the M5-01 roadmap row require a trace ID
+on proposals. M5-01 adds the nullable column and records the delta here; the
+specification text itself is unchanged. The boundaries below are the delivered
+M5-01 contract. M5-02+ (replay, metrics, reports, retention) is out of scope.
+
+- **`proposals.trace_id` schema delta (A4).** The forward-only migration
+  `20261122120000_m5_01_proposals_trace_id.sql` adds `trace_id TEXT NULL` with
+  no backfill, no index, and no length check; Down drops it. No new grant is
+  needed because `recon_agent_ro` has table-level `INSERT` on `proposals` and
+  `recon_app` has table-level `SELECT`; the real-role grant tests pin that.
+  `agent_runs.trace_id` and `audit_log.trace_id` already existed. Go writes
+  only 32-lowercase-hex IDs (`telemetry.ValidTraceID`); anything else is NULL.
+- **Trace-ID correlation, not full `traceparent` (A1).** `case.run`,
+  `llm.call`, and `tool.call` form one trace in the agent process. Async
+  `policy.evaluate` and `executor.apply` may run in another process/request and
+  then start a **separate root trace**; the persisted proposal trace ID is
+  attached as `recon.origin.trace_id` when it differs. M5-01 persists no W3C
+  `traceparent` and fabricates no parent/link from a bare trace ID. Records are
+  joined by `agent_runs.trace_id → proposals.trace_id → audit_log.trace_id`.
+  In-process approval/executor calls naturally nest under the active
+  `case.run` and omit the origin attribute.
+- **Phoenix 22 port mapping and auth.** The compose service pins
+  `arizephoenix/phoenix:22.0.1` (never `latest`). Phoenix 22 serves the UI/REST/
+  GraphQL on 6006 and OTLP/HTTP on that same port; the image exposes no 4318
+  listener. The host mapping `4318:6006` preserves the spec's
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` contract; `4317:4317` is
+  OTLP/gRPC. `PHOENIX_ENABLE_AUTH=false` is **dev-only**: the image sets a
+  non-loopback `PHOENIX_HOST`, which otherwise enables auth and rejects OTLP
+  with 401. The ports must not be exposed on an untrusted network.
+- **UI visibility is PENDING (human).** Level 1 is the in-memory span/attribute
+  tests; level 2 is the OTLP export plus the Phoenix REST/GraphQL receipt
+  query; level 3 is a human opening <http://localhost:6006> and confirming the
+  tree. M5-01 records only level 2. Level 3 is `PENDING (manual UI check)`, so
+  the roadmap M5-01 box remains unticked until a human records the check.
+- **OTLP/HTTP default, gRPC by env (A2).** `http/protobuf` on the OTLP/HTTP
+  endpoint is the default (`OTEL_EXPORTER_OTLP_PROTOCOL`, default
+  `http/protobuf`; a base endpoint gets `/v1/traces` appended). gRPC
+  (`OTEL_EXPORTER_OTLP_PROTOCOL=grpc`) targets `host:port` on 4317 and is
+  plaintext only for localhost/dev. No collector is required; a
+  traces-specific endpoint/protocol/headers win over the base values.
+- **Payload capture is off by default (A5).** With
+  `RECON_OTEL_CAPTURE_PAYLOADS` unset/false, spans carry only hashes, counts,
+  IDs, codes, and integer micro-USD cost. With capture on, only `tool.call`
+  attaches `recon.payload` via `SafePayload`; `llm.call` still attaches hashes
+  only (the spec permits an optional response snippet, but M5-01 does not
+  attach one). Prompts, memos, raw tool arguments, tool envelopes outside the
+  opt-in, authorization headers, and session IDs are never attached.
+  `SafePayload` redacts before truncating at 2 KiB and never captures business
+  content as safe.
+- **No inbound server span (A6).** M5-01 adds no `otelhttp` middleware, so an
+  API request's `X-Trace-ID` header remains the HTTP correlation ID and can
+  differ from an OTel trace ID started inside that request (for example by
+  `policy.evaluate`). The response header keeps the HTTP ID; do not claim the
+  two IDs are the same. Inbound propagation is a separate approved change.
+- **Process wiring and the unwired outbox.** `cmd/api`, `cmd/worker`, and
+  `cmd/recon agent run` initialize the provider from env, pass it to the
+  approval service / agent runner, stop work first, and flush last with a fresh
+  bounded context (default 5s). A flush failure is logged, not turned into a
+  command failure; an invalid telemetry configuration fails startup.
+  `cmd/outbox` creates no M5-01 spans and remains documented as unwired. No
+  production executor binary exists today; `executor.apply` is exercised
+  in-process/tests.
+- **Global-provider isolation.** No binary or package calls
+  `otel.SetTracerProvider`. Providers are injected explicitly; a nil or
+  disabled provider returns the OTel no-op tracer, so callers never branch on
+  tracing state and parallel tests stay isolated. SDK types stay inside
+  `internal/telemetry`; only `trace.Tracer` escapes.
+- **Dependency pin.** OTel modules are pinned to stable **v1.47.0**
+  (`otel`, `sdk`, `otlptracehttp`, `otlptracegrpc`, `trace`) on Go 1.27.3. No
+  `otelhttp`/contrib config or collector is added.
+- **Demo evidence boundary.** The deterministic scripted path is
+  `scripts/phoenix-demo.sh` → `TestPhoenixDemoReceipt`: it runs the real
+  `recon agent run` command against the M2 scripted fixture on an ephemeral
+  database, asserts `agent_runs.trace_id == proposals.trace_id`, and queries
+  Phoenix REST `GET /v1/projects/default/traces?limit=100&include_spans=true`.
+  The final verified tree (`73d42c7`) recorded level-2 receipts
+  `trace_id=54679d053e5564dec2b97f401ba7ac5e` (QA cold run) and
+  `04261564286eebd63c58c28112e54b52` (tester), each with **15 spans**
+  (`case.run` root plus 5 `llm.call`/9 `tool.call` children) and
+  `service.name=recon-agent`; the earlier W4 demo recorded
+  `8be7a7fb82e767c73d3fe8f85a347a52`. Trace IDs are random per run. That is
+  level 2, not UI evidence; the level-3 check stays pending. `make demo` remains
+  the M5-12 stub and is not cited.
+- **No M5-02+ scope.** M5-01 adds no replay, Prometheus metrics, dashboards,
+  reports, retention/redaction job, scheduler, or spec edit. The only migration
+  is the `proposals.trace_id` change above.
+- **Residual follow-ups (non-blocking; recorded at the final review).** None of
+  these changes the frozen behavior or the evidence boundary above.
+  - **Under-limit invalid UTF-8 (low).** `SafePayload` / `RedactAndTruncate`
+    sanitize UTF-8 only on the truncation path, so an under-limit input that
+    already contains invalid bytes can still return invalid UTF-8. Every
+    current production call site passes JSON or error strings, so no end-to-end
+    leak is known. Follow-up: sanitize every return path and add an under-limit
+    invalid-byte regression test. **Target:** M5-01 follow-up; nearest roadmap
+    owner M6-06 (retention/redaction).
+  - **Remote OTel span context accepted (latent hardening).**
+    `telemetry.SpanTraceID` accepts any valid `trace.SpanContext`, including a
+    remote one. No production path extracts an inbound `traceparent` into a
+    span context today, so an HTTP client cannot inject a persisted trace ID;
+    this is a latent trust-boundary note, not a live bypass. If inbound
+    propagation is added, reject remote span contexts for persistence or
+    document the trust boundary explicitly. **Target:** M6-03 (threat model) /
+    M5-01 follow-up.
+  - **Evidence-process notes (info).** The tester report's competing-process
+    claim was superseded by QA's clean solo cold `go clean -testcache && make
+    verify` at the same HEAD/tree; the release evidence is QA's run. The
+    planned `<artifact_dir>/demo-evidence.md` is absent; level-2 evidence lives
+    in `impl-notes.md` and the live receipt output (`PHOENIX_LEVEL2 ...
+    spans=15`). No behavior defect. **Target:** run process / docs evidence
+    checklist; no product change.
+  - **Re-confirmed fixes (delivered).** The final review re-verified the raw
+    model tool-name leak fix, the forgeable legacy trace-ID fix (persistence is
+    `SpanTraceID`-only), Phoenix loopback binding with the pinned image and
+    dev-only `PHOENIX_ENABLE_AUTH=false`, the strengthened 15-span receipt (one
+    `case.run` root, 5 `llm.call`, 9 `tool.call`), and unified cached-token
+    accounting. **Target:** none.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-99 | **RESOLVED (M5-01) for the implementation; spec §3.1 amendment deferred to a future spec revision:** `proposals.trace_id` is a roadmap-required schema delta recorded in the addendum above (nullable, no backfill, no index, no new grant). M5-01 also records the frozen boundaries: trace-ID correlation only for async policy/executor (no `traceparent`/links); Phoenix 22 `4318:6006` mapping with dev-only `PHOENIX_ENABLE_AUTH=false`; level-3 UI visibility PENDING a human check (the roadmap box stays unticked); OTLP/HTTP default with gRPC via env; payload capture off by default and never prompts/memos/args; no inbound server span so `X-Trace-ID` may differ; `cmd/outbox` unwired; no global provider mutation; OTel v1.47.0 pinned; level-2 demo receipt recorded with 15 spans and no UI claim; no M5-02+ scope. Residual follow-ups (under-limit UTF-8, remote span-context hardening, evidence-process notes) are listed in the addendum above. | Spec §3.1 / M5-01 / docs consumers / ops | Amend spec §3.1 for `proposals.trace_id` only in a future spec revision; keep the correlation-only, capture-off, dev-only-Phoenix, and no-global-provider contracts; keep the M5-01 box unticked until a human records the Phoenix UI check; do not cite level 2 as level 3; close the two technical residuals before relying on payload capture or inbound trace propagation. |

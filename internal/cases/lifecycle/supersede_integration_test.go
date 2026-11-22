@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/TamasGorgics/recon-agent/internal/cases/lifecycle"
-	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 const (
@@ -22,7 +21,7 @@ func TestSupersedeActiveProposalReplacement(t *testing.T) {
 	caseID := f.seedCase(t, "proposal_pending", "")
 	oldID := f.seedProposal(t, caseID, "proposed")
 	newID := f.seedProposal(t, caseID, "expired")
-	ctx := telemetry.WithTraceID(context.Background(), "trace-supersede")
+	ctx := spanTraceContext(t)
 
 	result, err := f.supersede(ctx, supersedeCall{
 		caseID:        caseID,
@@ -99,8 +98,8 @@ func TestSupersedeActiveProposalReplacement(t *testing.T) {
 		after["reason"] != lifecycle.ReasonNewProposal {
 		t.Fatalf("proposal audit after = %v, want superseded/1 with reason", after)
 	}
-	if transition.TraceID == nil || *transition.TraceID != "trace-supersede" {
-		t.Fatalf("proposal audit trace = %v, want trace-supersede", transition.TraceID)
+	if transition.TraceID == nil || *transition.TraceID != testSpanTraceID {
+		t.Fatalf("proposal audit trace = %v, want %s", transition.TraceID, testSpanTraceID)
 	}
 
 	caseAudits := f.audits(t, caseID)
@@ -130,8 +129,8 @@ func TestSupersedeActiveProposalReplacement(t *testing.T) {
 		after["reason"] != lifecycle.ReasonNewProposal {
 		t.Fatalf("lifecycle audit after = %v, want old proposal superseded/1 with new id", after)
 	}
-	if supersedeAudit.TraceID == nil || *supersedeAudit.TraceID != "trace-supersede" {
-		t.Fatalf("lifecycle audit trace = %v, want trace-supersede", supersedeAudit.TraceID)
+	if supersedeAudit.TraceID == nil || *supersedeAudit.TraceID != testSpanTraceID {
+		t.Fatalf("lifecycle audit trace = %v, want %s", supersedeAudit.TraceID, testSpanTraceID)
 	}
 }
 

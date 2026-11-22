@@ -9,8 +9,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TamasGorgics/recon-agent/internal/clock"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // Runner executes registered tool calls. It owns the timing clock and the
@@ -24,6 +28,10 @@ type Runner struct {
 	// MaxResultBytes overrides the package default for tests and specialized
 	// callers. Zero means MaxResultBytes.
 	MaxResultBytes int
+
+	// Tracer is optional. Nil is a no-op; agent.NewRunner and
+	// agent.NewProductionRunner set it from the injected telemetry provider.
+	Tracer trace.Tracer
 }
 
 // NewRunner returns a runner. A nil clock is replaced with clock.Real; callers
@@ -62,25 +70,42 @@ func (r *Runner) Call(ctx context.Context, run *RunContext, seq int, name string
 		recordedName = "(unknown)"
 	}
 
+	// One tool.call span per attempted call, including unknown tools and
+	// invalid arguments. The span-bearing ctx is passed to the handler so
+	// proposal inserts and audit appends see the same trace. The raw
+	// model-supplied name is never attached: only a registered tool name (after
+	// a successful registry lookup) or the bounded "unknown" placeholder is.
+	ctx, span := telemetry.StartSpan(ctx, r.Tracer, "tool.call",
+		attribute.Int64(telemetry.AttrToolSeq, int64(seq)),
+		attribute.String(telemetry.AttrRunID, run.RunID),
+		attribute.String(telemetry.AttrCaseID, run.CaseID),
+	)
+
 	entry, known := r.registry.lookup(name)
+	spanToolName := "unknown"
+	if known {
+		// name matched a code-registered tool exactly, so it is safe to expose.
+		spanToolName = name
+	}
+	span.SetAttributes(attribute.String(telemetry.AttrToolName, spanToolName))
 	if !known {
 		envelope := marshalErrorEnvelope(CodeUnknownTool, defaultMessage(CodeUnknownTool))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeUnknownTool, startedAt, nil, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeUnknownTool, startedAt, nil, nil, span)
 	}
 	if !validJSON {
 		envelope := marshalErrorEnvelope(CodeInvalidArguments, defaultMessage(CodeInvalidArguments))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil, nil, span)
 	}
 	if err := validateArguments(entry.schema, body); err != nil {
 		envelope := marshalErrorEnvelope(CodeInvalidArguments, defaultMessage(CodeInvalidArguments))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInvalidArguments, startedAt, nil, nil, span)
 	}
 
 	result, handlerErr := callHandler(ctx, entry.tool, run, body)
 	if handlerErr != nil {
 		code, message := errorPayload(handlerErr)
 		envelope := marshalErrorEnvelope(code, message)
-		return r.finish(ctx, run, seq, recordedName, body, envelope, code, startedAt, nil, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, code, startedAt, nil, nil, span)
 	}
 
 	envelope, refs, err := buildSuccessEnvelope(result, r.maxResultBytes())
@@ -88,12 +113,12 @@ func (r *Runner) Call(ctx context.Context, run *RunContext, seq int, name string
 		// The handler returned data that cannot be serialized or a ref that is
 		// not canonical. Do not leak the underlying error to the model.
 		envelope = marshalErrorEnvelope(CodeInternalError, defaultMessage(CodeInternalError))
-		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInternalError, startedAt, nil, nil)
+		return r.finish(ctx, run, seq, recordedName, body, envelope, CodeInternalError, startedAt, nil, nil, span)
 	}
 	// Detection runs after the final envelope exists and before the call is
 	// recorded. It never changes the model-visible envelope.
 	flags := detectEnvelopeFlags(envelope)
-	return r.finish(ctx, run, seq, recordedName, body, envelope, "", startedAt, refs, flags)
+	return r.finish(ctx, run, seq, recordedName, body, envelope, "", startedAt, refs, flags, span)
 }
 
 func (r *Runner) finish(
@@ -107,15 +132,41 @@ func (r *Runner) finish(
 	startedAt time.Time,
 	refs []string,
 	flags []string,
+	span trace.Span,
 ) (json.RawMessage, error) {
+	resultHash := hashResult(envelope)
 	if err := r.record(ctx, run, seq, name, args, envelope, errorCode, startedAt, flags); err != nil {
+		telemetry.RecordError(span, err)
+		span.End()
 		return nil, err
 	}
+	span.SetAttributes(attribute.String(telemetry.AttrResultHash, resultHash))
+	span.SetAttributes(attribute.StringSlice(telemetry.AttrRefs, capRefs(refs)))
+	span.SetAttributes(attribute.StringSlice(telemetry.AttrFlags, normalizeFlagCodes(flags)))
+	if errorCode != "" {
+		span.SetAttributes(attribute.String(telemetry.AttrToolErrorCode, errorCode))
+		span.SetStatus(codes.Error, errorCode)
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+	if payload, ok := telemetry.SafePayloadAttribute(telemetry.AttrPayload, envelope); ok {
+		span.SetAttributes(payload)
+	}
+	span.End()
 	if errorCode == "" {
 		run.State().AddFlags(flags...)
 		run.addRefs(refs)
 	}
 	return json.RawMessage(envelope), nil
+}
+
+// capRefs bounds the refs span attribute to the contractual 32 entries.
+func capRefs(refs []string) []string {
+	const maxRefs = 32
+	if len(refs) > maxRefs {
+		return refs[:maxRefs]
+	}
+	return refs
 }
 
 func (r *Runner) record(

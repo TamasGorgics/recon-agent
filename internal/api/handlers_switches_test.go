@@ -34,8 +34,11 @@ func TestSwitchChangeForwardsActorAndTrace(t *testing.T) {
 	if h.switches.got.ActorID != "dev-admin" {
 		t.Fatalf("actor = %q, want dev-admin", h.switches.got.ActorID)
 	}
-	if h.switches.got.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
-		t.Fatalf("trace = %q", h.switches.got.TraceID)
+	if h.switches.got.TraceID != "" {
+		t.Fatalf("trace = %q, want empty: inbound correlation IDs must not be persisted", h.switches.got.TraceID)
+	}
+	if got := response.Header.Get("X-Trace-ID"); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("X-Trace-ID = %q, want the inbound correlation ID", got)
 	}
 	var result SwitchResult
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {

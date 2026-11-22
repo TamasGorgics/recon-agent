@@ -16,6 +16,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // AppPool is the app-role pool the loop uses for run persistence, case
@@ -40,6 +41,8 @@ type SetupDeps struct {
 	BeforeStep      func(ctx context.Context) error
 	NewProposalID   func() (string, error)
 	Logger          *slog.Logger
+	// Telemetry is optional. Nil keeps the production runner untraced.
+	Telemetry *telemetry.Provider
 }
 
 // NewProductionRunner registers the read and proposal tools, builds the app
@@ -107,6 +110,7 @@ func NewProductionRunner(deps SetupDeps) (*Runner, error) {
 		Logger:     deps.Logger,
 		Provider:   deps.Config.LLM.Provider,
 		BaseURL:    deps.Config.LLM.BaseURL,
+		Telemetry:  deps.Telemetry,
 	})
 }
 

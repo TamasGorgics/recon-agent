@@ -7,6 +7,12 @@ for a ledger transaction or a case, and the narrow audit-sequence retry.
 requirements. Decisions and accepted boundaries are recorded in
 `docs/open-questions.md` Q-96; `docs/spec.md` itself is unchanged.
 
+For OpenTelemetry span/Phoenix documentation and the M5-01 trace-ID
+persistence path (`agent_runs`, `proposals`, and audit entries), see
+`docs/telemetry.md`. M4-13's readers surface the persisted IDs; M5-01 writes
+them from the active span context. Level-3 Phoenix UI visibility remains
+`PENDING (manual UI check)`.
+
 Neither CLI command writes to the database: both open one `REPEATABLE READ`,
 `READ ONLY` transaction and only roll it back. Both need only `database.app_url`
 (`DATABASE_APP_URL` or the `database.app_url` config key), not the migration
@@ -126,6 +132,25 @@ locale-dependent difference is accepted with the database as the stronger rule.
 
 ## Trace surfaces
 
+### A6: persisted OTel trace IDs vs HTTP correlation
+
+Only the trace ID of a valid active OTel span is persisted. `agent_runs.trace_id`,
+`proposals.trace_id`, and the central `audit_log.trace_id` fallback all read
+`telemetry.SpanTraceID`, which returns empty when no valid span is active and
+never falls back to the legacy correlation value. Rows written by non-traced
+paths, and historical rows, stay NULL.
+
+The API's `X-Trace-ID` response header (and the legacy `WithTraceID` context
+value) is **HTTP/log correlation only**. It comes from an inbound `traceparent`
+when present (otherwise a per-request random value) and may differ from an OTel
+trace ID started inside the same request, because M5-01 adds no inbound server
+span (`otelhttp`). Sending a
+`traceparent` or `X-Trace-ID` therefore cannot forge a persisted trace ID: the
+request still returns `X-Trace-ID`, while `audit_log.trace_id` stays NULL unless
+an internal span is active. An explicit caller-supplied audit `Entry.TraceID`
+still wins over the context fallback. `docs/telemetry.md` documents the full
+bridge and the async correlation (`recon.origin.trace_id`) rule.
+
 ### `recon trace --txn`
 
 ```text
@@ -198,8 +223,14 @@ schema change.
 
 ## Boundaries
 
-- `agent_runs.trace_id` is read and surfaced only. M4-13 creates no OTel spans
-  or trace IDs; propagation and real trace IDs are M5-01.
+- M4-13 reads and surfaces `agent_runs.trace_id`; it creates no OTel spans or
+  trace IDs. M5-01 now writes `agent_runs.trace_id`, `proposals.trace_id`, and
+  the central `audit_log.trace_id` fallback from the active span context only
+  (A6 boundary above; see also `docs/telemetry.md`). Rows written by
+  non-traced paths and historical rows stay NULL; readers render the ID as
+  missing rather than inventing one. Phoenix UI visibility is still
+  `PENDING (manual UI check)`; a level-2 API receipt must not be presented as
+  UI evidence.
 - The simulated approver, `recon-eval run --e2e`, and `TestMilestone4Gate`
   are M4-14, not part of this deliverable.
 - The e2e test seeds `agent_runs` and `proposals` by SQL because those insert

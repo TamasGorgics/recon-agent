@@ -13,7 +13,6 @@ import (
 
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/db"
-	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // unopenedTx satisfies the pgx.Tx interface without a connection. The parse
@@ -185,14 +184,14 @@ func TestParseSupersedeRequestReasonShapes(t *testing.T) {
 }
 
 func TestParseSupersedeRequestCarriesTrace(t *testing.T) {
-	ctx := telemetry.WithTraceID(context.Background(), "trace-wave-2")
+	ctx := spanTraceContext(t)
 	req, err := parseSupersedeRequest(ctx, unopenedTx{}, testCaseID, "",
 		"system:matcher", ReasonLateMatch)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if req.traceID == nil || *req.traceID != "trace-wave-2" {
-		t.Fatalf("trace = %v, want trace-wave-2", req.traceID)
+	if req.traceID == nil || *req.traceID != testSpanTraceID {
+		t.Fatalf("trace = %v, want %s", req.traceID, testSpanTraceID)
 	}
 
 	req, err = parseSupersedeRequest(context.Background(), unopenedTx{}, testCaseID, "",

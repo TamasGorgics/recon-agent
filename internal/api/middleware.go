@@ -53,6 +53,9 @@ func traceIDFromContext(ctx context.Context) string {
 
 // withRequestContext assigns the request ID and trace ID, stores the trace ID
 // in the context, and exposes both on the response before any handler runs.
+// The stored trace ID is an HTTP/log correlation value only: persistence paths
+// use telemetry.SpanTraceID, so an inbound traceparent is never written to
+// agent_runs, proposals, or audit_log (spec A6).
 func (a *API) withRequestContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := incomingRequestID(r.Header.Values("X-Request-ID"))

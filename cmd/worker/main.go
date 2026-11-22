@@ -19,6 +19,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 	"github.com/TamasGorgics/recon-agent/internal/worker"
 )
 
@@ -74,6 +75,14 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	return runWithTelemetry(ctx, logger, func(ctx context.Context, provider *telemetry.Provider) error {
+		return runWorker(ctx, cfg, logger, provider, *once)
+	})
+}
+
+// runWorker owns the database/worker lifecycle. Telemetry shutdown is handled
+// by runWithTelemetry after this function returns, so the poll loop stops first.
+func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, telemetryProvider *telemetry.Provider, once bool) error {
 	app, err := db.OpenRole(ctx, db.RoleApp, cfg.Database.AppURL)
 	if err != nil {
 		return err
@@ -110,7 +119,8 @@ func run(ctx context.Context, args []string) error {
 			}
 			return nil
 		},
-		Logger: logger,
+		Logger:    logger,
+		Telemetry: telemetryProvider,
 	})
 	if err != nil {
 		return fmt.Errorf("build agent runner: %w", err)
@@ -151,9 +161,9 @@ func run(ctx context.Context, args []string) error {
 		"lease_ttl", cfg.Worker.LeaseTTL.String(),
 		"daily_budget_usd", cfg.Worker.DailyBudgetUSD.String(),
 		"max_attempts", cfg.Worker.MaxAttempts,
-		"once", *once)
+		"once", once)
 
-	if *once {
+	if once {
 		err := pollWorker.ProcessOnce(ctx)
 		switch {
 		case err == nil:

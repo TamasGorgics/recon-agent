@@ -13,6 +13,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/agentrun"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 	"github.com/TamasGorgics/recon-agent/prompts"
 )
 
@@ -93,6 +94,24 @@ func runAgentTo(ctx context.Context, args []string, out io.Writer) error {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	return runWithTelemetry(ctx, logger, func(ctx context.Context, provider *telemetry.Provider) error {
+		return runAgentCommand(ctx, cfg, logger, provider, out,
+			*caseID, *llmMode, *promptVersion, *model, *cassetteDir, *asJSON)
+	})
+}
+
+// runAgentCommand owns the database and agent-run lifecycle. Telemetry
+// shutdown is handled by runWithTelemetry after this function returns, so the
+// case.run tree is exported before the process exits.
+func runAgentCommand(
+	ctx context.Context,
+	cfg config.Config,
+	logger *slog.Logger,
+	telemetryProvider *telemetry.Provider,
+	out io.Writer,
+	caseID, llmMode, promptVersion, model, cassetteDir string,
+	asJSON bool,
+) error {
 	app, err := db.OpenRole(ctx, db.RoleApp, cfg.Database.AppURL)
 	if err != nil {
 		return err
@@ -105,22 +124,23 @@ func runAgentTo(ctx context.Context, args []string, out io.Writer) error {
 	defer agentRO.Close()
 
 	report, err := agentrun.Run(ctx, agentrun.Options{
-		CaseID:        *caseID,
-		Mode:          agentrun.Mode(strings.TrimSpace(*llmMode)),
-		PromptVersion: *promptVersion,
-		Model:         *model,
-		CassetteDir:   *cassetteDir,
+		CaseID:        caseID,
+		Mode:          agentrun.Mode(strings.TrimSpace(llmMode)),
+		PromptVersion: promptVersion,
+		Model:         model,
+		CassetteDir:   cassetteDir,
 	}, agentrun.Deps{
 		Config:    cfg,
 		App:       app.Pool,
 		Agent:     agentRO.Pool,
 		AgentExec: agentRO.Pool,
 		Logger:    logger,
+		Telemetry: telemetryProvider,
 	})
 	if err != nil {
 		return err
 	}
-	if *asJSON {
+	if asJSON {
 		return report.JSON(out)
 	}
 	return report.Human(out)

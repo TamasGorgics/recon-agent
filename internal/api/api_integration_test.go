@@ -441,8 +441,11 @@ func TestAPISwitchAuditIntegration(t *testing.T) {
 	if actorType != "human" || actorID != "dev-admin" {
 		t.Fatalf("audit actor = %s:%s, want human:dev-admin", actorType, actorID)
 	}
-	if trace == nil || *trace != traceID {
-		t.Fatalf("audit trace_id = %v, want %q", trace, traceID)
+	if trace != nil {
+		t.Fatalf("audit trace_id = %v, want NULL: inbound traceparent is correlation-only", *trace)
+	}
+	if got := response.Header.Get("X-Trace-ID"); got != traceID {
+		t.Fatalf("X-Trace-ID = %q, want correlation ID %q", got, traceID)
 	}
 
 	// Same value again: changed=false, no second audit row, timestamp unchanged.

@@ -8,6 +8,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/ledger"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // Loop defaults from the M4-06 specification.
@@ -59,6 +60,9 @@ type Options struct {
 	PollInterval time.Duration
 	// Sleep is the interruptible poll wait. Nil means a context-aware timer.
 	Sleep func(ctx context.Context, d time.Duration) error
+	// Telemetry is the optional tracing provider. A nil provider yields a
+	// no-op tracer and changes no service behavior.
+	Telemetry *telemetry.Provider
 }
 
 // Result is the outcome of one Apply call.

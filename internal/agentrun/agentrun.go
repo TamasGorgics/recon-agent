@@ -25,6 +25,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 	"github.com/TamasGorgics/recon-agent/internal/worker"
 	"github.com/TamasGorgics/recon-agent/prompts"
 )
@@ -65,6 +66,8 @@ type Deps struct {
 	NewRunID  func(caseID string) (string, error)
 	WorkerID  string
 	LeaseTTL  time.Duration
+	// Telemetry is optional. Nil keeps CLI/gate runs untraced.
+	Telemetry *telemetry.Provider
 }
 
 // Step is one recorded tool call, safe to print: it never carries arguments or
@@ -225,6 +228,7 @@ func Run(ctx context.Context, opts Options, deps Deps) (Report, error) {
 		UntrustedFields: runnerConfig.ConfiguredUntrustedFields(),
 		NewRunID:        newRunID,
 		Logger:          deps.Logger,
+		Telemetry:       deps.Telemetry,
 	})
 	if err != nil {
 		return Report{}, err

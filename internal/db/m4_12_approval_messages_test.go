@@ -288,6 +288,11 @@ func TestM412ApprovalMessagesMigrationDown(t *testing.T) {
 	d := testdb.New(t)
 	gooseDB := m412OpenGoose(t, d)
 
+	// Later migrations (for example M5-01) must be unwound first so this test
+	// still exercises M4-12's own Down rather than the newest migration's.
+	if err := goose.DownToContext(ctx, gooseDB, ".", m412MigrationVersion); err != nil {
+		t.Fatalf("unwind migrations newer than M4-12: %v", err)
+	}
 	if err := goose.DownContext(ctx, gooseDB, "."); err != nil {
 		t.Fatalf("apply M4-12 Down: %v", err)
 	}
@@ -325,8 +330,9 @@ func TestM412ApprovalMessagesMigrationDown(t *testing.T) {
 	if err := goose.UpContext(ctx, gooseDB, "."); err != nil {
 		t.Fatalf("re-apply M4-12 Up: %v", err)
 	}
-	if version := m412GooseVersion(t, d); version != m412MigrationVersion {
-		t.Fatalf("version after re-Up = %d, want %d", version, m412MigrationVersion)
+	// goose.Up migrates to the latest embedded version, not just M4-12.
+	if version := m412GooseVersion(t, d); version != m501MigrationVersion {
+		t.Fatalf("version after re-Up = %d, want latest %d", version, m501MigrationVersion)
 	}
 	if err := d.Pool.QueryRow(ctx,
 		`SELECT to_regclass('public.approval_messages') IS NOT NULL`).Scan(&exists); err != nil {

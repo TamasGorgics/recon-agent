@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // chainLockKey is the global advisory lock that serializes chain appends. It is
@@ -40,6 +42,16 @@ func Append(ctx context.Context, tx pgx.Tx, e Entry) (Record, error) {
 		return Record{}, err
 	}
 	ts := e.Timestamp.UTC().Truncate(time.Microsecond)
+	// Central trace correlation: callers that do not set an explicit trace ID
+	// inherit the active OTel span's ID before the row hash is computed. The
+	// legacy WithTraceID value (including an unauthenticated inbound
+	// traceparent held by the API middleware) is correlation-only and is never
+	// persisted. Explicit values still win, and non-traced rows stay NULL.
+	if e.TraceID == nil {
+		if traceID := telemetry.SpanTraceID(ctx); traceID != "" {
+			e.TraceID = &traceID
+		}
+	}
 
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, chainLockKey); err != nil {
 		return Record{}, fmt.Errorf("audit: acquire chain lock: %w", err)
