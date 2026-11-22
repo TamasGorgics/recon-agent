@@ -7,9 +7,9 @@ recorded in `docs/open-questions.md` Q-100. `docs/spec.md` §§12 and 19 are the
 requirements and are unchanged.
 
 Replay is a **read-only diagnostic**, not a supported restore or re-apply path.
-It never executes a recorded tool, never writes a row, and never calls live
-data. Exact replay never touches the network; rerun is offline by default and
-only reaches a provider with explicit `--live`.
+It never executes a recorded tool, never writes a row, and never fetches live
+reconciliation data. Exact replay never touches the network; rerun is offline by
+default and only reaches a provider with explicit `--live`.
 
 ## Usage
 
@@ -58,8 +58,10 @@ other outcome, or a proposal outcome with no stored proposal row, is exit `2`
 Starting from the recorded seed `get_case` result, replay rebuilds the
 transcript in memory, recomputes every canonical LLM request hash from the
 current prompt/code/config, and compares it with `llm_calls.request_hash`.
-Recorded tool results are injected, not executed. The proposal is rebuilt
-through the production normalization path and compared by digest.
+Because the response and arguments are stored as JSONB, a non-canonical numeric
+literal can make this check fail closed even for a faithful recording; see
+Limits. Recorded tool results are injected, not executed. The proposal is
+rebuilt through the production normalization path and compared by digest.
 
 Every model-requested tool call — the seed `get_case`, investigation tools, and
 proposal tools — also has its arguments compared with the stored
@@ -136,10 +138,12 @@ is `yaml:"-"`, so configuration cannot supply it. Tests and CI never use
 | `1` | The divergence list is non-empty; the full report is still printed to stdout. This includes a key-only `proposal_field_diff(idempotency_key)`, which keeps `identical: true` but is still a divergence. |
 | `2` | Usage/config/load/DB/`unsupported_run`/`cassette_miss`/`live_key_missing` error; stderr only, even with `--json` (no partial JSON on stdout). |
 
-Exit status follows the divergence list (spec §5), not the `identical` boolean
-alone. A key-only idempotency-key difference is deliberately non-identity-breaking
-for the report, but it is a real divergence for the exit status. Automated
-callers must read both `identical` and `divergences`.
+Exit status follows the divergence list in the M5-02 run spec §5 ("Divergence
+taxonomy, JSON, and exit codes"), not the `identical` boolean alone.
+`docs/spec.md` §5 is the matching engine and is a different section. A key-only
+idempotency-key difference is deliberately non-identity-breaking for the report,
+but it is a real divergence for the exit status. Automated callers must read
+both `identical` and `divergences`.
 
 With `--json`, exactly one object is written. `run_id`, `mode`, `identical`,
 `proposal_hash`, `stored_hash`, and `divergences` are always present;
@@ -205,6 +209,25 @@ needs a test database and is intentionally not in the fastest unit lane.
   `request_hash_mismatch`. That is a faithful mismatch, not noise: check
   code/config drift before treating it as a decision change. Replay is coupled
   to the code and configuration that recorded the run.
+- **JSONB numeric normalization can make exact replay fail closed.**
+  `llm_calls.response` and `tool_calls.args` are JSONB, and PostgreSQL
+  normalizes numeric literals in them (`1e3` becomes `1000`; non-canonical
+  exponent and `-0` spellings are normalized too). `llm_calls.request_hash` was
+  computed at record time from the in-memory transcript containing the original
+  literal, but exact replay recomputes it from the stored, normalized JSONB
+  text. A recording whose non-final model response carried such a literal can
+  therefore report one `request_hash_mismatch` at the following step and exit 1
+  even though production executed the same run cleanly. Replay fails closed: it
+  reports a divergence, writes nothing, and executes no unrecorded tool. This
+  input class is outside the 20/20 gate and the committed fixture. The recorder
+  stores no raw response text, so the original literal cannot be recovered. A
+  future schema revision must preserve the raw assistant response text (or a
+  pre-JSONB literal form), or record-time numeric canonicalization must be
+  versioned under a new hashing contract. Until then, treat this divergence
+  class as a storage-normalization artifact, not a decision change, and keep the
+  fail-closed behavior. A future fix should come with a regression test that
+  pins today's behavior so the change is deliberate. See Q-100 for the recorded
+  follow-up.
 - **Legacy rows cannot be hash-verified.** `result_canonical_hash` was added
   without backfill; NULL rows get the non-breaking
   `tool_result_hash_unavailable` diagnostic. Re-record the run to gain the
@@ -213,12 +236,14 @@ needs a test database and is intentionally not in the fastest unit lane.
   `result_canonical_hash` is stored beside the data it protects. A writer with
   update access to both `tool_calls.result` and `tool_calls.result_canonical_hash`
   can rewrite them consistently, and replay will accept the forged result; the
-  same applies to rewriting both `tool_calls.args` and the tool-call arguments
-  inside `llm_calls.response`. Replay detects accidental or partial corruption
-  and an inconsistent edit, not a fully consistent rewrite by someone with
-  write access. There is no signature, MAC, or external anchor in M5-02, and
-  adding authentication is out of scope; protect the tables with database
-  privileges and audit rather than treating replay as tamper-proof.
+  same applies to rewriting `tool_calls.args`, the tool-call arguments inside
+  `llm_calls.response`, and the stored `proposals` row consistently. Replay
+  detects accidental or partial corruption and an inconsistent edit, not a
+  fully consistent rewrite by someone with write access. Hashes stored beside
+  their data are not authentication. There is no signature, MAC, or external
+  anchor in M5-02, and adding authentication is out of scope; protect the
+  tables with database privileges and audit rather than treating replay as
+  tamper-proof.
 - **Exact mode is proposal-only.** Killed, errored, and escalated runs are not
   replayable in exact mode; rerun still requires a stored proposal.
 - **Rerun can only explore cassette coverage.** A genuinely new prompt needs

@@ -954,7 +954,11 @@ integrity, canonical tool-result hash migration and legacy-NULL diagnostic,
 cassette-default/`--live` gating, the divergence-list exit contract (a key-only
 diff exits 1 while `identical` stays true), the non-authentication trust
 boundary for hashes stored beside data, and the `llm_calls` code/config
-coupling. See `docs/replay.md`.
+coupling. The known fail-closed limit from the post-implementation review — a
+non-canonical numeric literal in a stored response can normalize in JSONB and
+surface a false `request_hash_mismatch` — is documented in `docs/replay.md`
+Limits and Q-100; it does not change the 20/20 evidence and needs a future
+schema/hashing revision to fix. See `docs/replay.md`.
 
 ### M5-03 · Prometheus metrics · S
 **Spec:** section 12 · **Needs:** M4-02
