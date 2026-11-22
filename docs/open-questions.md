@@ -578,14 +578,48 @@ M5-01 contract. M5-02+ (replay, metrics, reports, retention) is out of scope.
   `recon agent run` command against the M2 scripted fixture on an ephemeral
   database, asserts `agent_runs.trace_id == proposals.trace_id`, and queries
   Phoenix REST `GET /v1/projects/default/traces?limit=100&include_spans=true`.
-  The final W4 tree recorded `trace_id=8be7a7fb82e767c73d3fe8f85a347a52` with
-  **15 spans** (`case.run` root plus `llm.call`/`tool.call` children) and
-  `service.name=recon-agent`. That is level 2, not UI evidence; the level-3
-  check stays pending. `make demo` remains the M5-12 stub and is not cited.
+  The final verified tree (`73d42c7`) recorded level-2 receipts
+  `trace_id=54679d053e5564dec2b97f401ba7ac5e` (QA cold run) and
+  `04261564286eebd63c58c28112e54b52` (tester), each with **15 spans**
+  (`case.run` root plus 5 `llm.call`/9 `tool.call` children) and
+  `service.name=recon-agent`; the earlier W4 demo recorded
+  `8be7a7fb82e767c73d3fe8f85a347a52`. Trace IDs are random per run. That is
+  level 2, not UI evidence; the level-3 check stays pending. `make demo` remains
+  the M5-12 stub and is not cited.
 - **No M5-02+ scope.** M5-01 adds no replay, Prometheus metrics, dashboards,
   reports, retention/redaction job, scheduler, or spec edit. The only migration
   is the `proposals.trace_id` change above.
+- **Residual follow-ups (non-blocking; recorded at the final review).** None of
+  these changes the frozen behavior or the evidence boundary above.
+  - **Under-limit invalid UTF-8 (low).** `SafePayload` / `RedactAndTruncate`
+    sanitize UTF-8 only on the truncation path, so an under-limit input that
+    already contains invalid bytes can still return invalid UTF-8. Every
+    current production call site passes JSON or error strings, so no end-to-end
+    leak is known. Follow-up: sanitize every return path and add an under-limit
+    invalid-byte regression test. **Target:** M5-01 follow-up; nearest roadmap
+    owner M6-06 (retention/redaction).
+  - **Remote OTel span context accepted (latent hardening).**
+    `telemetry.SpanTraceID` accepts any valid `trace.SpanContext`, including a
+    remote one. No production path extracts an inbound `traceparent` into a
+    span context today, so an HTTP client cannot inject a persisted trace ID;
+    this is a latent trust-boundary note, not a live bypass. If inbound
+    propagation is added, reject remote span contexts for persistence or
+    document the trust boundary explicitly. **Target:** M6-03 (threat model) /
+    M5-01 follow-up.
+  - **Evidence-process notes (info).** The tester report's competing-process
+    claim was superseded by QA's clean solo cold `go clean -testcache && make
+    verify` at the same HEAD/tree; the release evidence is QA's run. The
+    planned `<artifact_dir>/demo-evidence.md` is absent; level-2 evidence lives
+    in `impl-notes.md` and the live receipt output (`PHOENIX_LEVEL2 ...
+    spans=15`). No behavior defect. **Target:** run process / docs evidence
+    checklist; no product change.
+  - **Re-confirmed fixes (delivered).** The final review re-verified the raw
+    model tool-name leak fix, the forgeable legacy trace-ID fix (persistence is
+    `SpanTraceID`-only), Phoenix loopback binding with the pinned image and
+    dev-only `PHOENIX_ENABLE_AUTH=false`, the strengthened 15-span receipt (one
+    `case.run` root, 5 `llm.call`, 9 `tool.call`), and unified cached-token
+    accounting. **Target:** none.
 
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
-| Q-99 | **RESOLVED (M5-01) for the implementation; spec §3.1 amendment deferred to a future spec revision:** `proposals.trace_id` is a roadmap-required schema delta recorded in the addendum above (nullable, no backfill, no index, no new grant). M5-01 also records the frozen boundaries: trace-ID correlation only for async policy/executor (no `traceparent`/links); Phoenix 22 `4318:6006` mapping with dev-only `PHOENIX_ENABLE_AUTH=false`; level-3 UI visibility PENDING a human check (the roadmap box stays unticked); OTLP/HTTP default with gRPC via env; payload capture off by default and never prompts/memos/args; no inbound server span so `X-Trace-ID` may differ; `cmd/outbox` unwired; no global provider mutation; OTel v1.47.0 pinned; level-2 demo receipt recorded with 15 spans and no UI claim; no M5-02+ scope. | Spec §3.1 / M5-01 / docs consumers / ops | Amend spec §3.1 for `proposals.trace_id` only in a future spec revision; keep the correlation-only, capture-off, dev-only-Phoenix, and no-global-provider contracts; keep the M5-01 box unticked until a human records the Phoenix UI check; do not cite level 2 as level 3. |
+| Q-99 | **RESOLVED (M5-01) for the implementation; spec §3.1 amendment deferred to a future spec revision:** `proposals.trace_id` is a roadmap-required schema delta recorded in the addendum above (nullable, no backfill, no index, no new grant). M5-01 also records the frozen boundaries: trace-ID correlation only for async policy/executor (no `traceparent`/links); Phoenix 22 `4318:6006` mapping with dev-only `PHOENIX_ENABLE_AUTH=false`; level-3 UI visibility PENDING a human check (the roadmap box stays unticked); OTLP/HTTP default with gRPC via env; payload capture off by default and never prompts/memos/args; no inbound server span so `X-Trace-ID` may differ; `cmd/outbox` unwired; no global provider mutation; OTel v1.47.0 pinned; level-2 demo receipt recorded with 15 spans and no UI claim; no M5-02+ scope. Residual follow-ups (under-limit UTF-8, remote span-context hardening, evidence-process notes) are listed in the addendum above. | Spec §3.1 / M5-01 / docs consumers / ops | Amend spec §3.1 for `proposals.trace_id` only in a future spec revision; keep the correlation-only, capture-off, dev-only-Phoenix, and no-global-provider contracts; keep the M5-01 box unticked until a human records the Phoenix UI check; do not cite level 2 as level 3; close the two technical residuals before relying on payload capture or inbound trace propagation. |

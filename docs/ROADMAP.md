@@ -917,12 +917,18 @@ are delivered: in-memory exporter tests assert the span tree/attributes, and the
 persistence tests assert `trace_id` on `agent_runs`, `proposals`, and
 `audit_log`. The level-2 demo receipt passed against pinned
 `arizephoenix/phoenix:22.0.1` (OTLP/HTTP via the documented `4318:6006` mapping)
-with `trace_id=8be7a7fb82e767c73d3fe8f85a347a52`, 15 spans (`case.run` root plus
-`llm.call`/`tool.call` children), and matching run/proposal trace IDs. The
-done-when "visible in Phoenix (manual check)" is level 3 and remains
-`PENDING (manual UI check)`; an API receipt is not UI evidence. Tick this box
-only after a human opens <http://localhost:6006> and confirms the tree. The
-schema delta and boundaries are recorded as Q-99 in `docs/open-questions.md`.
+with the final verified receipt
+`trace_id=54679d053e5564dec2b97f401ba7ac5e` (QA cold run; the tester run
+recorded `04261564286eebd63c58c28112e54b52`), 15 spans (`case.run` root plus 5
+`llm.call`/9 `tool.call` children), and matching run/proposal trace IDs. Trace
+IDs are random per run; the earlier W4 demo recorded
+`8be7a7fb82e767c73d3fe8f85a347a52`. The done-when "visible in Phoenix (manual
+check)" is level 3 and remains `PENDING (manual UI check)`; an API receipt is
+not UI evidence and this note makes no UI claim. Tick this box only after a
+human opens <http://localhost:6006> and confirms the tree. The schema delta and
+boundaries are recorded as Q-99 in `docs/open-questions.md`, along with the
+non-blocking follow-ups (under-limit payload UTF-8, remote span-context
+hardening, evidence-process notes).
 
 ### M5-02 · Replay · M
 **Spec:** section 12; section 19 · **Needs:** M2-09

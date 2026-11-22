@@ -11,9 +11,15 @@ page does not replace it.
 |---|---|---|
 | `cmd/worker`, `cmd/recon agent run` | `case.run` root | One per agent run; started before the run row is written |
 | same | `llm.call` | Child of `case.run`; model, token counts, request/response hashes, cost |
-| same | `tool.call` | Child of `case.run`; tool name, sequence, result hash, refs, error code |
+| same | `tool.call` | Child of `case.run`; registered tool name (or `unknown`), sequence, result hash, refs, error code |
 | `cmd/api` (approval) | `policy.evaluate` | Child of an active agent span when called in-process; otherwise a root span |
 | executor (in-process today) | `executor.apply` | Child in-process; otherwise a root span |
+
+An unknown or unregistered model tool name never reaches the span:
+`recon.tool.name` is the exact registry name when the lookup succeeds and
+`unknown` otherwise, so a model cannot inject text through a span attribute.
+The raw attempted name remains only in the persisted `tool_calls.tool_name`
+record.
 
 Attributes are the frozen names in `internal/telemetry/attrs.go`. Payload
 capture is **off by default**. With `RECON_OTEL_CAPTURE_PAYLOADS=true`,
@@ -22,6 +28,15 @@ capture is **off by default**. With `RECON_OTEL_CAPTURE_PAYLOADS=true`,
 raw arguments, and secrets are never attached. The optional snippet is a
 dev/demo aid: `SafePayload` removes secrets, not business content or untrusted
 memo text, so do not enable capture against real customer data.
+
+**Known UTF-8 limitation (recorded in Q-99).** The truncation path is UTF-8
+safe (it backs off a split rune and strips earlier invalid bytes from the
+retained prefix), but `SafePayload` / `RedactAndTruncate` sanitize UTF-8 only
+when truncation occurs. An **under-limit** input that already contains invalid
+bytes can still come back as an invalid UTF-8 string. Every current production
+call site passes JSON or error strings, so no end-to-end leak is known; treat
+payload bytes as untrusted and expect every return path to be sanitized in a
+follow-up.
 
 ### Correlation boundary (important)
 
@@ -40,11 +55,22 @@ helper when the caller did not set an explicit value; explicit caller values
 still win. Historical audit rows and hashes are never rewritten.
 
 The legacy `WithTraceID` value exists for logs, the `X-Trace-ID` response
-header, and request correlation (spec A6). It is derived from an inbound
-`traceparent` and is **never** a persistence source: an unauthenticated client
-cannot forge an `agent_runs`, `proposals`, or `audit_log` trace ID by sending a
+header, and request correlation (spec A6). It comes from an inbound
+`traceparent` when one is present and is otherwise generated per request; either
+way it is **never** a persistence source: an unauthenticated client cannot
+forge an `agent_runs`, `proposals`, or `audit_log` trace ID by sending a
 `traceparent`. The HTTP correlation ID and an OTel trace started later during
 the same request may differ.
+
+**Remote span-context trust boundary (latent hardening, Q-99).**
+`telemetry.SpanTraceID` accepts any valid OTel `SpanContext`, including one
+marked remote, and M5-01 does not otherwise distinguish local from remote
+contexts. There is no production path today that extracts an inbound
+`traceparent` into a span context, so a request cannot currently inject a
+persisted trace ID through this gap; the legacy `X-Trace-ID`/`WithTraceID`
+value remains non-persistent. If inbound propagation is ever added, reject
+remote span contexts at the persistence boundary or document the accepted
+trust model explicitly.
 
 `case.run` + `llm.call` + `tool.call` form one trace in the agent process.
 When `policy.evaluate` or `executor.apply` runs later in another process or
@@ -136,7 +162,10 @@ docker compose down -v                   # deletes local traces too
 ```
 
 Open <http://localhost:6006> for the UI. UI visibility is a separate,
-human-gated evidence level; an API query is not UI evidence.
+human-gated evidence level: **M5-01 records level 2 only.** Level 3 is
+`PENDING (manual UI check)`, an API query is not UI evidence, and the roadmap
+M5-01 box stays unticked until a human opens the UI and confirms the tree. Do
+not describe a passing receipt test as proof that the UI renders the trace.
 
 ## Demo trace path
 
@@ -161,6 +190,18 @@ an ephemeral test database, with OTLP export enabled, then:
    the expected `llm.call`/`tool.call` children, and that every child's
    `parent_id` is the root span ID;
 4. prints `PHOENIX_LEVEL2 ...` and `PHOENIX_LEVEL3=PENDING (manual UI check)`.
+
+The final verified tree (`73d42c7`) recorded these level-2 receipts:
+
+| Run | `trace_id` | Shape |
+|---|---|---|
+| QA cold run | `54679d053e5564dec2b97f401ba7ac5e` | 15 spans: one `case.run` root, 5 `llm.call`, 9 `tool.call`; `service.name=recon-agent` |
+| Tester run | `04261564286eebd63c58c28112e54b52` | same shape; 15 spans, 5 `llm.call`, 9 `tool.call` |
+
+Trace IDs are random per run, so read the ID printed by the current
+`PHOENIX_LEVEL2` line rather than reusing one from this page. The earlier W4
+demo recorded `8be7a7fb82e767c73d3fe8f85a347a52`; that is another level-2
+receipt, not UI evidence.
 
 The live check is opt-in so the normal unit/integration suites never require
 Phoenix:
