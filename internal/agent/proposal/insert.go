@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/TamasGorgics/recon-agent/internal/agent/tools"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // Proposal is one row to insert. The agent role cannot read proposal columns,
@@ -67,19 +68,22 @@ func (s proposalStore) insert(ctx context.Context, proposal Proposal) (bool, err
 	if proposal.Pattern != "" {
 		pattern = proposal.Pattern
 	}
+	// Persist only the active OTel span trace ID; the legacy WithTraceID value
+	// is correlation-only and never a database trace ID (spec A6 boundary).
+	traceID := telemetry.SpanTraceID(ctx)
 
 	tag, err := s.execer.Exec(ctx,
 		`INSERT INTO proposals
 		     (id, case_id, agent_run_id, type, payload, rationale, evidence,
 		      confidence, pattern_claimed, status, version, state_hash,
-		      idempotency_key, created_at)
+		      idempotency_key, created_at, trace_id)
 		 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::jsonb, $6, $7::jsonb,
-		         $8::numeric, $9, 'proposed', 0, $10, $11, $12)
+		         $8::numeric, $9, 'proposed', 0, $10, $11, $12, NULLIF($13, ''))
 		 ON CONFLICT (idempotency_key) DO NOTHING`,
 		proposal.ID, proposal.CaseID, proposal.RunID, proposal.Type,
 		string(payload), proposal.Rationale, string(evidence),
 		proposal.Confidence, pattern, proposal.StateHash,
-		proposal.IdempotencyKey, proposal.CreatedAt)
+		proposal.IdempotencyKey, proposal.CreatedAt, traceID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

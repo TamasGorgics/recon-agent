@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TamasGorgics/recon-agent/internal/agent/tools"
 	"github.com/TamasGorgics/recon-agent/internal/agent/untrusted"
@@ -17,6 +20,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 const repeatedCallReason = "repeated_identical_tool_call"
@@ -66,6 +70,9 @@ type Deps struct {
 	Logger     *slog.Logger
 	Provider   string
 	BaseURL    string
+	// Telemetry is optional. A nil or disabled provider leaves the run
+	// untraced; the runner still uses no-op spans internally.
+	Telemetry *telemetry.Provider
 }
 
 // Runner owns the bounded LLM tool-use loop for one case at a time.
@@ -87,6 +94,7 @@ type Runner struct {
 	baseURL       string
 	model         string
 	promptVersion string
+	tracer        trace.Tracer
 }
 
 // NewRunner validates and returns a runner. The caller must supply a complete
@@ -108,6 +116,11 @@ func NewRunner(deps Deps) (*Runner, error) {
 			return nil, fmt.Errorf("%w: a tool recorder or tool runner is required", ErrInvalidConfig)
 		}
 		toolRunner = tools.NewRunner(deps.Registry, deps.Recorder, deps.Clock)
+	}
+	if toolRunner.Tracer == nil {
+		// The tools package owns tool.call spans. A nil provider returns the
+		// OTel no-op tracer, so the call path never branches on tracing state.
+		toolRunner.Tracer = deps.Telemetry.Tracer("recon-agent/tools")
 	}
 	logger := deps.Logger
 	if logger == nil {
@@ -144,6 +157,7 @@ func NewRunner(deps Deps) (*Runner, error) {
 		baseURL:       baseURL,
 		model:         deps.Config.Model,
 		promptVersion: deps.Config.PromptVersion,
+		tracer:        deps.Telemetry.Tracer("recon-agent/agent"),
 	}, nil
 }
 
@@ -152,7 +166,7 @@ func NewRunner(deps Deps) (*Runner, error) {
 // returned as an error; ErrAgentDisabled is finalized escalated with no case
 // transition. Unexpected errors leave the run row open for the worker to
 // release.
-func (r *Runner) Run(ctx context.Context, caseID string) (Result, error) {
+func (r *Runner) Run(ctx context.Context, caseID string) (result Result, err error) {
 	caseID = strings.ToLower(strings.TrimSpace(caseID))
 	if !tools.IsUUID(caseID) {
 		return Result{}, fmt.Errorf("agent: case id %q is not a UUID", caseID)
@@ -185,6 +199,26 @@ func (r *Runner) Run(ctx context.Context, caseID string) (Result, error) {
 	owner := *c.LeasedBy
 	initialVersion := c.Version
 
+	// Start the root span after case validation and before CreateRun so the
+	// span-backed context reaches the run, proposal, and audit write paths.
+	ctx, span := telemetry.StartSpan(ctx, r.tracer, "case.run",
+		attribute.String(telemetry.AttrCaseID, caseID),
+		attribute.Int64(telemetry.AttrCaseVersion, int64(initialVersion)),
+		attribute.String(telemetry.AttrModel, r.model),
+		attribute.String(telemetry.AttrPromptVersion, r.promptVersion),
+	)
+	usage := &budgetUsage{Cost: decimal.Zero}
+	defer func() {
+		span.SetAttributes(caseRunFinalAttributes(result, usage.nonNegative())...)
+		switch {
+		case err != nil:
+			telemetry.RecordError(span, err)
+		case result.Outcome == OutcomeProposal:
+			span.SetStatus(codes.Ok, "")
+		}
+		span.End()
+	}()
+
 	startedAt := r.clock.Now().UTC().Truncate(time.Microsecond)
 	runID, err := r.newRunID(caseID)
 	if err != nil {
@@ -193,6 +227,7 @@ func (r *Runner) Run(ctx context.Context, caseID string) (Result, error) {
 	if !tools.IsUUID(runID) {
 		return Result{}, fmt.Errorf("agent: generated run id %q is not a UUID", runID)
 	}
+	span.SetAttributes(attribute.String(telemetry.AttrRunID, runID))
 	runModel := r.model
 	if err := r.store.CreateRun(ctx, RunRecord{
 		ID:            runID,
@@ -204,8 +239,7 @@ func (r *Runner) Run(ctx context.Context, caseID string) (Result, error) {
 		return Result{RunID: runID}, err
 	}
 
-	result := Result{RunID: runID, CaseVersion: initialVersion}
-	usage := &budgetUsage{Cost: decimal.Zero}
+	result = Result{RunID: runID, CaseVersion: initialVersion}
 	limits := budgetLimits{
 		MaxSteps:       r.config.MaxSteps,
 		MaxToolCalls:   r.config.MaxToolCalls,
@@ -314,8 +348,17 @@ func (r *Runner) Run(ctx context.Context, caseID string) (Result, error) {
 			return result, fmt.Errorf("agent: hash request: %w", err)
 		}
 		callStarted := r.clock.Now()
-		response, err := r.client.Complete(ctx, request)
+		llmCtx, llmSpan := telemetry.StartSpan(ctx, r.tracer, "llm.call",
+			attribute.String(telemetry.AttrModel, request.Model),
+			attribute.String(telemetry.AttrPromptVersion, r.promptVersion),
+			attribute.Int64(telemetry.AttrLLMSeq, int64(llmSeq+1)),
+			attribute.String(telemetry.AttrRunID, runID),
+			attribute.String(telemetry.AttrRequestHash, requestHash),
+		)
+		response, err := r.client.Complete(llmCtx, request)
 		if err != nil {
+			telemetry.RecordError(llmSpan, err)
+			llmSpan.End()
 			if errors.Is(err, llm.ErrCassetteMiss) {
 				req := baseFinish()
 				req.outcome = OutcomeProviderError
@@ -347,12 +390,19 @@ func (r *Runner) Run(ctx context.Context, caseID string) (Result, error) {
 		nextToolCallID = ensureToolCallIDs(response.Message.ToolCalls, nextToolCallID)
 		responseBody, err := responseJSON(response)
 		if err != nil {
+			telemetry.RecordError(llmSpan, err)
+			llmSpan.End()
 			return result, err
 		}
 		usageBody, err := responseUsageJSON(response)
 		if err != nil {
+			telemetry.RecordError(llmSpan, err)
+			llmSpan.End()
 			return result, err
 		}
+		llmSpan.SetAttributes(llmCallFinalAttributes(actualModel, response, responseBody)...)
+		llmSpan.SetStatus(codes.Ok, "")
+		llmSpan.End()
 		llmSeq++
 		if err := r.store.RecordLLMCall(ctx, LLMCall{
 			RunID:       runID,

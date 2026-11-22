@@ -50,6 +50,7 @@ type loadedProposal struct {
 	Confidence      decimal.Decimal
 	PatternVerified *string
 	Status          state.Status
+	TraceID         *string
 }
 
 // Request routes one proposed proposal. It runs the verifier, evaluates policy,
@@ -108,40 +109,9 @@ func (s *Service) Request(ctx context.Context, proposalID string) (RequestResult
 	}
 	proposal.PatternVerified = refreshed
 
-	decision := s.policy.Engine.Evaluate(policy.Proposal{
-		ID:              proposal.ID,
-		CaseID:          proposal.CaseID,
-		Type:            policy.ProposalType(proposal.Type),
-		Confidence:      proposal.Confidence,
-		Evidence:        append([]string(nil), proposal.Evidence...),
-		PatternVerified: proposal.PatternVerified,
-	}, verification, facts)
-	if err := decision.Validate(); err != nil {
-		return RequestResult{}, fmt.Errorf("%w: policy decision: %v", ErrInvalidRequest, err)
-	}
-
-	limitsReason := ""
-	if decision.Tier == policy.TierT0 {
-		result, checkErr := s.limits.Check(ctx, limits.Candidate{
-			ProposalID: proposal.ID,
-			CaseID:     proposal.CaseID,
-			Currency:   facts.Currency,
-			ValueMinor: facts.ValueMinor,
-			Tier:       decision.Tier,
-		})
-		if checkErr != nil {
-			// FIN-53 fails closed: a limits infrastructure failure can never
-			// auto-apply. The exact error is not stored; a closed machine code
-			// is audited instead.
-			limitsReason = limits.ReasonLimitsUnavailable
-			decision = mapLimitsT1(decision, limitsReason)
-		} else {
-			limitsReason = result.Reason
-			if !result.Allowed || result.Tier != policy.TierT0 ||
-				result.Reason != limits.ReasonWithinLimits {
-				decision = mapLimitsT1(decision, result.Reason)
-			}
-		}
+	ctx, decision, limitsReason, err := s.evaluatePolicy(ctx, &proposal, verification, facts)
+	if err != nil {
+		return RequestResult{}, err
 	}
 
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
@@ -329,11 +299,12 @@ func (s *Service) loadProposal(ctx context.Context, proposalID string) (loadedPr
 	)
 	err := s.pool.QueryRow(ctx,
 		`SELECT id::text, case_id::text, type, payload, evidence,
-		        confidence::text, pattern_verified, status
+		        confidence::text, pattern_verified, status, trace_id
 		   FROM proposals
 		  WHERE id = $1::uuid`, proposalID).
 		Scan(&proposal.ID, &proposal.CaseID, &proposal.Type, &payload,
-			&evidenceRaw, &confidenceRaw, &proposal.PatternVerified, &status)
+			&evidenceRaw, &confidenceRaw, &proposal.PatternVerified, &status,
+			&proposal.TraceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return loadedProposal{}, fmt.Errorf("%w: %s", ErrProposalNotFound, proposalID)
 	}

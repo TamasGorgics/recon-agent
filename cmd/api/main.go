@@ -56,6 +56,14 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	return runWithTelemetry(ctx, logger, func(ctx context.Context, provider *telemetry.Provider) error {
+		return serveAPI(ctx, cfg, logger, provider)
+	})
+}
+
+// serveAPI owns the database/server lifecycle. Telemetry shutdown is handled
+// by runWithTelemetry after this function returns, so HTTP is drained first.
+func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telemetryProvider *telemetry.Provider) error {
 	app, err := db.OpenRole(ctx, db.RoleApp, cfg.Database.AppURL)
 	if err != nil {
 		return fmt.Errorf("open recon_app pool: %w", err)
@@ -148,6 +156,7 @@ func run(ctx context.Context) error {
 		Policy:            approval.Policy{Engine: policyEngine, Loaded: loadedPolicy},
 		OnProposalClosed:  lifecycleService.OnProposalClosed,
 		InfoRequestedHook: lifecycleService.RequestInfo,
+		Telemetry:         telemetryProvider,
 	})
 	if err != nil {
 		return fmt.Errorf("build approval service: %w", err)

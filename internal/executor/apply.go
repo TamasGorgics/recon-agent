@@ -32,13 +32,14 @@ const caseResolveReason = "apply"
 // as apply_failed in a second transaction. Recorded failures return a nil
 // error with Result.Status=apply_failed; typed errors leave the proposal
 // status unchanged.
-func (s *Service) Apply(ctx context.Context, proposalID string) (Result, error) {
+func (s *Service) Apply(ctx context.Context, proposalID string) (result Result, err error) {
 	id, err := canonicalProposalID(proposalID)
 	if err != nil {
 		return Result{}, err
 	}
+	ctx, span := s.startApplySpan(ctx, id)
+	defer func() { finalizeApplySpan(span, result, err) }()
 
-	var result Result
 	err = db.WithTxPolicy(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.Serializable}, s.retry,
 		func(ctx context.Context, tx pgx.Tx) error {
 			result = Result{}
@@ -73,6 +74,7 @@ func (s *Service) applyTx(ctx context.Context, tx pgx.Tx, proposalID string) (Re
 	if err != nil {
 		return Result{}, err
 	}
+	annotateApplyProposal(ctx, locked)
 	fault.Hit(fault.ExecutorAfterProposalLock)
 	if locked.Status == state.StatusApplied {
 		ledgerTxnID, err := loadApplied(ctx, tx, proposalID)
@@ -431,9 +433,15 @@ func (s *Service) replay(ctx context.Context, proposalID string) (Result, error)
 	var result Result
 	err := db.WithTxPolicy(ctx, s.pool, pgx.TxOptions{}, s.retry, func(ctx context.Context, tx pgx.Tx) error {
 		result = Result{}
+		var locked lockedProposal
 		var status string
 		if err := tx.QueryRow(ctx,
-			`SELECT status FROM proposals WHERE id = $1::uuid`, proposalID).Scan(&status); err != nil {
+			`SELECT status, case_id::text, type,
+			        COALESCE(trace_id, ''), idempotency_key
+			   FROM proposals
+			  WHERE id = $1::uuid`, proposalID).
+			Scan(&status, &locked.CaseID, &locked.Type, &locked.TraceID,
+				&locked.IdempotencyKey); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrProposalNotFound
 			}
@@ -442,6 +450,8 @@ func (s *Service) replay(ctx context.Context, proposalID string) (Result, error)
 		if state.Status(status) != state.StatusApplied {
 			return fmt.Errorf("%w: status %s", ErrNotApplicable, status)
 		}
+		locked.ID = proposalID
+		annotateApplyProposal(ctx, locked)
 		ledgerTxnID, err := loadApplied(ctx, tx, proposalID)
 		if err != nil {
 			return err
@@ -462,15 +472,17 @@ func (s *Service) replay(ctx context.Context, proposalID string) (Result, error)
 
 // lockedProposal is the row Apply locks and re-validates.
 type lockedProposal struct {
-	ID        string
-	CaseID    string
-	Type      string
-	Payload   []byte
-	Evidence  []byte
-	Status    state.Status
-	Version   int
-	StateHash string
-	ExpiresAt *time.Time
+	ID             string
+	CaseID         string
+	Type           string
+	Payload        []byte
+	Evidence       []byte
+	Status         state.Status
+	Version        int
+	StateHash      string
+	ExpiresAt      *time.Time
+	TraceID        string
+	IdempotencyKey string
 }
 
 func lockProposal(ctx context.Context, tx pgx.Tx, proposalID string) (lockedProposal, error) {
@@ -480,13 +492,14 @@ func lockProposal(ctx context.Context, tx pgx.Tx, proposalID string) (lockedProp
 	)
 	err := tx.QueryRow(ctx,
 		`SELECT id::text, case_id::text, type, payload, evidence,
-		        status, version, state_hash, expires_at
+		        status, version, state_hash, expires_at,
+		        COALESCE(trace_id, ''), idempotency_key
 		   FROM proposals
 		  WHERE id = $1::uuid
 		  FOR UPDATE`, proposalID).
 		Scan(&locked.ID, &locked.CaseID, &locked.Type, &locked.Payload,
 			&locked.Evidence, &status, &locked.Version, &locked.StateHash,
-			&locked.ExpiresAt)
+			&locked.ExpiresAt, &locked.TraceID, &locked.IdempotencyKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedProposal{}, ErrProposalNotFound
 	}

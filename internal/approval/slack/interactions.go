@@ -362,8 +362,10 @@ func (h *InteractionHandler) appendDenied(ctx context.Context, in interaction, r
 		return fmt.Errorf("slack interaction denied actor: %w", err)
 	}
 	timestamp := h.clock.Now().UTC()
+	// Only an active OTel span may become the persisted audit trace ID; the
+	// HTTP correlation key is not trusted as a persistence value.
 	var traceID *string
-	if value := strings.TrimSpace(telemetry.TraceID(ctx)); value != "" {
+	if value := strings.TrimSpace(telemetry.SpanTraceID(ctx)); value != "" {
 		traceID = &value
 	}
 	// A signed Slack retry replays the same (proposal, user, action) denial.

@@ -912,6 +912,18 @@ Goal: you can see what the system and the agent are doing, replay any run, produ
 **Done when**
 - An in-memory exporter test asserts the span tree and attributes; `trace_id` is present on the run, proposal, and audit rows; a demo trace is visible in Phoenix (manual check).
 
+**Evidence note (2026-11-22; box intentionally unticked).** The automated legs
+are delivered: in-memory exporter tests assert the span tree/attributes, and the
+persistence tests assert `trace_id` on `agent_runs`, `proposals`, and
+`audit_log`. The level-2 demo receipt passed against pinned
+`arizephoenix/phoenix:22.0.1` (OTLP/HTTP via the documented `4318:6006` mapping)
+with `trace_id=8be7a7fb82e767c73d3fe8f85a347a52`, 15 spans (`case.run` root plus
+`llm.call`/`tool.call` children), and matching run/proposal trace IDs. The
+done-when "visible in Phoenix (manual check)" is level 3 and remains
+`PENDING (manual UI check)`; an API receipt is not UI evidence. Tick this box
+only after a human opens <http://localhost:6006> and confirms the tree. The
+schema delta and boundaries are recorded as Q-99 in `docs/open-questions.md`.
+
 ### M5-02 · Replay · M
 **Spec:** section 12; section 19 · **Needs:** M2-09
 

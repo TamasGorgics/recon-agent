@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/TamasGorgics/recon-agent/internal/agent/tools"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // RunDB is the app-pool write/read surface used by DBStore. It is satisfied by
@@ -39,10 +40,14 @@ func (s *DBStore) CreateRun(ctx context.Context, run RunRecord) error {
 	if run.Model == "" || run.PromptVersion == "" {
 		return errors.New("agent: run model and prompt version are required")
 	}
+	// Persist only the active OTel span trace ID. The legacy WithTraceID value
+	// is an HTTP/log correlation ID (possibly from an inbound traceparent) and
+	// must never become a database trace ID.
+	traceID := telemetry.SpanTraceID(ctx)
 	_, err := s.db.Exec(ctx,
-		`INSERT INTO agent_runs (id, case_id, model, prompt_version, started_at)
-		 VALUES ($1::uuid, $2::uuid, $3, $4, $5)`,
-		run.ID, run.CaseID, run.Model, run.PromptVersion, run.StartedAt)
+		`INSERT INTO agent_runs (id, case_id, model, prompt_version, started_at, trace_id)
+		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, NULLIF($6, ''))`,
+		run.ID, run.CaseID, run.Model, run.PromptVersion, run.StartedAt, traceID)
 	if err != nil {
 		return fmt.Errorf("agent: insert agent run: %w", err)
 	}

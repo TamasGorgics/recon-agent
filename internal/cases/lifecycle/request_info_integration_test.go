@@ -14,7 +14,6 @@ import (
 	caselifecycle "github.com/TamasGorgics/recon-agent/internal/cases/lifecycle"
 	casestate "github.com/TamasGorgics/recon-agent/internal/cases/state"
 	"github.com/TamasGorgics/recon-agent/internal/db"
-	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 // requestInfo runs the production service in its own transaction, the way the
@@ -41,7 +40,7 @@ func TestRequestInfoMovesProposalPendingCaseToWaitingInfo(t *testing.T) {
 		t.Fatalf("seeded attempts = %d, want 2", before.Attempts)
 	}
 
-	ctx := telemetry.WithTraceID(context.Background(), "trace-request-info")
+	ctx := spanTraceContext(t)
 	if err := f.requestInfo(t, ctx, proposalID); err != nil {
 		t.Fatalf("RequestInfo: %v", err)
 	}
@@ -73,8 +72,8 @@ func TestRequestInfoMovesProposalPendingCaseToWaitingInfo(t *testing.T) {
 		t.Fatalf("transition after = %+v, want waiting_info/%s",
 			afterPayload, caselifecycle.ReasonInfoRequested)
 	}
-	if transition.TraceID == nil || *transition.TraceID != "trace-request-info" {
-		t.Fatalf("transition trace = %v, want trace-request-info", transition.TraceID)
+	if transition.TraceID == nil || *transition.TraceID != testSpanTraceID {
+		t.Fatalf("transition trace = %v, want %s", transition.TraceID, testSpanTraceID)
 	}
 	if got := f.audits(t, caseID); len(got) != 1 {
 		t.Fatalf("case audits = %d, want exactly one transition: %+v", len(got), got)

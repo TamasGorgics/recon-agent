@@ -68,7 +68,9 @@ func (a *API) handleSetSwitch(w http.ResponseWriter, r *http.Request) {
 		Enabled: enabled,
 		Reason:  reason,
 		ActorID: principal.KeyID,
-		TraceID: telemetry.TraceID(r.Context()),
+		// Correlation IDs from the HTTP layer are never persisted; only an
+		// active OTel span may supply the audit trace ID.
+		TraceID: telemetry.SpanTraceID(r.Context()),
 	})
 	if err != nil {
 		a.writeServiceError(w, r, err)

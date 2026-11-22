@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/TamasGorgics/recon-agent/internal/approval/state"
 	"github.com/TamasGorgics/recon-agent/internal/audit"
 	"github.com/TamasGorgics/recon-agent/internal/clock"
@@ -45,6 +47,7 @@ type Service struct {
 	pollInterval  time.Duration
 	sleep         func(ctx context.Context, d time.Duration) error
 	actor         audit.Actor
+	tracer        trace.Tracer
 }
 
 // NewService validates opts, applies the loop defaults, copies the dependency
@@ -99,6 +102,7 @@ func NewService(opts Options) (*Service, error) {
 		pollInterval:  pollInterval,
 		sleep:         sleep,
 		actor:         actor,
+		tracer:        opts.Telemetry.Tracer("recon-agent/executor"),
 	}, nil
 }
 

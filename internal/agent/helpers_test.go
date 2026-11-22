@@ -20,6 +20,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
+	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
 
 const (
@@ -380,6 +381,7 @@ type runnerOptions struct {
 	hooks         toolHooks
 	newRunID      func(string) (string, error)
 	logger        *slog.Logger
+	telemetry     *telemetry.Provider
 }
 
 type runnerHarness struct {
@@ -430,6 +432,7 @@ func newHarness(t *testing.T, opts runnerOptions) *runnerHarness {
 		NewRunID:   opts.newRunID,
 		BeforeStep: opts.beforeStep,
 		Logger:     opts.logger,
+		Telemetry:  opts.telemetry,
 	})
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)

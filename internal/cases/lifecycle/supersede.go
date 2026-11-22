@@ -297,10 +297,12 @@ func canonicalUUID(value string) string {
 	return strings.ToLower(value)
 }
 
-// traceIDFromContext returns the telemetry trace id when one is present. The
-// wave-2 signature has no explicit TraceID parameter.
+// traceIDFromContext returns the active OTel span trace id when one is present.
+// It deliberately ignores the legacy API correlation key so an inbound
+// traceparent can never be persisted as an audit trace ID. The wave-2
+// signature has no explicit TraceID parameter.
 func traceIDFromContext(ctx context.Context) *string {
-	id := telemetry.TraceID(ctx)
+	id := telemetry.SpanTraceID(ctx)
 	if id == "" {
 		return nil
 	}
