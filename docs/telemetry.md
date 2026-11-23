@@ -3,7 +3,9 @@
 This page is the operator and developer reference for the M5-01 tracing stack:
 what is traced, how to enable it, how to run the local Phoenix viewer, and how
 to prove a demo trace reached Phoenix. `docs/spec.md` §3–§9 is canonical; this
-page does not replace it.
+page does not replace it. Prometheus metrics are a separate signal and are
+documented in [`docs/metrics.md`](metrics.md) (M5-03); this page covers tracing
+only.
 
 ## What M5-01 traces
 

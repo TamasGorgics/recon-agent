@@ -62,8 +62,13 @@ func (e *clientError) Error() string { return e.code + ": " + e.message }
 
 // writeError writes the standard envelope. The request ID comes from the
 // request context, or from the response header when the context is absent (for
-// example a webhook fallback).
+// example a webhook fallback). Only 5xx responses increment
+// recon_errors_total{component="api"}; client 4xx responses are intentionally
+// not counted (spec 6.10) so validation noise cannot dominate the error rate.
 func (a *API) writeError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	if a.metrics != nil && status >= http.StatusInternalServerError {
+		a.metrics.ObserveError("api", apiErrorMetricCode(status))
+	}
 	requestID := RequestIDFromContext(r.Context())
 	if requestID == "" {
 		requestID = w.Header().Get("X-Request-ID")
@@ -72,6 +77,20 @@ func (a *API) writeError(w http.ResponseWriter, r *http.Request, status int, cod
 	envelope.Error.Code = code
 	envelope.Error.Message = message
 	writeJSON(w, status, envelope)
+}
+
+// apiErrorMetricCode maps a 5xx HTTP status onto the frozen recon_errors_total
+// code allow-list. The public envelope code (for example internal_error) is not
+// itself a bounded metric code, so it is never used as a label.
+func apiErrorMetricCode(status int) string {
+	switch status {
+	case http.StatusServiceUnavailable:
+		return "unavailable"
+	case http.StatusGatewayTimeout:
+		return "timeout"
+	default:
+		return "internal"
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

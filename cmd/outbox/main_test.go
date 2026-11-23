@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -98,6 +99,8 @@ func clearCmdEnv(t *testing.T) {
 		config.EnvSlackSigningSecret,
 		config.EnvSlackChannelID,
 		config.EnvSlackCaseFileBaseURL,
+		config.EnvMetricsWorkerAddr,
+		config.EnvMetricsOutboxAddr,
 	} {
 		t.Setenv(name, "")
 	}
@@ -109,6 +112,7 @@ func setOutboxEnv(t *testing.T) {
 	t.Setenv(config.EnvSlackBotToken, testBotToken)
 	t.Setenv(config.EnvSlackChannelID, testChannelID)
 	t.Setenv(config.EnvSlackCaseFileBaseURL, testCaseFileBase)
+	t.Setenv(config.EnvMetricsOutboxAddr, "127.0.0.1:0")
 }
 
 func TestRunHelpNeedsNoConfiguration(t *testing.T) {
@@ -393,6 +397,34 @@ func TestRunOnceEmptyOutboxNeedsNoAgentConfig(t *testing.T) {
 		if strings.Contains(text, secret) {
 			t.Fatalf("run log leaked %q:\n%s", secret, text)
 		}
+	}
+}
+
+func TestRunOnceDoesNotBindMetricsListener(t *testing.T) {
+	clearCmdEnv(t)
+	setOutboxEnv(t)
+	// Hold the configured port so a --once run that tried to bind would fail.
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = occupied.Close() }()
+	t.Setenv(config.EnvMetricsOutboxAddr, occupied.Addr().String())
+
+	pool := &fakePool{}
+	deps := dependencies{
+		openApp: func(context.Context, string) (appPool, func(), error) {
+			return pool, func() {}, nil
+		},
+		httpClient:   http.DefaultClient,
+		slackBaseURL: "https://slack.example.test/api",
+		clock:        clock.Real{},
+	}
+	if err := runWith(context.Background(), []string{"--once"}, io.Discard, deps); err != nil {
+		t.Fatalf("run --once with an unbindable metrics address: %v", err)
+	}
+	if pool.beginTx.Load() != 1 {
+		t.Fatalf("claim transactions = %d, want 1", pool.beginTx.Load())
 	}
 }
 

@@ -767,3 +767,224 @@ remains unchanged.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-100 | **RESOLVED (M5-02) for the implementation; post-review residuals F1 (fail-closed JSONB numeric normalization; needs a future schema/hashing revision) and F3 (run-spec §5 citation) recorded in the addendum above; spec §12/§19 wording left unchanged:** replay is a read-only diagnostic limited to `outcome='proposal'` with a stored proposal; one `REPEATABLE READ READ ONLY` load then no DB; digest covers `{type,payload,rationale,evidence(sorted unique),confidence(4dp),pattern_claimed}` and excludes `state_hash`/`idempotency_key`/timestamps; `state_hash` is diagnostic only; exact recomputes the key and reports a key-only diff without changing `identical` (but the command still exits 1); exact compares every model-requested tool-call argument set with stored `tool_calls.args` (`tool_result_mismatch(field=args)` hard stop) and mirrors the malformed-proposal repair flow; rerun compares digest only, stops at the proposal, and is cassette-default with process-env-only `OPENCODE_API_KEY` for `--live`; exit follows the divergence list (0 none, 1 any including a key-only diff, 2 usage/load) with stderr-only exit 2; the canonical tool-result hash migration is the only schema change and legacy NULL rows get the `tool_result_hash_unavailable` diagnostic; hashes stored beside the data are not authentication (a consistent rewrite passes — non-blocking trust boundary, no signature/MAC added); the 20/20 seeded gate and `recording_v1.json` fixture are the evidence; `llm_calls` lacks the full request/provider/base URL, so replay is code/config-coupled and config drift shows as `request_hash_mismatch`; telemetry is disabled; no M5-03+ scope and no `docs/spec.md` edit. | Spec §12/§19 / M5-02 / docs consumers / ops | Keep replay read-only and exact-restricted; keep the digest field set, `state_hash` diagnostic, and key-only relaxation; keep cassette-default rerun with process-env `--live`; keep exit 0/1/2 and stderr-only exit 2; keep the canonical hash migration and legacy diagnostic; cite only the 20/20 gate and committed fixture as replay evidence; treat config drift as a real `request_hash_mismatch`; keep telemetry off; amend `docs/spec.md` only in a future spec revision if the owners choose to. |
+
+## M5-03 Prometheus metrics (Q-101)
+
+**Q-101 addendum (Wave 5 docs phase; developer-owned; no `docs/spec.md`
+edit).** `docs/spec.md` §12 names the metrics requirement and §13.1 depends on
+the metric names for dashboards; the delivered M5-03 contract and its
+boundaries are recorded here. The specification text itself is unchanged.
+M5-04 (Prometheus server/Grafana provisioning and dashboards), M5-05 (agent
+quality dashboard), and M5-06 (daily integrity job) are out of scope; the
+frozen names/types/labels are the handoff contract for M5-04, and the operator
+reference is `docs/metrics.md`.
+
+- **Custom per-process registry, no global.** Each long-running process
+  (`cmd/api`, `cmd/worker`, `cmd/outbox`) constructs its own
+  `prometheus.NewRegistry()` through `metrics.New`; production wiring never uses
+  `prometheus.DefaultRegisterer`/`DefaultGatherer` or `promauto`. A nil
+  `api.Options.Metrics` builds a fresh isolated registry for handler tests, and
+  the production API passes the same process registry to its matcher, case,
+  approval, limits, and error instrumentation. Counters are process-local and
+  reset on restart; dashboards must use PromQL `rate`/`increase`, not raw
+  totals. Several processes/replicas each expose their own registry.
+- **Endpoints and exposure.** The API keeps its existing public,
+  unauthenticated `GET /metrics` and serves Prometheus text with the frozen
+  prefix `text/plain; version=0.0.4; charset=utf-8` from its own HTTP server.
+  The pinned `client_golang`/expfmt encoder appends `; escaping=underscores`, so
+  the live header is `text/plain; version=0.0.4; charset=utf-8;
+  escaping=underscores`; the prefix is the contract, not the whole header. The
+  worker and outbox serve only `GET /metrics` on separate small listeners,
+  loopback by default (`METRICS_WORKER_ADDR=127.0.0.1:9091`,
+  `METRICS_OUTBOX_ADDR=127.0.0.1:9092`), started before the poll loop and
+  drained with the signal context. `--once` modes open no listener, a bind
+  failure aborts startup with the config key and never a DSN, and a
+  non-loopback bind is allowed only explicitly and logs a warning because the
+  listener has no authentication (network policy is the control). The API stays
+  public as it is today; business counts could leak on an unauthenticated port,
+  so operators must not expose it beyond the trusted network until M5-04
+  revisits auth/network policy. Each API scrape runs the four DB aggregates
+  described below with no `MaxRequestsInFlight`, so concurrent unauthenticated
+  scrapes multiply database work; M5-04 owns auth/rate limiting/pool sizing.
+- **Frozen dependency and exemptions.** `github.com/prometheus/client_golang`
+  is pinned at `v1.25.0`; `go mod tidy` adds it and its required modules, with
+  no unrelated upgrades. `github.com/prometheus/client_model v0.6.3` is a
+  **direct** requirement because `internal/metrics/server.go` names
+  `[]*dto.MetricFamily`; the stale `guard.go` comment calling it indirect is a
+  source-only cleanup (A9 in the addendum below). Long-running binaries
+  explicitly register client_golang's Go and process collectors. `go_*`,
+  `process_*`, and `promhttp_*` families are exempt from the business
+  cardinality guard; the process collector's exact families depend on the host
+  OS.
+- **Bounded labels and forbidden IDs.** The catalog in
+  `internal/metrics/catalog.go` is the single source of truth for name, type,
+  help, label order, allow-lists, histogram buckets, and series caps.
+  `source`, `currency`, and `model` use charset/length validators; the remaining
+  labels are closed enums. For open-ended labels, every unrecognized value
+  becomes the literal `unknown`; empty values, canonical UUID/ULID/long-hex
+  shapes, and URLs are rejected by normalization. `queue` and the build-info
+  `component` are closed enums with no `unknown` child. Forbidden label names
+  (`case_id`, `run_id`, `agent_run_id`, `proposal_id`, `break_id`, `scope_id`,
+  `ledger_txn_id`, `approver_id`, `trace_id`, `idempotency_key`, `entity_id`,
+  `message_id`, `external_ref`, `payload`, `error`, `reason`, `rationale`,
+  `dsn`, `url`, `path`, `email`) are rejected at registration/validation. The
+  guard asserts ≤64 business series on an idle process and ≤128 under
+  representative instrumentation; these are **test-time** regression
+  assertions (`ValidateRegistry`), not runtime admission control, and a
+  per-entity label regression fails the metrics tests.
+- **Event-driven versus DB-derived families.** Match runs/matches/breaks, case
+  age, agent runs/cost, approval latency, dead letters, auto-apply cap ratio,
+  tie-out, and most errors are observed by event producers after the owning
+  transaction commits (no metric runs ahead of committed state). Queue depth
+  and outbox lag are scrape-time gauges derived from the shared database
+  through each process's `recon_app` pool: they are refreshed on every gather
+  under `metrics.gather_timeout` (default 2s), issue read-only aggregates, and
+  reuse the existing partial indexes. On query failure the affected gauge keeps
+  its last value, the collector logs only component/queue (never SQL, raw error
+  text, database topics, or a DSN), and `recon_errors_total{component="metrics",
+  code="collect"}` increments once per failed query in that scrape; the scrape
+  still returns 200. A gauge frozen by a failed query is stale and must not be
+  treated as fresh monitoring evidence.
+- **Total gather failure.** A total gather failure with zero families returns
+  500 with a fixed body; the OpenAPI `/metrics` responses are 200 and 500. A
+  partial collector failure returns 200 with the reachable families and is
+  logged (the seeded catalog makes a healthy process's total failure
+  unreachable). The handler's error text is never collector output.
+- **Tie-out is event-only with no long-lived producer.**
+  `tieout.Compute` accepts an optional observer and exposes the scope `source`
+  for the label, but no long-lived process calls `Compute` today: the one-shot
+  `recon tieout` CLI deliberately passes no observer. API/worker scrapes
+  therefore show only the seeded `{currency="unknown",source="unknown"}` series.
+  A scrape-time tie-out collector or scheduler is deferred to M5-06/M5-09 (or a
+  later task) if still needed; dashboards must not infer a healthy tie-out from
+  a seeded zero.
+- **Integrity metric registered with no producer.** `recon_integrity_job_status
+  {job="integrity"}` is registered and seeded at `0`, documented as
+  `0=unknown/not run`, `1=pass`, `2=fail`; M5-06 owns the producer and values.
+  No integrity job, table, scheduler, or report is added by M5-03.
+- **Outbox topics fold.** The outbox allow-list is only `approval.request`,
+  `approval.update`, and `approval.cancel`; any other pending topic folds into
+  `unknown` (maximum age for lag, otherwise count). A new topic requires a
+  catalog/spec update. Dead letters are authoritative from the worker after the
+  committed dead mark; `errors` has no topic label, so delivery failures do not
+  expose a topic. `code="dead_letter"` is allow-listed but has no producer: a
+  handler failure increments `outbox`/`delivery_failed`, and the terminal
+  dead-letter state increments only `recon_outbox_dead_letters_total` (the
+  unknown-topic path does not increment `recon_errors_total` at all).
+- **Model label validator.** `model` keeps the label with
+  `^[A-Za-z0-9._:/-]{1,64}$`; an exotic model ID collapses to `unknown`, losing
+  per-model resolution rather than creating a new series. `source` uses
+  `^[a-z0-9][a-z0-9_]{0,31}$` and `currency` uses `^[A-Z]{3}$`. The value
+  reported is the provider response's actual model, not only the configured
+  model; because `MaxSeries` is enforced only by `ValidateRegistry`, a
+  provider-controlled model can create new series for the process lifetime.
+  This is an accepted Q-101 boundary under A8 (keep the label with a
+  validator), not a runtime protection; M5-04 should monitor agent-family
+  cardinality and consider a bounded model policy.
+- **Approvals-pending plan.** `recon_queue_depth{queue="approvals_pending"}` is
+  `count(*) FROM proposals WHERE status='pending_approval'`. On today's small
+  `proposals` table the planner chooses a sequential scan; the existing partial
+  unique index `proposals_one_active_per_case` can serve the predicate if volume
+  makes it attractive. No migration or new index is added in M5-03.
+- **Cases error component.** The case-service error observer labels failures
+  with the owning process component (`api` or `worker`), because the frozen
+  `component` allow-list has no `cases` value. The case-age histogram itself is
+  labelled by case `status`. Lifecycle transitions executed inside another
+  service's transaction may not have a post-commit hook; this case-age gap is
+  not papered over with fake samples, and queue depth remains authoritative for
+  backlog.
+- **Transport 4xx versus service failures.** The API transport writer
+  (`writeError`) counts only 5xx: `component="api"` with `code="unavailable"`
+  for 503, `timeout` for 504, and `internal` otherwise; plain client 4xx
+  responses are not counted, avoiding noise. Application-service observers do
+  count their own bounded 4xx-class failures (`conflict`, `not_found`,
+  `invalid_request`, `forbidden`) because spec §12 requires those codes, so
+  `recon_errors_total` can move on a request that the HTTP layer answers with a
+  4xx. That is service-level instrumentation, not transport 4xx counting.
+  Adding new codes requires a documented change to the frozen code allow-list.
+- **Seeded series are public output, with three `unknown` exceptions.** Every
+  vector is instantiated at construction with at least one child so an idle
+  process still exposes every family; open-ended label vectors seed an
+  `unknown` child, and the three queue zeros and the integrity zero are part of
+  the scrape. Three families deliberately have no `unknown` child:
+  `recon_build_info` (`component` is limited to `api`/`worker`/`outbox`),
+  `recon_queue_depth` (closed queue set), and `recon_integrity_job_status`
+  (`job="integrity"` seeded at `0`, meaning not run). Seeded series make an
+  absent producer visible; seeded histograms have zero observations and are not
+  fake samples. Consumers must distinguish "seeded/absent" from a real
+  measurement.
+- **Scope boundary.** M5-03 adds no Prometheus server, scrape configuration,
+  Grafana datasource, dashboard JSON, alerting, `deploy/` assets, daily
+  integrity job, `integrity_runs` table/scheduler, report, retention, exemplar,
+  or tracing change. M5-04 and M5-06 remain unimplemented; only their future
+  contracts (frozen metric names and the integrity gauge) are registered.
+  `docs/spec.md` is not edited.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-101 | **RESOLVED (M5-03) for the implementation; residuals stay OPEN for M5-04/M5-06:** one custom per-process registry per binary (no default registry, no `promauto`), the API keeps its public `/metrics` on the existing server, and worker/outbox serve loopback-only listeners (`127.0.0.1:9091`/`9092`, env-configurable, no listener in `--once`, bind failure names the config key). `client_golang v1.25.0` is pinned; Go/process/promhttp families are exempt from the business guard. Labels are frozen, allow-listed, and normalized to `unknown`; forbidden ID/free-text label names are rejected and series bounds are asserted. Event-driven families are observed post-commit; queue depth and outbox lag are scrape-time DB aggregates under `gather_timeout` with keep-last-value, bounded logs, and `metrics/collect` on failure, and a total gather failure returns 500. Tie-out remains event-only with no long-lived producer, so its seeded series is not a live value; integrity is seeded `0` with no producer until M5-06; outbox topics fold to `unknown`; `model` keeps its validator; `approvals_pending` may seq-scan the small proposals table; case-service errors carry the owning process component; the API transport writer counts only 5xx while service observers count bounded 4xx-class codes (`conflict`/`not_found`/`invalid_request`/`forbidden`), and seeded vectors carry an `unknown` child except build info, queue depth, and integrity. No dashboards/Prometheus provisioning (M5-04), no integrity job (M5-06), and no `docs/spec.md` edit. | Spec §12/§13.1 / M5-03 / M5-04 consumers / operators | Keep the registry/endpoint/catalog contract frozen for M5-04; keep DB gauges keep-last and treat a frozen gauge as stale; do not infer a live tie-out or a passing integrity job from seeded values; add a real tie-out producer and the M5-06 integrity producer only in their own tasks; revisit public metrics exposure in M5-04; make any metric-name/label/bucket change through a spec/version note first. |
+
+### Final adversary addendum (A1-A9)
+
+Recorded after the parallel review wave. All nine items are non-blocking; each
+was checked against the delivered behavior and the documentation, and the doc
+fixes landed in `docs/metrics.md` plus the Q-101 bullets above. A7 (validator
+hardening) and A9 (stale comment) are source-only follow-ups and were not edited
+by the docs pass. No `docs/spec.md` change.
+
+- **A1 — `model` cardinality is provider-influenced; the series cap is
+  test-time only.** The agent families use the model ID returned by the
+  provider, so a new valid model ID adds a child until the process restarts.
+  `ValidateRegistry`/`MaxSeries` run in tests, not at runtime. Accepted boundary
+  for M5-03; M5-04 should monitor agent-family cardinality and decide whether a
+  bounded model policy is needed.
+- **A2 — seeded `unknown` children are not universal.** Open-ended vectors seed
+  an `unknown` child, but `recon_build_info` (`component` is `api`/`worker`/
+  `outbox`), `recon_queue_depth` (closed queue set), and
+  `recon_integrity_job_status` (`job="integrity"` seeded at `0` = not run) have
+  no `unknown` child. Documentation no longer claims every labelled vector does.
+- **A3 — `recon_errors_total` is not 5xx-only end to end.** The API transport
+  writer (`writeError`) counts only 5xx, but service observers count their own
+  bounded 4xx-class codes (`conflict`, `not_found`, `invalid_request`,
+  `forbidden`) as spec §12 requires. The earlier "4xx responses are not counted"
+  wording described the transport writer only and is corrected here, in the
+  bullets above, and in `docs/metrics.md`.
+- **A4 — the live Content-Type includes `escaping=underscores`.** The pinned
+  encoder appends the parameter, so the wire header is `text/plain;
+  version=0.0.4; charset=utf-8; escaping=underscores`. The version/charset
+  prefix remains the compatibility contract; `docs/metrics.md` and this
+  addendum record the full header.
+- **A5 — no `errors{code="dead_letter"}` producer exists.** `dead_letter` stays
+  in the frozen allow-list but nothing increments it.
+  `recon_outbox_dead_letters_total` is authoritative for dead letters, a handler
+  failure increments `outbox`/`delivery_failed`, and the terminal dead-letter
+  mark increments only the dead-letter counter. Dashboards must not query the
+  errors family for dead-letter counts.
+- **A6 — public `/metrics` does database work per scrape and has no in-flight
+  cap.** Each API scrape runs four unauthenticated DB aggregates (the queue and
+  outbox-lag queries) with no `MaxRequestsInFlight`. Concurrent scrapes multiply
+  database load, and business counts could leak if the port is exposed. M5-04
+  owns auth, rate limiting, and pool sizing; until then keep the port on the
+  trusted network.
+- **A7 — identifier heuristics have gaps.** Canonical UUIDs, uppercase ULIDs,
+  and ≥16-hex values are rejected, but lowercase ULIDs, prefixed UUIDs, and
+  15-hex values can pass the label validator. No production flow was found that
+  emits such a value; hardening is a source-only follow-up, not a docs change.
+- **A8 — some `MaxSeries` caps sit below legitimate allow-listed maxima.** The
+  auto-apply ratio family caps 32 currency values although 49 are legitimate (48
+  seeded ISO codes plus `unknown`), and the errors family caps 64 pairs although
+  140 non-`unknown` component/code pairs (165 including `unknown`) are
+  allow-listed. A registry populated with valid representative data can fail
+  `Validate()` even though every value is allow-listed. Test-time only; runtime
+  is unaffected because the guard is not called in production. Raise or
+  normalize the caps in a future catalog change.
+- **A9 — `client_model` is a direct dependency; the comment is stale.**
+  `internal/metrics/server.go` names `[]*dto.MetricFamily`, so
+  `github.com/prometheus/client_model v0.6.3` is a direct `go.mod` requirement.
+  The `guard.go` comment calling it indirect is a source-only cleanup; this
+  documentation records the direct requirement.
+
+Residual owners: A1 and A6 → M5-04 (agent cardinality monitoring; metrics auth,
+rate limiting, pool sizing); A7 and A8 → future catalog/validator hardening (no
+task yet; record before changing caps or validators); A9 → next source touch of
+`internal/metrics/guard.go`; A2-A5 → documentation-only and closed by this pass.

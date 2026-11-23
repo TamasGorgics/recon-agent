@@ -19,6 +19,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/limits"
 	"github.com/TamasGorgics/recon-agent/internal/policy"
 	"github.com/TamasGorgics/recon-agent/internal/policy/verify"
+	"github.com/TamasGorgics/recon-agent/internal/tieout"
 )
 
 // DefaultPolicyPath is the committed policy document. Callers running from a
@@ -56,6 +57,8 @@ type HarnessOptions struct {
 	Verifier approval.Verifier
 	// TTL overrides the policy document's proposal TTL when positive.
 	TTL time.Duration
+	// TieoutObserver optionally receives the tie-out gauge outcome.
+	TieoutObserver tieout.Observer
 }
 
 // NewHarness builds a case-scoped Pipeline with production service wiring. It
@@ -160,11 +163,12 @@ func NewHarness(ctx context.Context, opts HarnessOptions) (*Pipeline, error) {
 		return nil, err
 	}
 	return &Pipeline{
-		Approval: approvalService,
-		Executor: executorService,
-		Approver: simulated,
-		Tieout:   opts.App,
-		Loader:   readModel,
-		Clock:    opts.Clock,
+		Approval:       approvalService,
+		Executor:       executorService,
+		Approver:       simulated,
+		Tieout:         opts.App,
+		Loader:         readModel,
+		Clock:          opts.Clock,
+		TieoutObserver: opts.TieoutObserver,
 	}, nil
 }

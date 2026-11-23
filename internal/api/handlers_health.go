@@ -8,13 +8,8 @@ func (a *API) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("{\"status\":\"ok\"}\n"))
 }
 
-const metricsBody = `# HELP recon_build_info Build information for the reconciliation API.
-# TYPE recon_build_info gauge
-recon_build_info{component="api"} 1
-`
-
-func (a *API) handleMetrics(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(metricsBody))
+// handleMetrics serves the process registry. The handler is public and keeps
+// the frozen text/plain content type; total gather failure is a 500.
+func (a *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	a.metricsHandler.ServeHTTP(w, r)
 }

@@ -84,20 +84,24 @@ type Options struct {
 	Clock   clock.Clock
 	Sleeper Sleeper
 	Logger  *slog.Logger
+	// Observer optionally receives bounded worker failure codes. Nil is a
+	// no-op and keeps older callers behavior-identical.
+	Observer Observer
 }
 
 // Worker polls and processes cases until its context is canceled.
 type Worker struct {
-	id      string
-	config  config.WorkerConfig
-	budget  decimal.Decimal
-	cases   CaseService
-	runner  Runner
-	switchR SwitchReader
-	spend   SpendReader
-	clock   clock.Clock
-	sleeper Sleeper
-	logger  *slog.Logger
+	id       string
+	config   config.WorkerConfig
+	budget   decimal.Decimal
+	cases    CaseService
+	runner   Runner
+	switchR  SwitchReader
+	spend    SpendReader
+	clock    clock.Clock
+	sleeper  Sleeper
+	logger   *slog.Logger
+	observer Observer
 
 	spendMu    sync.Mutex
 	spendDay   time.Time
@@ -130,16 +134,17 @@ func New(opts Options) (*Worker, error) {
 		logger = slog.Default()
 	}
 	return &Worker{
-		id:      opts.ID,
-		config:  opts.Config,
-		budget:  opts.Config.DailyBudget(),
-		cases:   opts.Cases,
-		runner:  opts.Runner,
-		switchR: opts.Switch,
-		spend:   opts.Spend,
-		clock:   opts.Clock,
-		sleeper: sleeper,
-		logger:  logger,
+		id:       opts.ID,
+		config:   opts.Config,
+		budget:   opts.Config.DailyBudget(),
+		cases:    opts.Cases,
+		runner:   opts.Runner,
+		switchR:  opts.Switch,
+		spend:    opts.Spend,
+		clock:    opts.Clock,
+		sleeper:  sleeper,
+		logger:   logger,
+		observer: opts.Observer,
 	}, nil
 }
 
@@ -165,6 +170,7 @@ func NewID() (string, error) {
 // interval; they do not crash the worker.
 func (w *Worker) Run(ctx context.Context) error {
 	if n, err := w.cases.ReclaimExpired(ctx); err != nil {
+		w.observeFailure(ErrorCodeInternal)
 		w.logger.Warn("worker: startup reclaim failed", "error", err)
 	} else if n > 0 {
 		w.logger.Info("worker: reclaimed expired leases", "count", n)
@@ -217,6 +223,7 @@ loop:
 				}
 				continue
 			}
+			w.observeFailure(ErrorCodeInternal)
 			w.logger.Warn("worker: lease failed", "error", err)
 			if !w.wait(ctx) {
 				break
@@ -246,10 +253,16 @@ loop:
 // poll loop's switch, budget, attempt-cap, and finalization policy.
 func (w *Worker) ProcessOnce(ctx context.Context) error {
 	if err := w.leaseAllowed(ctx); err != nil {
+		if !errors.Is(err, ErrAgentDisabled) && !errors.Is(err, ErrDailyBudgetReached) {
+			w.observeFailure(ErrorCodeInternal)
+		}
 		return err
 	}
 	leased, err := w.cases.Lease(ctx, w.id, w.config.LeaseTTL)
 	if err != nil {
+		if !errors.Is(err, cases.ErrNoCase) {
+			w.observeFailure(ErrorCodeInternal)
+		}
 		return err
 	}
 	if leased.Attempts >= w.config.MaxAttempts {
@@ -266,6 +279,7 @@ func (w *Worker) logLeasePaused(err error) {
 	case errors.Is(err, ErrAgentDisabled), errors.Is(err, ErrDailyBudgetReached):
 		w.logger.Debug("worker: leasing paused", "reason", err.Error())
 	default:
+		w.observeFailure(ErrorCodeInternal)
 		w.logger.Warn("worker: lease precheck failed", "error", err)
 	}
 }

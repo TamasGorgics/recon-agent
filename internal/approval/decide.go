@@ -67,7 +67,9 @@ func (s *Service) Decide(ctx context.Context, proposalID string, d Decision, app
 // a replay that writes nothing, calls no hook, enqueues no update, and returns
 // the stored decided_at. Any other decision on an already decided proposal is
 // ErrDecisionConflict.
-func (s *Service) DecideWithOptions(ctx context.Context, proposalID string, d Decision, approverID, source string, opts DecisionOptions) (DecisionResult, error) {
+func (s *Service) DecideWithOptions(ctx context.Context, proposalID string, d Decision, approverID, source string, opts DecisionOptions) (result DecisionResult, err error) {
+	var observation *decisionObservation
+	defer func() { s.observeDecision(observation, err) }()
 	if s == nil {
 		return DecisionResult{}, fmt.Errorf("%w: nil service", ErrInvalidRequest)
 	}
@@ -78,7 +80,7 @@ func (s *Service) DecideWithOptions(ctx context.Context, proposalID string, d De
 	if err := validateApproverID(approverID); err != nil {
 		return DecisionResult{}, err
 	}
-	source, err := validateDecisionInput(d, source)
+	source, err = validateDecisionInput(d, source)
 	if err != nil {
 		return DecisionResult{}, err
 	}
@@ -105,13 +107,13 @@ func (s *Service) DecideWithOptions(ctx context.Context, proposalID string, d De
 	}
 
 	var (
-		result    DecisionResult
 		expiredAt *time.Time
 	)
 	err = db.WithTx(ctx, s.pool, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
-		// WithTx may retry; never carry an expiry result or result snapshot
-		// from a failed attempt into a committed one.
+		// WithTx may retry; never carry an expiry result, observation, or
+		// result snapshot from a failed attempt into a committed one.
 		expiredAt = nil
+		observation = nil
 		result = DecisionResult{}
 		proposal, err := lockDecidableProposal(ctx, tx, proposalID)
 		if err != nil {
@@ -272,6 +274,13 @@ func (s *Service) DecideWithOptions(ctx context.Context, proposalID string, d De
 				return err
 			}
 
+			// This attempt committed a fresh decision; the deferred observer
+			// records latency only when the transaction also commits.
+			observation = &decisionObservation{
+				tier:      proposal.Tier,
+				createdAt: proposal.CreatedAt,
+				decidedAt: decidedAt,
+			}
 			result = DecisionResult{
 				ProposalID: proposalID,
 				Status:     string(target),
@@ -410,25 +419,34 @@ func validateDecisionReason(reason string) (string, error) {
 // row returns the corresponding typed error before any proposal write.
 func (s *Service) DecideByAPIKey(ctx context.Context, proposalID string, d Decision, apiKeyID, source string) (DecisionResult, error) {
 	if s == nil {
-		return DecisionResult{}, fmt.Errorf("%w: nil service", ErrInvalidRequest)
+		return s.rejectDecision(fmt.Errorf("%w: nil service", ErrInvalidRequest))
 	}
 	if !canonicalUUIDPattern.MatchString(proposalID) {
-		return DecisionResult{}, fmt.Errorf("%w: proposal id %q is not a canonical lowercase UUID",
-			ErrInvalidRequest, proposalID)
+		return s.rejectDecision(fmt.Errorf("%w: proposal id %q is not a canonical lowercase UUID",
+			ErrInvalidRequest, proposalID))
 	}
 	apiKeyID = strings.TrimSpace(apiKeyID)
 	if apiKeyID == "" {
-		return DecisionResult{}, fmt.Errorf("%w: api key id is required", ErrInvalidRequest)
+		return s.rejectDecision(fmt.Errorf("%w: api key id is required", ErrInvalidRequest))
 	}
 	if _, err := validateDecisionInput(d, source); err != nil {
-		return DecisionResult{}, err
+		return s.rejectDecision(err)
 	}
 
 	approver, err := s.loadApproverByAPIKey(ctx, apiKeyID)
 	if err != nil {
-		return DecisionResult{}, err
+		return s.rejectDecision(err)
 	}
 	return s.Decide(ctx, proposalID, d, approver.ID, source)
+}
+
+// rejectDecision records one bounded failure and returns the empty result. It
+// is the single observation point for failures that happen before
+// DecideByAPIKey delegates to the shared decision path; the delegated path
+// observes its own errors exactly once.
+func (s *Service) rejectDecision(err error) (DecisionResult, error) {
+	s.observeDecision(nil, err)
+	return DecisionResult{}, err
 }
 
 // validateApproverID rejects agent/system actor strings before any database
@@ -474,6 +492,8 @@ type lockedDecidableProposal struct {
 	CaseID     string
 	AgentRunID string
 	ExpiresAt  *time.Time
+	Tier       string
+	CreatedAt  time.Time
 }
 
 func lockDecidableProposal(ctx context.Context, tx pgx.Tx, proposalID string) (lockedDecidableProposal, error) {
@@ -483,11 +503,13 @@ func lockDecidableProposal(ctx context.Context, tx pgx.Tx, proposalID string) (l
 		expiresAt pgtype.Timestamptz
 	)
 	err := tx.QueryRow(ctx,
-		`SELECT status, version, case_id::text, agent_run_id::text, expires_at
+		`SELECT status, version, case_id::text, agent_run_id::text, expires_at,
+		        COALESCE(risk_tier, ''), created_at
 		   FROM proposals
 		  WHERE id = $1::uuid
 		 FOR UPDATE`, proposalID).
-		Scan(&status, &proposal.Version, &proposal.CaseID, &proposal.AgentRunID, &expiresAt)
+		Scan(&status, &proposal.Version, &proposal.CaseID, &proposal.AgentRunID,
+			&expiresAt, &proposal.Tier, &proposal.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedDecidableProposal{}, fmt.Errorf("%w: %s", ErrProposalNotFound, proposalID)
 	}

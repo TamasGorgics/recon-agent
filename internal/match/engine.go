@@ -43,6 +43,28 @@ var (
 // system:matcher). A nil hook disables late-match reconciliation.
 type LateMatchHook func(ctx context.Context, tx pgx.Tx, matchID, actor string) error
 
+// Observer receives the post-commit outcome of a matcher run. MatchRun is
+// called exactly once after the run transaction commits, with the scope source
+// and the persisted RunStats. MatchFailed is called with a bounded code when a
+// run returns an error; a failed or rolled-back run never calls MatchRun.
+//
+// Implementations must not treat the source or stats as identifiers: the
+// observer contract is the metrics catalog's source/rule/side allow-lists.
+// A nil Observer disables observation.
+type Observer interface {
+	MatchRun(source string, stats RunStats)
+	MatchFailed(code string)
+}
+
+// Bounded matcher failure codes. They match the frozen recon_errors_total
+// code allow-list; the metrics adapter folds any other value to unknown.
+const (
+	ErrorCodeInvalidRequest = "invalid_request"
+	ErrorCodeNotFound       = "not_found"
+	ErrorCodeTimeout        = "timeout"
+	ErrorCodeInternal       = "internal"
+)
+
 // Options configures an Engine. Passes is optional; nil uses DefaultPasses so
 // M1-13 can append passes without changing the engine.
 type Options struct {
@@ -60,6 +82,9 @@ type Options struct {
 	// transaction. Production wires the case-lifecycle service; nil is a no-op
 	// for older callers and tests.
 	LateMatch LateMatchHook
+	// Observer optionally receives one post-commit RunStats observation and a
+	// bounded failure code. Nil disables observation for older callers.
+	Observer Observer
 }
 
 // RunRequest is one scope reconciliation over an inclusive value-date window.
@@ -102,6 +127,7 @@ type Engine struct {
 	configHash string
 	passes     []Pass
 	lateMatch  LateMatchHook
+	observer   Observer
 }
 
 // New validates options and builds an engine.
@@ -131,6 +157,7 @@ func New(opts Options) (*Engine, error) {
 		configHash: ConfigHash(cfg),
 		passes:     append([]Pass(nil), passes...),
 		lateMatch:  opts.LateMatch,
+		observer:   opts.Observer,
 	}, nil
 }
 
@@ -141,14 +168,21 @@ func New(opts Options) (*Engine, error) {
 // the whole run back. A failed run rolls back completely.
 func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if req.ScopeID == "" {
-		return RunResult{}, fmt.Errorf("%w: ScopeID is required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: ScopeID is required", ErrInvalidRequest)
+		e.observeFailure(err)
+		return RunResult{}, err
 	}
 	if !req.Window.Valid() {
-		return RunResult{}, fmt.Errorf("%w: From and To are required and To must not precede From", ErrInvalidWindow)
+		err := fmt.Errorf("%w: From and To are required and To must not precede From", ErrInvalidWindow)
+		e.observeFailure(err)
+		return RunResult{}, err
 	}
 
 	now := e.clock.Now().UTC().Truncate(time.Microsecond)
-	var result RunResult
+	var (
+		result RunResult
+		source string
+	)
 	err := db.WithTx(ctx, e.db, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
 		// Serialize runs per scope without blocking other scopes. This makes
 		// concurrent incremental runs safe; the partial unique indexes remain
@@ -162,6 +196,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if err != nil {
 			return err
 		}
+		source = scope.Source
 		runID, err := insertRun(ctx, tx, scope.ID, now, e.configHash)
 		if err != nil {
 			return err
@@ -236,9 +271,37 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return nil
 	})
 	if err != nil {
+		e.observeFailure(err)
 		return RunResult{}, err
 	}
+	if e.observer != nil {
+		e.observer.MatchRun(source, result.Stats)
+	}
 	return result, nil
+}
+
+// observeFailure reports one bounded failure code. The raw error text is never
+// forwarded to an observer.
+func (e *Engine) observeFailure(err error) {
+	if e.observer == nil || err == nil {
+		return
+	}
+	e.observer.MatchFailed(matchErrorCode(err))
+}
+
+// matchErrorCode maps matcher errors to the frozen code allow-list. Anything
+// unrecognized is internal, never the error text.
+func matchErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrInvalidRequest), errors.Is(err, ErrInvalidWindow):
+		return ErrorCodeInvalidRequest
+	case errors.Is(err, ErrScopeNotFound):
+		return ErrorCodeNotFound
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return ErrorCodeTimeout
+	default:
+		return ErrorCodeInternal
+	}
 }
 
 // ConfigHash returns the stable SHA-256 hex digest of the matcher config. It

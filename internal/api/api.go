@@ -16,6 +16,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/ingest"
 	"github.com/TamasGorgics/recon-agent/internal/match"
+	"github.com/TamasGorgics/recon-agent/internal/metrics"
 )
 
 // IngestService is the ingest pipeline as seen by the HTTP handler. It is
@@ -82,6 +83,11 @@ type Options struct {
 	Switches   SwitchService
 	Decisions  DecisionService
 
+	// Metrics is the process registry shared with the instrumentation wired in
+	// later waves. Nil constructs a fresh isolated registry so handler tests
+	// always see deterministic seeded families and never share counters.
+	Metrics *metrics.Metrics
+
 	// SignatureAuth wraps a signature-authenticated route. It must verify the
 	// raw body before the handler parses it. Required when the route table has
 	// an AuthSignature route.
@@ -109,6 +115,9 @@ type API struct {
 
 	signatureAuth     func(http.Handler) http.Handler
 	slackInteractions http.Handler
+
+	metrics        *metrics.Metrics
+	metricsHandler http.Handler
 
 	handler http.Handler
 }
@@ -170,6 +179,15 @@ func New(opts Options) (*API, error) {
 		clk = clock.Real{}
 	}
 
+	processMetrics := opts.Metrics
+	if processMetrics == nil {
+		var metricsErr error
+		processMetrics, metricsErr = metrics.New(metrics.Options{Component: "api"})
+		if metricsErr != nil {
+			return nil, fmt.Errorf("api: build metrics registry: %w", metricsErr)
+		}
+	}
+
 	a := &API{
 		cfg:       cfg,
 		keys:      keys,
@@ -186,6 +204,9 @@ func New(opts Options) (*API, error) {
 
 		signatureAuth:     opts.SignatureAuth,
 		slackInteractions: opts.SlackInteractions,
+
+		metrics:        processMetrics,
+		metricsHandler: processMetrics.Handler(logger),
 	}
 	if err := a.validateRouteAuth(); err != nil {
 		return nil, err

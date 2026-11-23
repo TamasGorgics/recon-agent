@@ -84,6 +84,9 @@ type Options struct {
 	// Telemetry is the optional tracing provider. A nil provider yields a
 	// no-op tracer and changes no service behavior.
 	Telemetry *telemetry.Provider
+	// Observer optionally receives post-commit decision latency and bounded
+	// failure codes. Nil disables observation and leaves behavior unchanged.
+	Observer Observer
 }
 
 // Service routes proposed proposals through verification, policy, and limits,
@@ -103,6 +106,7 @@ type Service struct {
 	onClosed    ProposalClosedHook
 	onInfo      InfoRequestedHook
 	tracer      trace.Tracer
+	observer    Observer
 }
 
 // NewService validates its dependencies and returns a read-mostly approval
@@ -164,6 +168,7 @@ func NewService(opts Options) (*Service, error) {
 		onClosed:    opts.OnProposalClosed,
 		onInfo:      opts.InfoRequestedHook,
 		tracer:      opts.Telemetry.Tracer("recon-agent/approval"),
+		observer:    opts.Observer,
 	}, nil
 }
 

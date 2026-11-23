@@ -26,6 +26,7 @@ type Service struct {
 	actor       audit.Actor
 	maxAttempts int
 	caseTouched CaseTouchedHook
+	observer    Observer
 }
 
 // ServiceOption configures a case service at construction.
@@ -180,6 +181,7 @@ func (s *Service) Get(ctx context.Context, caseID string) (Case, error) {
 func (s *Service) CreateCase(ctx context.Context, breakIDs []string) (Case, error) {
 	ids := uniqueNonEmpty(breakIDs)
 	if len(ids) == 0 {
+		s.observeFailure(ErrNoBreaks)
 		return Case{}, ErrNoBreaks
 	}
 	var result Case
@@ -191,7 +193,12 @@ func (s *Service) CreateCase(ctx context.Context, breakIDs []string) (Case, erro
 		result = c
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	s.observeCase(result)
+	return result, nil
 }
 
 // createCaseTx validates and inserts one case plus its case_breaks membership.
@@ -310,13 +317,19 @@ func (s *Service) createCaseTx(ctx context.Context, tx pgx.Tx, breakIDs []string
 // callers and maps the authority's Snapshot back to Case.
 func (s *Service) Transition(ctx context.Context, req TransitionRequest) (Case, error) {
 	if req.CaseID == "" {
-		return Case{}, fmt.Errorf("%w: case id is required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: case id is required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	if req.ExpectedVersion < 0 {
-		return Case{}, fmt.Errorf("%w: expected version must be non-negative", ErrInvalidRequest)
+		err := fmt.Errorf("%w: expected version must be non-negative", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	if !req.Status.Valid() {
-		return Case{}, fmt.Errorf("%w: %q", ErrInvalidStatus, req.Status)
+		err := fmt.Errorf("%w: %q", ErrInvalidStatus, req.Status)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	reason := ""
 	if req.Status == StatusEscalated {
@@ -344,7 +357,12 @@ func (s *Service) Transition(ctx context.Context, req TransitionRequest) (Case, 
 		result = c
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	s.observeCase(result)
+	return result, nil
 }
 
 // caseStateError adapts authority sentinels to the case service's existing

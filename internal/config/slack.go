@@ -95,6 +95,9 @@ func (c Config) ValidateOutboxRuntime() error {
 	if strings.TrimSpace(c.Slack.CaseFileBaseURL) == "" {
 		return errors.New("config: slack.case_file_base_url is required for the outbox worker (set SLACK_CASE_FILE_BASE_URL or slack.case_file_base_url in CONFIG_FILE)")
 	}
+	if err := c.Metrics.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 

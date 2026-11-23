@@ -75,6 +75,9 @@ func runTieoutTo(ctx context.Context, args []string, out io.Writer) error {
 	}
 	defer pool.Close()
 
+	// A one-shot CLI has no long-lived /metrics process to scrape, so it
+	// deliberately passes no tie-out observer (Q-101). The eval harness and a
+	// future scrape-time collector can pass one without changing this path.
 	result, err := tieout.Compute(ctx, pool, *scope, asOf)
 	if err != nil {
 		return err

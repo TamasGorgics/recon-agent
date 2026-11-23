@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/TamasGorgics/recon-agent/internal/approval"
+	"github.com/TamasGorgics/recon-agent/internal/metrics"
 )
 
 type openAPIOperation struct {
@@ -42,10 +43,11 @@ var httpMethods = map[string]struct{}{
 // openAPIStatusSets is the exact set of statuses each operation can return.
 // Authentication contributes 401/403 to protected operations, body decoding
 // contributes 400/413/415 where a body is read, and service failures contribute
-// 500. Public health handlers have no failure path and never return 500.
+// 500. Public health handlers never return 500; the public metrics handler
+// returns 500 only on a total gather failure.
 var openAPIStatusSets = map[string][]string{
 	"GET " + RouteHealthz:            {"200"},
-	"GET " + RouteMetrics:            {"200"},
+	"GET " + RouteMetrics:            {"200", "500"},
 	"POST " + RouteIngest:            {"200", "400", "401", "403", "413", "415", "500"},
 	"POST " + RouteReconcile:         {"200", "400", "401", "403", "404", "413", "415", "500"},
 	"GET " + RouteCases:              {"200", "400", "401", "403", "500"},
@@ -258,6 +260,13 @@ func TestOpenAPIStatusSetsAreReachable(t *testing.T) {
 		response := h.expectStatus(http.MethodGet, path, "", "", "", http.StatusOK)
 		_ = response.Body.Close()
 	}
+
+	// The metrics 500 is a total-gather-failure path. Drive it through the
+	// real public router with a failing gatherer rather than only listing it.
+	failure := newHarness(t, nil)
+	failure.api.metricsHandler = metrics.Handler(failingGatherer{}, failure.api.logger)
+	response = failure.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusInternalServerError)
+	_ = response.Body.Close()
 }
 
 func methodLower(method string) string {

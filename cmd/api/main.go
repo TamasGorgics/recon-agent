@@ -29,6 +29,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/ingest"
 	"github.com/TamasGorgics/recon-agent/internal/limits"
 	"github.com/TamasGorgics/recon-agent/internal/match"
+	"github.com/TamasGorgics/recon-agent/internal/metrics"
 	"github.com/TamasGorgics/recon-agent/internal/policy"
 	"github.com/TamasGorgics/recon-agent/internal/policy/verify"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
@@ -71,6 +72,23 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telem
 	defer app.Close()
 
 	clk := clock.Real{}
+	// One process registry is created before the instrumented services so the
+	// matcher, case service, and /metrics endpoint share the same counters.
+	processMetrics, err := metrics.New(metrics.Options{
+		Component:        "api",
+		GoCollector:      true,
+		ProcessCollector: true,
+		Queryer:          app.Pool,
+		GatherTimeout:    cfg.Metrics.GatherTimeout,
+		Logger:           logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build metrics registry: %w", err)
+	}
+	matchObserver := metrics.NewMatchObserver(processMetrics)
+	caseObserver := metrics.NewCasesObserver(processMetrics, "api")
+	limitsObserver := metrics.NewLimitsObserver(processMetrics)
+	approvalObserver := metrics.NewApprovalObserver(processMetrics)
 	ingestActor, err := audit.SystemActor("ingest")
 	if err != nil {
 		return err
@@ -107,6 +125,7 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telem
 		Actor:     matchActor,
 		Config:    cfg.Match,
 		LateMatch: lifecycleService.ReconcileLateMatchHook,
+		Observer:  matchObserver,
 	})
 	if err != nil {
 		return fmt.Errorf("build matcher: %w", err)
@@ -116,7 +135,8 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telem
 		return err
 	}
 	caseService, err := cases.NewService(app.Pool, clk, caseActor,
-		cases.WithCaseTouchedHook(lifecycleService.OnIngestTouchedCase))
+		cases.WithCaseTouchedHook(lifecycleService.OnIngestTouchedCase),
+		cases.WithObserver(caseObserver))
 	if err != nil {
 		return fmt.Errorf("build case service: %w", err)
 	}
@@ -136,9 +156,10 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telem
 		return fmt.Errorf("build verifier: %w", err)
 	}
 	limitService, err := limits.NewService(limits.Options{
-		Pool:   app.Pool,
-		Clock:  clk,
-		Config: cfg.AutoApplyLimits,
+		Pool:     app.Pool,
+		Clock:    clk,
+		Config:   cfg.AutoApplyLimits,
+		Observer: limitsObserver,
 	})
 	if err != nil {
 		return fmt.Errorf("build limits service: %w", err)
@@ -157,6 +178,7 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telem
 		OnProposalClosed:  lifecycleService.OnProposalClosed,
 		InfoRequestedHook: lifecycleService.RequestInfo,
 		Telemetry:         telemetryProvider,
+		Observer:          approvalObserver,
 	})
 	if err != nil {
 		return fmt.Errorf("build approval service: %w", err)
@@ -213,6 +235,7 @@ func serveAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, telem
 		Proposals:  store,
 		Switches:   api.NewSwitchWriter(app.Pool, clk),
 		Decisions:  approvalService,
+		Metrics:    processMetrics,
 
 		SignatureAuth:     signatureVerifier.Middleware,
 		SlackInteractions: interactions,

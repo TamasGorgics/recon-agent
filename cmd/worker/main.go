@@ -19,6 +19,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
+	"github.com/TamasGorgics/recon-agent/internal/metrics"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 	"github.com/TamasGorgics/recon-agent/internal/worker"
 )
@@ -94,6 +95,23 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 	}
 	defer agentRO.Close()
 
+	// One process registry is created before the agent runner and case service
+	// so their post-commit observers and the /metrics endpoint share counters.
+	processMetrics, err := metrics.New(metrics.Options{
+		Component:        "worker",
+		GoCollector:      true,
+		ProcessCollector: true,
+		Queryer:          app.Pool,
+		GatherTimeout:    cfg.Metrics.GatherTimeout,
+		Logger:           logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build metrics registry: %w", err)
+	}
+	runObserver := metrics.NewAgentObserver(processMetrics)
+	caseObserver := metrics.NewCasesObserver(processMetrics, "worker")
+	workerObserver := metrics.NewWorkerObserver(processMetrics)
+
 	timeSource := clock.Real{}
 	client, err := llm.NewClient(cfg.LLM, llm.Options{Clock: timeSource, Logger: logger})
 	if err != nil {
@@ -119,8 +137,10 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 			}
 			return nil
 		},
-		Logger:    logger,
-		Telemetry: telemetryProvider,
+		Logger:       logger,
+		Telemetry:    telemetryProvider,
+		RunObserver:  runObserver,
+		CaseObserver: caseObserver,
 	})
 	if err != nil {
 		return fmt.Errorf("build agent runner: %w", err)
@@ -131,7 +151,8 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 		return err
 	}
 	caseService, err := cases.NewService(app.Pool, timeSource, systemActor,
-		cases.WithMaxAttempts(cfg.Worker.MaxAttempts))
+		cases.WithMaxAttempts(cfg.Worker.MaxAttempts),
+		cases.WithObserver(caseObserver))
 	if err != nil {
 		return fmt.Errorf("build case service: %w", err)
 	}
@@ -141,15 +162,16 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 		return err
 	}
 	pollWorker, err := worker.New(worker.Options{
-		ID:      workerID,
-		Config:  cfg.Worker,
-		Cases:   caseService,
-		Runner:  runner,
-		Switch:  switchReader,
-		Spend:   worker.DBSpend{Queryer: app.Pool},
-		Clock:   timeSource,
-		Sleeper: worker.TimerSleeper{},
-		Logger:  logger,
+		ID:       workerID,
+		Config:   cfg.Worker,
+		Cases:    caseService,
+		Runner:   runner,
+		Switch:   switchReader,
+		Spend:    worker.DBSpend{Queryer: app.Pool},
+		Clock:    timeSource,
+		Sleeper:  worker.TimerSleeper{},
+		Logger:   logger,
+		Observer: workerObserver,
 	})
 	if err != nil {
 		return err
@@ -162,6 +184,18 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 		"daily_budget_usd", cfg.Worker.DailyBudgetUSD.String(),
 		"max_attempts", cfg.Worker.MaxAttempts,
 		"once", once)
+
+	metricsServer, err := startWorkerMetrics(ctx, cfg, logger, processMetrics, once)
+	if err != nil {
+		return err
+	}
+	if metricsServer != nil {
+		defer func() {
+			if closeErr := metricsServer.Close(); closeErr != nil {
+				logger.Error("worker metrics listener shutdown failed", "error", closeErr)
+			}
+		}()
+	}
 
 	if once {
 		err := pollWorker.ProcessOnce(ctx)
@@ -186,4 +220,24 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 	}
 	logger.Info("worker stopped", "worker_id", pollWorker.ID())
 	return nil
+}
+
+// startWorkerMetrics starts the worker's loopback /metrics listener for the
+// long-running process. --once is short-lived and must not bind the port, so it
+// returns nil without touching the configured address.
+func startWorkerMetrics(
+	ctx context.Context,
+	cfg config.Config,
+	logger *slog.Logger,
+	m *metrics.Metrics,
+	once bool,
+) (*metrics.Server, error) {
+	if once {
+		return nil, nil
+	}
+	return metrics.StartForProcess(ctx, m, cfg.Metrics.WorkerAddr, "metrics.worker_addr", logger,
+		metrics.ServerOptions{
+			ReadHeaderTimeout: cfg.Metrics.ReadHeaderTimeout,
+			ShutdownTimeout:   cfg.Metrics.ShutdownTimeout,
+		})
 }

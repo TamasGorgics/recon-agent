@@ -114,14 +114,19 @@ func (s *Service) loadBreaksBySignatures(ctx context.Context, tx pgx.Tx, signatu
 // order permutations.
 func (s *Service) CreateBreaks(ctx context.Context, req CreateBreaksRequest) (CreateBreaksResult, error) {
 	if strings.TrimSpace(req.ScopeID) == "" {
-		return CreateBreaksResult{}, fmt.Errorf("%w: scope id is required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: scope id is required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return CreateBreaksResult{}, err
 	}
 	if strings.TrimSpace(req.MatchRunID) == "" {
-		return CreateBreaksResult{}, fmt.Errorf("%w: match run id is required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: match run id is required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return CreateBreaksResult{}, err
 	}
 
 	candidates, err := dedupeCandidates(req.Breaks, req.ScopeID)
 	if err != nil {
+		s.observeFailure(err)
 		return CreateBreaksResult{}, err
 	}
 	if len(candidates) == 0 {
@@ -182,8 +187,10 @@ func (s *Service) CreateBreaks(ctx context.Context, req CreateBreaksRequest) (Cr
 		return nil
 	})
 	if err != nil {
+		s.observeFailure(err)
 		return CreateBreaksResult{}, err
 	}
+	s.observeCases(result.Cases)
 	return result, nil
 }
 

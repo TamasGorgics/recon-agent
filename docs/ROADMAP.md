@@ -177,7 +177,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M4-14 | Simulated approver, end-to-end pipeline, and M4 gate | M | M3-04, M4-06, M4-10, M4-11, M4-13 |
 | ☐ | M5-01 | OpenTelemetry tracing | M | M2-09, M4-06 |
 | ☑ | M5-02 | Replay | M | M2-09 |
-| ☐ | M5-03 | Prometheus metrics | S | M4-02 |
+| ☑ | M5-03 | Prometheus metrics | S | M4-02 |
 | ☐ | M5-04 | Ops dashboard | M | M5-03, M1-15 |
 | ☐ | M5-05 | Agent quality dashboard | M | M5-03, M3-04 |
 | ☐ | M5-06 | Daily integrity job | M | M4-08, M1-15, M4-13 |
@@ -968,6 +968,31 @@ schema/hashing revision to fix. See `docs/replay.md`.
 
 **Done when**
 - A registry test asserts every listed metric exists with its labels; a cardinality guard test confirms no label carries an unbounded value such as a case ID.
+
+**Evidence note (2026-11-23; box ticked).** Both done-when legs are delivered:
+`TestNewExposesEveryFrozenFamily` and `TestCatalogFrozenContract` assert every
+frozen family after `New` with its exact type, help, label set, histogram
+buckets, and seeded series, and the cardinality/`ValidateRegistry` tests reject
+forbidden ID/free-text labels and
+prove UUIDs and unknown enum values normalize to `unknown` with bounded series.
+The API keeps its public `GET /metrics` (`text/plain; version=0.0.4`, 500 only
+on total gather failure), and worker/outbox serve loopback-only listeners
+(`127.0.0.1:9091`/`9092`, env-configurable, no listener in `--once`). Event
+producers run after commit for match/case/agent/approval/limits/outbox/tie-out;
+queue depth and outbox lag are scrape-time DB aggregates with keep-last-value,
+`gather_timeout`, and `metrics/collect` on failure. The pinned dependency is
+`client_golang v1.25.0` with a custom per-process registry; Go/process
+collectors are exempt from the business guard. Q-101 records the accepted
+residuals (event-only tie-out with no long-lived producer, integrity seeded with
+no producer until M5-06, case-age transaction gap, public API route, seeded
+`unknown`, approvals-pending plan, transport 4xx not counted, and `cases`
+component mapping) and `docs/metrics.md` is the operator catalog plus the M5-04
+boundary. No M5-04 dashboards/Prometheus server and no M5-06 integrity job are
+included; `docs/spec.md` is unchanged. Release-gate and live-scrape evidence is
+recorded in the run implementation notes (`mwt2b552-m5-03-prometheus-metrics`).
+A later same-day docs pass re-checked this note against the adversary findings
+A1-A9; the only wording corrections were the transport-4xx and seeded-`unknown`
+precision recorded in the Q-101 addendum, and the tick and evidence stand.
 
 ### M5-04 · Ops dashboard · M
 **Spec:** section 13.1; FIN-42 · **Needs:** M5-03, M1-15

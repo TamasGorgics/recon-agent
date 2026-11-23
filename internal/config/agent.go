@@ -167,5 +167,8 @@ func (c Config) ValidateWorkerRuntime() error {
 	if strings.TrimSpace(c.Database.AppURL) == "" {
 		return errors.New("config: database.app_url is required for the worker (set DATABASE_APP_URL or database.app_url in CONFIG_FILE)")
 	}
+	if err := c.Metrics.Validate(); err != nil {
+		return err
+	}
 	return nil
 }

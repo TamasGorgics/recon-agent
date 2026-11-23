@@ -20,25 +20,32 @@ import (
 // Expired leases are reclaimed inline before selection.
 func (s *Service) Lease(ctx context.Context, workerID string, ttl time.Duration) (Case, error) {
 	if strings.TrimSpace(workerID) == "" {
-		return Case{}, fmt.Errorf("%w: worker id is required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: worker id is required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	if ttl <= 0 {
-		return Case{}, fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+		err := fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 	expires := now.Add(ttl)
 
 	var result Case
+	var reclaimed []Case
 	err := db.WithTx(ctx, s.db, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.reclaimExpiredTx(ctx, tx, now); err != nil {
+		observed, err := s.reclaimExpiredTx(ctx, tx, now)
+		if err != nil {
 			return err
 		}
+		reclaimed = observed
 
 		var (
 			caseID  string
 			version int
 		)
-		err := tx.QueryRow(ctx,
+		err = tx.QueryRow(ctx,
 			`SELECT id::text, version
 			   FROM cases
 			  WHERE status = 'open' AND leased_by IS NULL
@@ -95,7 +102,13 @@ func (s *Service) Lease(ctx context.Context, workerID string, ttl time.Duration)
 		result = leased
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	s.observeCases(reclaimed)
+	s.observeCase(result)
+	return result, nil
 }
 
 // LeaseByID claims one named open case for workerID. It is the CLI/gate path:
@@ -104,10 +117,14 @@ func (s *Service) Lease(ctx context.Context, workerID string, ttl time.Duration)
 // entry are identical to Lease.
 func (s *Service) LeaseByID(ctx context.Context, caseID, workerID string, ttl time.Duration) (Case, error) {
 	if caseID == "" || strings.TrimSpace(workerID) == "" {
-		return Case{}, fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	if ttl <= 0 {
-		return Case{}, fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+		err := fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 	expires := now.Add(ttl)
@@ -163,17 +180,26 @@ func (s *Service) LeaseByID(ctx context.Context, caseID, workerID string, ttl ti
 		result = leased
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	s.observeCase(result)
+	return result, nil
 }
 
 // Renew extends the owner's live lease. A non-owner, an unleased case, or an
 // expired lease is rejected; only the owner and only before expiry.
 func (s *Service) Renew(ctx context.Context, caseID, workerID string, ttl time.Duration) (Case, error) {
 	if caseID == "" || strings.TrimSpace(workerID) == "" {
-		return Case{}, fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	if ttl <= 0 {
-		return Case{}, fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+		err := fmt.Errorf("%w: got %s", ErrInvalidTTL, ttl)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 	expires := now.Add(ttl)
@@ -223,14 +249,22 @@ func (s *Service) Renew(ctx context.Context, caseID, workerID string, ttl time.D
 		result = renewed
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	// Renew changes the lease expiry, not the case status, so it emits no
+	// status-age observation.
+	return result, nil
 }
 
 // Release returns the owner's lease to the open pool without incrementing
 // attempts. Releasing twice or by a non-owner is an error.
 func (s *Service) Release(ctx context.Context, caseID, workerID string) (Case, error) {
 	if caseID == "" || strings.TrimSpace(workerID) == "" {
-		return Case{}, fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 
@@ -268,7 +302,12 @@ func (s *Service) Release(ctx context.Context, caseID, workerID string) (Case, e
 		result = released
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	s.observeCase(result)
+	return result, nil
 }
 
 // RecordFailedAttempt atomically returns a failed run's lease to the queue and
@@ -283,10 +322,14 @@ func (s *Service) Release(ctx context.Context, caseID, workerID string) (Case, e
 // returns ErrNotLeaseOwner/ErrNotLeased/ErrStale and changes nothing.
 func (s *Service) RecordFailedAttempt(ctx context.Context, caseID, workerID string, maxAttempts int) (Case, error) {
 	if caseID == "" || strings.TrimSpace(workerID) == "" {
-		return Case{}, fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		err := fmt.Errorf("%w: case and worker ids are required", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	if maxAttempts < 1 {
-		return Case{}, fmt.Errorf("%w: max attempts must be positive", ErrInvalidRequest)
+		err := fmt.Errorf("%w: max attempts must be positive", ErrInvalidRequest)
+		s.observeFailure(err)
+		return Case{}, err
 	}
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 
@@ -349,7 +392,12 @@ func (s *Service) RecordFailedAttempt(ctx context.Context, caseID, workerID stri
 		result = updated
 		return nil
 	})
-	return result, err
+	if err != nil {
+		s.observeFailure(err)
+		return Case{}, err
+	}
+	s.observeCase(result)
+	return result, nil
 }
 
 // ReclaimExpired returns every expired lease to the open pool, increments
@@ -360,16 +408,21 @@ func (s *Service) RecordFailedAttempt(ctx context.Context, caseID, workerID stri
 // schedule.
 func (s *Service) ReclaimExpired(ctx context.Context) (int, error) {
 	now := s.clock.Now().UTC().Truncate(time.Microsecond)
-	var count int
+	var reclaimed []Case
 	err := db.WithTx(ctx, s.db, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
-		n, err := s.reclaimExpiredTx(ctx, tx, now)
+		observed, err := s.reclaimExpiredTx(ctx, tx, now)
 		if err != nil {
 			return err
 		}
-		count = n
+		reclaimed = observed
 		return nil
 	})
-	return count, err
+	if err != nil {
+		s.observeFailure(err)
+		return 0, err
+	}
+	s.observeCases(reclaimed)
+	return len(reclaimed), nil
 }
 
 type leaseState struct {
@@ -456,23 +509,28 @@ func incrementAttempts(ctx context.Context, tx pgx.Tx, caseID string, version in
 }
 
 type expiredLease struct {
-	id       string
-	status   Status
-	version  int
-	attempts int
-	leasedBy string
-	expires  time.Time
+	id        string
+	status    Status
+	version   int
+	attempts  int
+	leasedBy  string
+	expires   time.Time
+	createdAt time.Time
 }
 
-func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
+// reclaimExpiredTx returns one minimal Case per reclaimed lease so the caller
+// can observe the committed status after its transaction commits. The returned
+// cases carry only Status and CreatedAt; they are observation payloads, not a
+// full read model.
+func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time) ([]Case, error) {
 	rows, err := tx.Query(ctx,
-		`SELECT id::text, status, version, attempts, leased_by, lease_expires_at
+		`SELECT id::text, status, version, attempts, leased_by, lease_expires_at, created_at
 		   FROM cases
 		  WHERE leased_by IS NOT NULL AND lease_expires_at <= $1
 		  ORDER BY lease_expires_at, id
 		  FOR UPDATE SKIP LOCKED`, now)
 	if err != nil {
-		return 0, fmt.Errorf("cases: scan expired leases: %w", err)
+		return nil, fmt.Errorf("cases: scan expired leases: %w", err)
 	}
 
 	expired := make([]expiredLease, 0)
@@ -482,9 +540,9 @@ func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time
 			status  string
 			expires time.Time
 		)
-		if err := rows.Scan(&e.id, &status, &e.version, &e.attempts, &e.leasedBy, &expires); err != nil {
+		if err := rows.Scan(&e.id, &status, &e.version, &e.attempts, &e.leasedBy, &expires, &e.createdAt); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("cases: scan expired lease: %w", err)
+			return nil, fmt.Errorf("cases: scan expired lease: %w", err)
 		}
 		e.status = Status(status)
 		e.expires = expires
@@ -492,10 +550,11 @@ func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return 0, fmt.Errorf("cases: scan expired leases: %w", err)
+		return nil, fmt.Errorf("cases: scan expired leases: %w", err)
 	}
 	rows.Close()
 
+	observed := make([]Case, 0, len(expired))
 	for _, e := range expired {
 		attempts := e.attempts + 1
 		status := StatusOpen
@@ -508,13 +567,13 @@ func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time
 		snapshot, err := s.transitionStatus(ctx, tx, e.id, status, e.version, reason, now)
 		if err != nil {
 			if errors.Is(err, ErrStale) {
-				return 0, fmt.Errorf("%w: reclaim %s", ErrStale, e.id)
+				return nil, fmt.Errorf("%w: reclaim %s", ErrStale, e.id)
 			}
-			return 0, err
+			return nil, err
 		}
 		newAttempts, err := incrementAttempts(ctx, tx, e.id, snapshot.Version)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		after := map[string]any{
 			"status":   string(status),
@@ -539,8 +598,9 @@ func (s *Service) reclaimExpiredTx(ctx context.Context, tx pgx.Tx, now time.Time
 			After:     after,
 			Timestamp: now,
 		}); err != nil {
-			return 0, err
+			return nil, err
 		}
+		observed = append(observed, Case{Status: status, CreatedAt: e.createdAt})
 	}
-	return len(expired), nil
+	return observed, nil
 }
