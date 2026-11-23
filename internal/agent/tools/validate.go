@@ -19,6 +19,16 @@ var invalidJSONArgs = json.RawMessage(`{"_invalid_json":true}`)
 // Schema alone treats 12.0 and 1e3 as integers.
 var integerLiteral = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 
+// NormalizeToolArgs exposes the tool runner's argument normalization to
+// reconstruction code. It returns the exact JSON body the runner validates and
+// records: empty/nil arguments become an empty object, invalid JSON becomes the
+// recorded sentinel, and syntactically valid JSON is kept as-is. Replay uses it
+// so a model-requested call and its stored tool_calls.args are compared under
+// the same rules the recorder applied.
+func NormalizeToolArgs(args json.RawMessage) (json.RawMessage, bool) {
+	return normalizeArgs(args)
+}
+
 // normalizeArgs returns the JSON body to validate and record, and whether it
 // was syntactically valid. Empty/nil arguments become an empty object so a
 // tool with no required fields can run; tools with required fields still fail

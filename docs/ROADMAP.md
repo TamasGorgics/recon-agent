@@ -176,7 +176,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M4-13 | Audit verification, actor typing, traceability | M | M1-05, M4-06, M4-11 |
 | ☑ | M4-14 | Simulated approver, end-to-end pipeline, and M4 gate | M | M3-04, M4-06, M4-10, M4-11, M4-13 |
 | ☐ | M5-01 | OpenTelemetry tracing | M | M2-09, M4-06 |
-| ☐ | M5-02 | Replay | M | M2-09 |
+| ☑ | M5-02 | Replay | M | M2-09 |
 | ☐ | M5-03 | Prometheus metrics | S | M4-02 |
 | ☐ | M5-04 | Ops dashboard | M | M5-03, M1-15 |
 | ☐ | M5-05 | Agent quality dashboard | M | M5-03, M3-04 |
@@ -939,6 +939,26 @@ hardening, evidence-process notes).
 
 **Done when**
 - Exact replay reproduces the identical proposal for 20 recorded runs; a rerun with a different prompt reports divergences correctly.
+
+**Evidence note (2026-11-22; box ticked).** Both done-when legs are delivered:
+`TestTwentyRunExactReplayGate` records 20 seeded runs through the production
+loop (three M2 scenarios split 7/7/6) and exact-replays **20/20 identical**, and
+a different-prompt rerun reports the expected digest divergences. Exact replay
+performs one `REPEATABLE READ READ ONLY` load, closes the pool, and then runs
+with no DB handle. The committed `internal/replay/testdata/recording_v1.json`
+fixture covers the engine/CLI path. Exact replay also canonicalizes and compares
+every model-requested tool-call argument set (seed, investigation, proposal)
+with stored `tool_calls.args` and mirrors the malformed-proposal repair flow.
+Q-100 records the digest field set, `state_hash` diagnostic, tool-args
+integrity, canonical tool-result hash migration and legacy-NULL diagnostic,
+cassette-default/`--live` gating, the divergence-list exit contract (a key-only
+diff exits 1 while `identical` stays true), the non-authentication trust
+boundary for hashes stored beside data, and the `llm_calls` code/config
+coupling. The known fail-closed limit from the post-implementation review — a
+non-canonical numeric literal in a stored response can normalize in JSONB and
+surface a false `request_hash_mismatch` — is documented in `docs/replay.md`
+Limits and Q-100; it does not change the 20/20 evidence and needs a future
+schema/hashing revision to fix. See `docs/replay.md`.
 
 ### M5-03 · Prometheus metrics · S
 **Spec:** section 12 · **Needs:** M4-02

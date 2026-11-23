@@ -35,6 +35,10 @@ Commands:
                    exit: 0 unmatched, 2 usage/validation, 1 conflict/error
   migrate up       apply all pending migrations
   migrate status   print the current schema version and pending migrations
+  replay           replay one recorded agent run without touching live data
+                   usage: recon replay --run <uuid> (--exact | --rerun)
+                          [--model <id>] [--prompt <v>] [--live] [--json]
+                   exit: 0 identical, 1 divergence, 2 usage/config/load error
   synth generate   write a deterministic synthetic dataset to a directory
   synth load       load a generated dataset into the database
   testdb clean     drop orphan recon_test_% databases and ephemeral login roles
@@ -81,6 +85,8 @@ func runTo(ctx context.Context, args []string, out io.Writer) error {
 		return runMatch(ctx, args[1:])
 	case "migrate":
 		return runMigrate(ctx, args[1:])
+	case "replay":
+		return runReplay(ctx, args[1:])
 	case "testdb":
 		return runTestDB(ctx, args[1:])
 	case "synth":

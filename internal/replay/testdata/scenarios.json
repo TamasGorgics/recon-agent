@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "placeholders": {
+    "case_id": "{{case_id}}"
+  },
+  "scenarios": {
+    "fee_variance": {
+      "steps": [
+        {
+          "tool": "lookup_external_record",
+          "arguments": {
+            "source": "psp_m2",
+            "record_id": "fee-1"
+          }
+        },
+        {
+          "tool": "propose_adjustment",
+          "arguments": {
+            "case_id": "{{case_id}}",
+            "rationale": "The in-force psp_m2 charge fee is a flat 20 minor units, but the ledger booked 30 of fee expense; correct the 10 USD minor over-accrual by crediting fees_expense and debiting suspense.",
+            "evidence": [
+              "case:{{case_id}}",
+              "ledger_txn:c0000000-0000-4000-8000-000000000001",
+              "ext:psp_m2:fee-1"
+            ],
+            "confidence": 0.85,
+            "pattern": "fee_variance",
+            "lines": [
+              {
+                "account_code": "suspense",
+                "direction": "debit",
+                "amount_minor": 10,
+                "currency": "USD"
+              },
+              {
+                "account_code": "fees_expense",
+                "direction": "credit",
+                "amount_minor": 10,
+                "currency": "USD"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "reference_typo": {
+      "steps": [
+        {
+          "tool": "lookup_external_record",
+          "arguments": {
+            "source": "psp_m2",
+            "record_id": "ref-100"
+          }
+        },
+        {
+          "tool": "propose_link",
+          "arguments": {
+            "case_id": "{{case_id}}",
+            "rationale": "The ledger entries carry external_ref ref-l00 while the external record reference is ref-100; the amounts and value date agree, so the discrepancy is a reference typo and the ledger txn should be linked to the external record.",
+            "evidence": [
+              "case:{{case_id}}",
+              "ledger_txn:c0000000-0000-4000-8000-000000000002",
+              "ext:psp_m2:ref-100"
+            ],
+            "confidence": 0.9,
+            "pattern": "reference_typo",
+            "ledger_txn_id": "c0000000-0000-4000-8000-000000000002",
+            "external_ref": "ext:psp_m2:ref-100"
+          }
+        }
+      ]
+    },
+    "duplicate_charge": {
+      "steps": [
+        {
+          "tool": "lookup_external_record",
+          "arguments": {
+            "source": "psp_m2",
+            "record_id": "dup-1"
+          }
+        },
+        {
+          "tool": "mark_duplicate",
+          "arguments": {
+            "case_id": "{{case_id}}",
+            "rationale": "dup-1 and dup-2 are the same 2500 USD minor-unit charge with identical dates and memo text; the ledger booked dup-1, so dup-2 is the duplicate charge.",
+            "evidence": [
+              "case:{{case_id}}",
+              "ext:psp_m2:dup-1",
+              "ext:psp_m2:dup-2",
+              "ledger_txn:c0000000-0000-4000-8000-000000000003"
+            ],
+            "confidence": 0.9,
+            "external_ref": "ext:psp_m2:dup-2",
+            "duplicate_of": "ext:psp_m2:dup-1"
+          }
+        }
+      ]
+    }
+  }
+}

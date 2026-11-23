@@ -11,7 +11,9 @@ For OpenTelemetry span/Phoenix documentation and the M5-01 trace-ID
 persistence path (`agent_runs`, `proposals`, and audit entries), see
 `docs/telemetry.md`. M4-13's readers surface the persisted IDs; M5-01 writes
 them from the active span context. Level-3 Phoenix UI visibility remains
-`PENDING (manual UI check)`.
+`PENDING (manual UI check)`. For replaying one recorded run with
+`recon replay` (read-only load, exact/rerun, and hash boundaries), see
+`docs/replay.md`.
 
 Neither CLI command writes to the database: both open one `REPEATABLE READ`,
 `READ ONLY` transaction and only roll it back. Both need only `database.app_url`
