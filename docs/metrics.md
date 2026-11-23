@@ -20,8 +20,13 @@ family requires a specification/version note first.
 | `cmd/outbox` | `GET /metrics` | `127.0.0.1:9092` (`metrics.outbox_addr`) | none | long-running mode only |
 
 - The API keeps the existing public `/metrics` route and serves Prometheus text
-  as `text/plain; version=0.0.4; charset=utf-8`, matching the previous stub
-  route. It does not open a second listener.
+  with the frozen prefix `text/plain; version=0.0.4; charset=utf-8`. The pinned
+  `client_golang`/expfmt encoder appends `; escaping=underscores`, so the live
+  header is
+  `Content-Type: text/plain; version=0.0.4; charset=utf-8; escaping=underscores`.
+  The frozen prefix is the contract; clients should parse the media type rather
+  than compare the whole header byte-for-byte. The API does not open a second
+  listener.
 - The worker and outbox listeners serve **only** `GET /metrics`; any other path
   returns 404. They start before the poll loop and shut down with the signal
   context (bounded graceful shutdown).
@@ -41,6 +46,13 @@ a developer laptop does not expose business counts. A non-loopback bind is
 allowed only by explicit configuration and logs a warning at startup; network
 policy is the control until M5-04 revisits exposure. Do not expose the API
 `/metrics` beyond a trusted network: it is public by contract.
+
+The public API scrape is also DB-backed: each gather runs the four read-only
+aggregates described under [Database-derived gauges](#database-derived-gauges),
+and the handler does not set `MaxRequestsInFlight`. Concurrent unauthenticated
+scrapes can therefore multiply database work (up to four aggregates each) until
+the per-scrape `gather_timeout` bounds them. Keep the route on a trusted network;
+M5-04 owns authentication/rate limiting and database-pool sizing for this path.
 
 ## Configuration
 
@@ -114,11 +126,14 @@ is valid and observed.
 Every family is instantiated at construction, so an idle process still exposes
 all of them:
 
-- `recon_build_info{component="<process>"} 1`;
-- every labelled vector has an `unknown` child (for example
+- `recon_build_info{component="<process>"} 1` — one child for the running
+  process; `component` is a closed enum and has no `unknown` child;
+- every open-ended labelled vector has an `unknown` child (for example
   `recon_match_runs_total{source="unknown"} 0`);
-- `recon_queue_depth` has exactly the three queue children at `0`;
-- `recon_integrity_job_status{job="integrity"} 0`.
+- `recon_queue_depth` has exactly the three queue children at `0` (closed enum;
+  no `unknown` child);
+- `recon_integrity_job_status{job="integrity"} 0` (seeded with the closed
+  `integrity` value, not `unknown`).
 
 Seeded `unknown` series are public output and deliberately make an absent
 producer visible. Seeded histograms have zero observations; they are not fake
@@ -127,9 +142,11 @@ tie-out and integrity).
 
 ## Labels, cardinality, and forbidden values
 
-A label value is always one of the allow-listed values below. Any other value
-is normalized to the literal `unknown`; an empty string, UUID, free text, or URL
-never creates a new series.
+A label value is always one of the allow-listed values below. For an
+open-ended label, any other value is normalized to the literal `unknown`; an
+empty string, UUID, free text, or URL never creates a new series. Closed enums
+(`queue` and the build-info `component`) never accept an arbitrary value or an
+`unknown` child.
 
 | Label | Allowed values / validator |
 |---|---|
@@ -157,19 +174,53 @@ message_id, external_ref, payload, error, reason, rationale, dsn, url,
 path, email
 ```
 
-The guard asserts every `recon_*` family's type, help, label order, buckets,
-values, and series cap. A per-entity label regression fails the metrics tests.
-The total business-series bound is **≤ 64 on an idle process** and **≤ 128
-after representative instrumentation**. `go_*`, `process_*`, and `promhttp_*`
-families are client_golang/promhttp-owned and exempt from the business
-allow-list; the process collector's exact families depend on the host OS.
+The guard (`ValidateRegistry`) asserts every `recon_*` family's type, help,
+label set, buckets, values, and per-family `MaxSeries`. The per-family caps and
+the total business-series budgets (**≤ 64 on an idle process** and **≤ 128 after
+representative instrumentation**) are **test-time regression assertions**, not
+runtime admission control: production binaries construct the catalog and serve
+it and do not call `Validate()` while running. A provider-influenced `model`
+value can therefore add a new child until the process restarts. `go_*`,
+`process_*`, and `promhttp_*` families are client_golang/promhttp-owned and
+exempt from the business allow-list; the process collector's exact families
+depend on the host OS.
 
 `recon_errors_total` is emitted only with allow-listed component/code pairs;
-raw error strings never become labels. Client 4xx API responses are not errors
-for this metric; only 5xx (`component="api"`, `code="internal"` with the
-existing 503/504 mapping) are counted. Case-service failures use the owning
-process component (`api` or `worker`), because there is no `cases` component
-value.
+raw error strings never become labels. The API transport writer (`writeError`)
+counts only 5xx: `api`/`unavailable` for 503, `api`/`timeout` for 504, and
+`api`/`internal` otherwise; client 4xx responses are deliberately not counted.
+Application-service observers also count their own bounded failures, for
+example approval failures map to `conflict`, `not_found`, `invalid_request`,
+`forbidden`, `timeout`, or `internal` even when the HTTP layer ultimately
+answers 4xx. Those service-level codes are required by the spec and are not
+transport 4xx counting. Case-service failures use the owning process component
+(`api` or `worker`), because there is no `cases` component value.
+
+`code="dead_letter"` remains in the frozen allow-list but has no producer.
+Dead letters are authoritative from `recon_outbox_dead_letters_total`; a handler
+failure increments `outbox`/`delivery_failed`, and an unknown-topic dead letter
+increments only the dead-letter counter.
+
+### Known limits of the guard
+
+- **`MaxSeries` is not a runtime bound.** It is enforced by `ValidateRegistry`
+  (tests) only, so `model` remains provider-influenced at runtime; the validator
+  blocks out-of-charset and ID-like values but does not cap the number of
+  distinct valid models. M5-04 should monitor agent-family cardinality before
+  making it a dashboard/alert dependency.
+- **Some caps are below legitimate allow-listed maxima.** The 48 seeded ISO
+  currencies plus `unknown` give 49 valid `currency` values against the
+  `recon_auto_apply_cap_usage_ratio` cap of 32. The errors family has 10
+  non-`unknown` components × 14 non-`unknown` codes = 140 allow-listed pairs
+  (165 including `unknown`) against its cap of 64. A registry populated with
+  every valid value can therefore fail `Validate()` even though each value is
+  allow-listed; runtime is unaffected because the guard is test-only. Raise or
+  normalize these caps in a future catalog change.
+- **Identifier heuristics are not exhaustive.** Canonical UUIDs, uppercase
+  ULIDs, and ≥16-hex values are rejected, but lowercase ULIDs, prefixed UUIDs
+  in `source`, and 15-hex values can satisfy the charset validators. No
+  production producer was found for those shapes; the normalizers remain
+  defense-in-depth, and tightening them is a future hardening item.
 
 ## Scraping
 
@@ -266,8 +317,11 @@ role. Those are M5-04 (and M5-05 for agent quality). The daily integrity job
 and its real values are M5-06; until then `recon_integrity_job_status` is a
 seeded `0` with no producer. The tie-out gauge is event-only and has no
 long-lived producer, so its seeded `unknown` series is not a live value; a real
-producer belongs to M5-06/M5-09 if still needed. M5-04 must keep the frozen
-names/types/labels/buckets and treat seeded or keep-last values as not healthy.
+producer belongs to M5-06/M5-09 if still needed. M5-03 also leaves the API
+`/metrics` public with four unauthenticated DB aggregates per scrape and no
+`MaxRequestsInFlight`; M5-04 owns authentication/rate limiting and DB-pool
+sizing for that path. M5-04 must keep the frozen names/types/labels/buckets and
+treat seeded or keep-last values as not healthy.
 
 See also: `docs/telemetry.md` for tracing (a separate signal) and Q-101 in
 `docs/open-questions.md` for the accepted residuals.

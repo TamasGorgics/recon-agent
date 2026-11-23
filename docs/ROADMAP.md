@@ -985,11 +985,14 @@ queue depth and outbox lag are scrape-time DB aggregates with keep-last-value,
 collectors are exempt from the business guard. Q-101 records the accepted
 residuals (event-only tie-out with no long-lived producer, integrity seeded with
 no producer until M5-06, case-age transaction gap, public API route, seeded
-`unknown`, approvals-pending plan, 4xx not counted, and `cases` component
-mapping) and `docs/metrics.md` is the operator catalog plus the M5-04 boundary.
-No M5-04 dashboards/Prometheus server and no M5-06 integrity job are included;
-`docs/spec.md` is unchanged. Release-gate and live-scrape evidence is recorded
-in the run implementation notes (`mwt2b552-m5-03-prometheus-metrics`).
+`unknown`, approvals-pending plan, transport 4xx not counted, and `cases`
+component mapping) and `docs/metrics.md` is the operator catalog plus the M5-04
+boundary. No M5-04 dashboards/Prometheus server and no M5-06 integrity job are
+included; `docs/spec.md` is unchanged. Release-gate and live-scrape evidence is
+recorded in the run implementation notes (`mwt2b552-m5-03-prometheus-metrics`).
+A later same-day docs pass re-checked this note against the adversary findings
+A1-A9; the only wording corrections were the transport-4xx and seeded-`unknown`
+precision recorded in the Q-101 addendum, and the tick and evidence stand.
 
 ### M5-04 · Ops dashboard · M
 **Spec:** section 13.1; FIN-42 · **Needs:** M5-03, M1-15
