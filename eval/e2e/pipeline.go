@@ -60,6 +60,10 @@ type Pipeline struct {
 	Tieout   tieout.Queryer
 	Loader   Loader
 	Clock    clock.Clock
+	// TieoutObserver optionally receives the tie-out gauge outcome. The eval
+	// harness has no long-lived /metrics process, so production leaves it nil;
+	// tests and embedding runners can pass one.
+	TieoutObserver tieout.Observer
 }
 
 type stage int
@@ -370,7 +374,7 @@ func (p *Pipeline) computeTieout(ctx context.Context, in Input, res *Result) err
 	if p.Tieout == nil {
 		return errors.New("tie-out queryer is required")
 	}
-	result, err := tieout.Compute(ctx, p.Tieout, in.ScopeID, in.AsOf)
+	result, err := tieout.Compute(ctx, p.Tieout, in.ScopeID, in.AsOf, p.TieoutObserver)
 	if err != nil {
 		return fmt.Errorf("tie-out: %w", err)
 	}

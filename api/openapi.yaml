@@ -35,12 +35,24 @@ paths:
     get:
       tags: [health]
       operationId: getMetrics
-      summary: Prometheus text stub
+      summary: Prometheus metrics
+      description: |
+        Live process and business metrics in the Prometheus text exposition
+        format. Public and unauthenticated, matching the existing route. Every
+        frozen family is exposed while idle (seeded series make an absent
+        producer visible). A partial collector failure returns 200 with the
+        reachable families; a total gather failure with no families returns 500.
       security: []
       x-required-role: none
       responses:
         "200":
-          description: Static build information in Prometheus text format.
+          description: Live metrics in Prometheus text format.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          description: Total gather failure; no metric families could be collected.
           content:
             text/plain:
               schema:

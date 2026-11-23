@@ -23,6 +23,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
+	"github.com/TamasGorgics/recon-agent/internal/metrics"
 	"github.com/TamasGorgics/recon-agent/internal/outbox"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
 )
@@ -133,6 +134,18 @@ func runWith(ctx context.Context, args []string, out io.Writer, deps dependencie
 		defer closePool()
 	}
 
+	processMetrics, err := metrics.New(metrics.Options{
+		Component:        "outbox",
+		GoCollector:      true,
+		ProcessCollector: true,
+		Queryer:          pool,
+		GatherTimeout:    cfg.Metrics.GatherTimeout,
+		Logger:           logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build metrics registry: %w", err)
+	}
+
 	runtime, err := buildWorker(buildOptions{
 		Config:       cfg,
 		Pool:         pool,
@@ -140,6 +153,7 @@ func runWith(ctx context.Context, args []string, out io.Writer, deps dependencie
 		SlackBaseURL: deps.slackBaseURL,
 		Clock:        deps.clock,
 		Logger:       logger,
+		Metrics:      processMetrics,
 	})
 	if err != nil {
 		return err
@@ -151,6 +165,18 @@ func runWith(ctx context.Context, args []string, out io.Writer, deps dependencie
 		"batch_size", runtime.options.BatchSize,
 		"lease", runtime.options.Lease.String(),
 		"handler_timeout", runtime.options.HandlerTimeout.String())
+
+	metricsServer, err := startOutboxMetrics(ctx, cfg, logger, processMetrics, *once)
+	if err != nil {
+		return err
+	}
+	if metricsServer != nil {
+		defer func() {
+			if closeErr := metricsServer.Close(); closeErr != nil {
+				logger.Error("outbox metrics listener shutdown failed", "error", closeErr)
+			}
+		}()
+	}
 
 	if *once {
 		processed, err := runtime.worker.Process(ctx)
@@ -178,6 +204,10 @@ type buildOptions struct {
 	SlackBaseURL string
 	Clock        clock.Clock
 	Logger       *slog.Logger
+	// Metrics is the process registry. Nil leaves the worker's no-op metrics
+	// recorder in place; the delivered/failed/dead-letter adapter is built
+	// here so the outbox package keeps no metrics import.
+	Metrics *metrics.Metrics
 }
 
 // workerRuntime is the constructed worker plus the fields tests and logging
@@ -253,6 +283,9 @@ func buildWorker(opts buildOptions) (*workerRuntime, error) {
 		HandlerTimeout: outbox.DefaultHandlerTimeout,
 		Logger:         logger,
 	}
+	if opts.Metrics != nil {
+		workerOptions.Metrics = metrics.NewOutboxMetrics(opts.Metrics)
+	}
 	worker, err := outbox.NewWorker(workerOptions)
 	if err != nil {
 		return nil, fmt.Errorf("build outbox worker: %w", err)
@@ -275,4 +308,24 @@ func (r *workerRuntime) topics() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// startOutboxMetrics starts the outbox's loopback /metrics listener for the
+// long-running process. --once is short-lived and must not bind the port, so it
+// returns nil without touching the configured address.
+func startOutboxMetrics(
+	ctx context.Context,
+	cfg config.Config,
+	logger *slog.Logger,
+	m *metrics.Metrics,
+	once bool,
+) (*metrics.Server, error) {
+	if once {
+		return nil, nil
+	}
+	return metrics.StartForProcess(ctx, m, cfg.Metrics.OutboxAddr, "metrics.outbox_addr", logger,
+		metrics.ServerOptions{
+			ReadHeaderTimeout: cfg.Metrics.ReadHeaderTimeout,
+			ShutdownTimeout:   cfg.Metrics.ShutdownTimeout,
+		})
 }

@@ -71,12 +71,16 @@ type Options struct {
 	Pool   *pgxpool.Pool
 	Clock  clock.Clock
 	Config config.AutoApplyLimitsConfig
+	// Observer optionally receives the post-check cap usage ratio and bounded
+	// failure codes. Nil disables observation.
+	Observer Observer
 }
 
 // Service evaluates T0 candidates against FIN-53 limits. It holds no mutable
 // state after construction and is safe for concurrent use.
 type Service struct {
-	pool   *pgxpool.Pool
-	clock  clock.Clock
-	config config.AutoApplyLimitsConfig
+	pool     *pgxpool.Pool
+	clock    clock.Clock
+	config   config.AutoApplyLimitsConfig
+	observer Observer
 }

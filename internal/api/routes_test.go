@@ -2,11 +2,42 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
+	dto "github.com/prometheus/client_model/go"
+
 	"github.com/TamasGorgics/recon-agent/internal/config"
+	"github.com/TamasGorgics/recon-agent/internal/metrics"
 )
+
+// frozenFamilies is the spec §4 contract that every process exposes while idle.
+var frozenFamilies = []string{
+	metrics.MetricBuildInfo,
+	metrics.MetricMatchRunsTotal,
+	metrics.MetricMatchesTotal,
+	metrics.MetricBreaksTotal,
+	metrics.MetricCaseAgeSeconds,
+	metrics.MetricQueueDepth,
+	metrics.MetricAgentRunsTotal,
+	metrics.MetricAgentCostUSDTotal,
+	metrics.MetricApprovalLatencySeconds,
+	metrics.MetricErrorsTotal,
+	metrics.MetricOutboxLagSeconds,
+	metrics.MetricOutboxDeadLettersTotal,
+	metrics.MetricAutoApplyCapUsageRatio,
+	metrics.MetricTieoutUnexplainedMinor,
+	metrics.MetricIntegrityJobStatus,
+}
+
+// failingGatherer simulates a total registry failure for the 500 path.
+type failingGatherer struct{}
+
+func (failingGatherer) Gather() ([]*dto.MetricFamily, error) {
+	return nil, errors.New("collector backend unavailable")
+}
 
 func TestRouteTable(t *testing.T) {
 	h := newHarness(t, nil)
@@ -172,10 +203,75 @@ func TestHealthzAndMetricsBodies(t *testing.T) {
 	}
 
 	response = h.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusOK)
-	if got := response.Header.Get("Content-Type"); got != "text/plain; version=0.0.4; charset=utf-8" {
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain; version=0.0.4; charset=utf-8") {
 		t.Fatalf("metrics content type = %q", got)
 	}
-	if body := bodyOf(t, response); body != metricsBody {
-		t.Fatalf("metrics body = %q, want the static stub", body)
+	body := bodyOf(t, response)
+	for _, name := range frozenFamilies {
+		if !strings.Contains(body, "# HELP "+name+" ") {
+			t.Fatalf("metrics body is missing HELP for %s:\n%s", name, body)
+		}
+		if !strings.Contains(body, "# TYPE "+name+" ") {
+			t.Fatalf("metrics body is missing TYPE for %s:\n%s", name, body)
+		}
+	}
+	if !strings.Contains(body, `recon_build_info{component="api"} 1`) {
+		t.Fatalf("metrics body is missing the api build info:\n%s", body)
+	}
+	for _, secret := range []string{"postgres://", "startup-secret", "xoxb-"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("metrics body leaked %q:\n%s", secret, body)
+		}
+	}
+}
+
+func TestMetricsTotalGatherFailureReturns500(t *testing.T) {
+	h := newHarness(t, nil)
+	h.api.metricsHandler = metrics.Handler(failingGatherer{}, h.api.logger)
+
+	response := h.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusInternalServerError)
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Fatalf("failure content type = %q, want text/plain", got)
+	}
+	body := bodyOf(t, response)
+	if !strings.Contains(body, "metrics: gather failed") {
+		t.Fatalf("failure body = %q, want the bounded gather error", body)
+	}
+	if strings.Contains(body, "collector backend unavailable") {
+		t.Fatalf("failure body leaked the collector error: %q", body)
+	}
+}
+
+func TestMetricsRegistriesAreIsolated(t *testing.T) {
+	first := newHarness(t, nil)
+	second := newHarness(t, nil)
+
+	firstBody := bodyOf(t, first.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusOK))
+	if strings.Contains(firstBody, `code="internal"} 1`) {
+		t.Fatalf("fresh registry already has a produced error:\n%s", firstBody)
+	}
+
+	first.api.metrics.ObserveError("api", "internal")
+	firstBody = bodyOf(t, first.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusOK))
+	if !strings.Contains(firstBody, `recon_errors_total{code="internal",component="api"} 1`) {
+		t.Fatalf("first registry is missing its observation:\n%s", firstBody)
+	}
+	secondBody := bodyOf(t, second.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusOK))
+	if strings.Contains(secondBody, `recon_errors_total{code="internal",component="api"} 1`) {
+		t.Fatalf("second API shared the first registry:\n%s", secondBody)
+	}
+}
+
+func TestMetricsOptionUsesProvidedRegistry(t *testing.T) {
+	processMetrics, err := metrics.New(metrics.Options{Component: "api"})
+	if err != nil {
+		t.Fatalf("metrics.New: %v", err)
+	}
+	processMetrics.ObserveError("api", "internal")
+	h := newHarness(t, func(opts *Options) { opts.Metrics = processMetrics })
+
+	body := bodyOf(t, h.expectStatus(http.MethodGet, RouteMetrics, "", "", "", http.StatusOK))
+	if !strings.Contains(body, `recon_errors_total{code="internal",component="api"} 1`) {
+		t.Fatalf("provided registry was not served:\n%s", body)
 	}
 }

@@ -43,6 +43,12 @@ type SetupDeps struct {
 	Logger          *slog.Logger
 	// Telemetry is optional. Nil keeps the production runner untraced.
 	Telemetry *telemetry.Provider
+	// RunObserver optionally receives the finalized run outcome/cost and
+	// bounded agent failure codes. Nil disables observation.
+	RunObserver RunObserver
+	// CaseObserver optionally receives the loop's committed case status
+	// changes. Nil disables observation.
+	CaseObserver cases.Observer
 }
 
 // NewProductionRunner registers the read and proposal tools, builds the app
@@ -89,13 +95,14 @@ func NewProductionRunner(deps SetupDeps) (*Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
-	caseService, err := cases.NewService(deps.App, deps.Clock, actor)
+	caseService, err := cases.NewService(deps.App, deps.Clock, actor,
+		cases.WithObserver(deps.CaseObserver))
 	if err != nil {
 		return nil, fmt.Errorf("agent: create case service: %w", err)
 	}
 
 	return NewRunner(Deps{
-		Store:      NewDBStore(deps.App),
+		Store:      NewDBStore(deps.App, WithObserver(deps.RunObserver)),
 		Cases:      caseService,
 		Agent:      deps.Agent,
 		Client:     deps.Client,

@@ -1,0 +1,273 @@
+# Prometheus metrics (M5-03)
+
+This page is the operator and developer reference for the M5-03 Prometheus
+exporter: the endpoints, the frozen metric catalog, the label/cardinality
+rules, scrape examples, and the database-gauge behavior. `docs/spec.md` §12 is
+canonical; this page does not replace it. The M5-03 boundaries and residuals
+are recorded as Q-101 in `docs/open-questions.md`.
+
+The metric names, types, help text, label names/values, and histogram buckets
+are a **public contract**. M5-04 (Prometheus/Grafana provisioning and
+dashboards) consumes them without a metric change. Renaming or re-labelling a
+family requires a specification/version note first.
+
+## Endpoints and exposure
+
+| Process | Endpoint | Default bind | Authentication | When |
+|---|---|---|---|---|
+| `cmd/api` | `GET /metrics` on the existing API server | `:8080` (`api.addr`) | public, same as the old stub route | always |
+| `cmd/worker` | `GET /metrics` | `127.0.0.1:9091` (`metrics.worker_addr`) | none | long-running mode only |
+| `cmd/outbox` | `GET /metrics` | `127.0.0.1:9092` (`metrics.outbox_addr`) | none | long-running mode only |
+
+- The API keeps the existing public `/metrics` route and serves Prometheus text
+  as `text/plain; version=0.0.4; charset=utf-8`, matching the previous stub
+  route. It does not open a second listener.
+- The worker and outbox listeners serve **only** `GET /metrics`; any other path
+  returns 404. They start before the poll loop and shut down with the signal
+  context (bounded graceful shutdown).
+- `--once` modes process one unit and exit. They do **not** open a metrics
+  listener, so they cannot race for the port.
+- A bind failure aborts startup with an error naming the config key (for
+  example `metrics.worker_addr`), never the DSN or another secret.
+- A partial collector failure returns `200` with the reachable families and is
+  logged. A **total** gather failure with zero families returns `500` with a
+  fixed body, so collector/error detail never reaches the response.
+- `recon_build_info{component="api|worker|outbox"}` identifies the process. One
+  process registry is shared by that process's API/services and its endpoint;
+  there is no global/default registry and no `promauto`.
+
+Both worker/outbox listeners are unauthenticated. Defaults stay on loopback so
+a developer laptop does not expose business counts. A non-loopback bind is
+allowed only by explicit configuration and logs a warning at startup; network
+policy is the control until M5-04 revisits exposure. Do not expose the API
+`/metrics` beyond a trusted network: it is public by contract.
+
+## Configuration
+
+```yaml
+metrics:
+  worker_addr: "127.0.0.1:9091"   # METRICS_WORKER_ADDR
+  outbox_addr: "127.0.0.1:9092"   # METRICS_OUTBOX_ADDR
+  read_header_timeout: 5s
+  shutdown_timeout: 5s
+  gather_timeout: 2s
+```
+
+| Setting | Env override | Default | Meaning |
+|---|---|---|---|
+| `metrics.worker_addr` | `METRICS_WORKER_ADDR` | `127.0.0.1:9091` | Worker listener bind address |
+| `metrics.outbox_addr` | `METRICS_OUTBOX_ADDR` | `127.0.0.1:9092` | Outbox listener bind address |
+| `metrics.read_header_timeout` | — | `5s` | HTTP header read bound on both listeners |
+| `metrics.shutdown_timeout` | — | `5s` | Graceful drain bound on both listeners |
+| `metrics.gather_timeout` | — | `2s` | Bound for each scrape-time database collector invocation |
+
+Addresses must be non-empty `host:port` with a numeric port; port 0 is accepted
+(useful for ephemeral test binds). Durations must be positive; an invalid value
+fails config validation before a listener opens. `gather_timeout` is consumed
+by the database gauges in all three long-running binaries, not only the worker
+and outbox. The API address remains `api.addr`; there is no separate API
+metrics address.
+
+## Metric catalog
+
+All business families use the `recon_` prefix. The exact help text is frozen in
+`internal/metrics/catalog.go` and asserted by the registry test; this table is
+the operator-level summary.
+
+| Metric | Type | Labels | Unit | Producer |
+|---|---|---|---|---|
+| `recon_build_info` | gauge | `component` (`api`,`worker`,`outbox`) | info; always `1` | seeded once per process |
+| `recon_match_runs_total` | counter | `source` | runs | matcher, after a committed run |
+| `recon_matches_total` | counter | `source`,`rule` | matches | matcher, per accepted rule from `RunStats.ByPass` |
+| `recon_breaks_total` | counter | `source`,`side` | breaks | matcher, per detected break side |
+| `recon_case_age_seconds` | histogram | `status` | seconds | case create/transition/resolve after commit |
+| `recon_queue_depth` | gauge | `queue` (`cases_open`,`approvals_pending`,`outbox_pending`) | items | scrape-time database collector |
+| `recon_agent_runs_total` | counter | `outcome`,`model` | runs | agent `FinishRun`, after the one-row update commits |
+| `recon_agent_cost_usd_total` | counter | `model` | USD | agent `FinishRun`, after commit |
+| `recon_approval_latency_seconds` | histogram | `tier` (`T0`,`T1`,`T2`) | seconds | successful, non-replayed human decision |
+| `recon_errors_total` | counter | `component`,`code` | errors | bounded error paths (see below) |
+| `recon_outbox_lag_seconds` | gauge | `topic` | seconds | scrape-time database collector |
+| `recon_outbox_dead_letters_total` | counter | `topic` | messages | outbox dead-letter seam after commit |
+| `recon_auto_apply_cap_usage_ratio` | gauge | `currency` | ratio 0–1 | limits `Check` result |
+| `recon_tieout_unexplained_minor` | gauge | `currency`,`source` | minor units | tie-out observer (event-only; see Q-101) |
+| `recon_integrity_job_status` | gauge | `job` (`integrity`) | status | none yet; seeded `0`, M5-06 owns values |
+
+### Histogram buckets
+
+`recon_case_age_seconds`:
+
+```
+30, 300, 900, 3600, 21600, 43200, 86400, 172800, 259200, 604800, 2592000
+```
+
+`recon_approval_latency_seconds`:
+
+```
+30, 60, 300, 900, 1800, 3600, 14400, 86400, 259200
+```
+
+Both histograms clamp a negative age/latency (clock skew) to `0`; a zero value
+is valid and observed.
+
+### Seeded series
+
+Every family is instantiated at construction, so an idle process still exposes
+all of them:
+
+- `recon_build_info{component="<process>"} 1`;
+- every labelled vector has an `unknown` child (for example
+  `recon_match_runs_total{source="unknown"} 0`);
+- `recon_queue_depth` has exactly the three queue children at `0`;
+- `recon_integrity_job_status{job="integrity"} 0`.
+
+Seeded `unknown` series are public output and deliberately make an absent
+producer visible. Seeded histograms have zero observations; they are not fake
+samples. Do not read a seeded zero as a healthy measurement (especially
+tie-out and integrity).
+
+## Labels, cardinality, and forbidden values
+
+A label value is always one of the allow-listed values below. Any other value
+is normalized to the literal `unknown`; an empty string, UUID, free text, or URL
+never creates a new series.
+
+| Label | Allowed values / validator |
+|---|---|
+| `source` | `^[a-z0-9][a-z0-9_]{0,31}$`, else `unknown` |
+| `currency` | `^[A-Z]{3}$`, else `unknown` |
+| `model` | `^[A-Za-z0-9._:/-]{1,64}$`, else `unknown` |
+| `rule` | `exact`, `reference_tolerance`, `composite_batch`, `composite`, `fuzzy`, `duplicate`, `unknown` |
+| `side` | `ledger_only`, `external_only`, `amount_mismatch`, `duplicate`, `unknown` |
+| `status` | `open`, `in_agent`, `proposal_pending`, `waiting_info`, `escalated`, `resolved`, `unknown` |
+| `outcome` | `proposal`, `escalated`, `budget_exhausted`, `invalid_output`, `provider_error`, `unknown` |
+| `tier` | `T0`, `T1`, `T2`, `unknown` |
+| `queue` | `cases_open`, `approvals_pending`, `outbox_pending` (closed; no `unknown` child) |
+| `topic` | `approval.request`, `approval.update`, `approval.cancel`, `unknown` |
+| `job` | `integrity`, `unknown` |
+| `component` | `api`, `worker`, `agent`, `matcher`, `approval`, `limits`, `outbox`, `tieout`, `metrics`, `integrity`, `unknown` (`recon_build_info` is narrower: `api`, `worker`, `outbox`) |
+| `code` | `internal`, `invalid_request`, `not_found`, `conflict`, `unauthorized`, `forbidden`, `timeout`, `unavailable`, `provider_error`, `invalid_output`, `delivery_failed`, `dead_letter`, `collect`, `daily_cap_exceeded`, `unknown` |
+
+Forbidden label **names** are rejected at registration and by the registry
+validator:
+
+```
+case_id, run_id, agent_run_id, proposal_id, break_id, scope_id,
+ledger_txn_id, approver_id, trace_id, idempotency_key, entity_id,
+message_id, external_ref, payload, error, reason, rationale, dsn, url,
+path, email
+```
+
+The guard asserts every `recon_*` family's type, help, label order, buckets,
+values, and series cap. A per-entity label regression fails the metrics tests.
+The total business-series bound is **≤ 64 on an idle process** and **≤ 128
+after representative instrumentation**. `go_*`, `process_*`, and `promhttp_*`
+families are client_golang/promhttp-owned and exempt from the business
+allow-list; the process collector's exact families depend on the host OS.
+
+`recon_errors_total` is emitted only with allow-listed component/code pairs;
+raw error strings never become labels. Client 4xx API responses are not errors
+for this metric; only 5xx (`component="api"`, `code="internal"` with the
+existing 503/504 mapping) are counted. Case-service failures use the owning
+process component (`api` or `worker`), because there is no `cases` component
+value.
+
+## Scraping
+
+```bash
+# API: public, on the existing server
+curl -fsS http://localhost:8080/metrics | grep '^recon_'
+
+# Worker and outbox: loopback listeners, long-running mode only
+curl -fsS http://127.0.0.1:9091/metrics | grep '^recon_'
+curl -fsS http://127.0.0.1:9092/metrics | grep '^recon_'
+
+# Check every frozen family is present (idle process)
+curl -fsS http://localhost:8080/metrics |
+  grep -E '^recon_(build_info|match_runs_total|matches_total|breaks_total|case_age_seconds|queue_depth|agent_runs_total|agent_cost_usd_total|approval_latency_seconds|errors_total|outbox_lag_seconds|outbox_dead_letters_total|auto_apply_cap_usage_ratio|tieout_unexplained_minor|integrity_job_status)' |
+  sed 's/{.*//' | sort -u
+```
+
+A representative excerpt (values move with real traffic):
+
+```
+recon_build_info{component="api"} 1
+recon_queue_depth{queue="cases_open"} 0
+recon_queue_depth{queue="approvals_pending"} 0
+recon_queue_depth{queue="outbox_pending"} 0
+recon_outbox_lag_seconds{topic="approval.request"} 0
+recon_outbox_lag_seconds{topic="unknown"} 0
+recon_integrity_job_status{job="integrity"} 0
+```
+
+Illustrative PromQL for M5-04 dashboards (the Prometheus server/dashboards are
+M5-04 scope, not delivered here):
+
+```promql
+rate(recon_match_runs_total[5m])
+recon_queue_depth{queue="outbox_pending"}
+histogram_quantile(0.95, sum by (le) (rate(recon_approval_latency_seconds_bucket[5m])))
+rate(recon_errors_total[5m])
+```
+
+Counters are process-local and reset on restart. Use `rate`/`increase` rather
+than raw totals. Multiple processes/replicas each expose their own counters;
+the DB-derived gauges reflect the shared database on each scrape.
+
+## Database-derived gauges
+
+`recon_queue_depth` and `recon_outbox_lag_seconds` are refreshed by a
+scrape-time collector on every gather, using the process's `recon_app` pool.
+The queries are read-only aggregates:
+
+| Series | Query semantics |
+|---|---|
+| `recon_queue_depth{queue="cases_open"}` | `count(*)` of `cases` with `status='open' AND leased_by IS NULL` (matches `cases_open_queue_idx`) |
+| `recon_queue_depth{queue="approvals_pending"}` | `count(*)` of `proposals` with `status='pending_approval'` |
+| `recon_queue_depth{queue="outbox_pending"}` | `count(*)` of `outbox` with `delivered_at IS NULL AND dead = false` (matches `outbox_undelivered_idx`) |
+| `recon_outbox_lag_seconds{topic}` | database-clock age of the oldest pending (`delivered_at IS NULL AND dead = false`) row per topic; a known topic with no pending rows is `0`; non-allow-listed topics fold into `unknown` by maximum age |
+
+The three queue gauges are set on every successful scrape, including `0`.
+Delivered and dead outbox rows are excluded. `approvals_pending` may use a
+sequential scan on the currently small `proposals` table; the existing partial
+unique index `proposals_one_active_per_case` can serve the predicate if volume
+justifies it (no new migration/index in M5-03).
+
+Each collector invocation shares one `metrics.gather_timeout` deadline across
+its queries, so a hung database cannot make a scrape unbounded.
+
+**Failure policy: keep the last value.** If a query or payload decode fails:
+
+- the affected gauge keeps its last successful value (it is stale, not fresh
+  monitoring evidence);
+- the collector logs only `component=metrics` and a bounded queue name, never
+  SQL, raw error text, database topic text, an ID, or a DSN;
+- `recon_errors_total{component="metrics",code="collect"}` increments once per
+  failed query in that scrape;
+- the scrape still returns `200` with the remaining reachable families.
+
+When a DB queryer is configured, the same scrape-time collector emits
+`recon_errors_total` after counting failures, so a `metrics/collect` increment
+is visible in the scrape that observed the failure. Without a queryer (unit
+tests, nil metrics), the static seeded queue/lag gauges are served and no query
+is issued.
+
+## M5-04 boundary
+
+M5-03 delivers the exporter, not the observability stack. It adds:
+
+- the `internal/metrics` registry/catalog/guard and the frozen families;
+- the API route and the worker/outbox loopback listeners;
+- event producers and the scrape-time DB gauges;
+- this documentation and Q-101.
+
+It does **not** add a Prometheus server, scrape configuration, Grafana
+datasources, dashboard JSON, alerting, `deploy/` assets, or a `recon_dashboards_ro`
+role. Those are M5-04 (and M5-05 for agent quality). The daily integrity job
+and its real values are M5-06; until then `recon_integrity_job_status` is a
+seeded `0` with no producer. The tie-out gauge is event-only and has no
+long-lived producer, so its seeded `unknown` series is not a live value; a real
+producer belongs to M5-06/M5-09 if still needed. M5-04 must keep the frozen
+names/types/labels/buckets and treat seeded or keep-last values as not healthy.
+
+See also: `docs/telemetry.md` for tracing (a separate signal) and Q-101 in
+`docs/open-questions.md` for the accepted residuals.

@@ -47,6 +47,8 @@ var envBindings = []envBinding{
 	{EnvSlackSigningSecret, func(c *Config, v string) error { c.Slack.SigningSecret = v; return nil }},
 	{EnvSlackChannelID, func(c *Config, v string) error { c.Slack.ChannelID = v; return nil }},
 	{EnvSlackCaseFileBaseURL, func(c *Config, v string) error { c.Slack.CaseFileBaseURL = v; return nil }},
+	{EnvMetricsWorkerAddr, func(c *Config, v string) error { c.Metrics.WorkerAddr = v; return nil }},
+	{EnvMetricsOutboxAddr, func(c *Config, v string) error { c.Metrics.OutboxAddr = v; return nil }},
 }
 
 // DefaultLogLevel is used when neither YAML nor the environment sets a level.
@@ -69,6 +71,7 @@ type Config struct {
 	AutoApplyLimits AutoApplyLimitsConfig `yaml:"auto_apply_limits"`
 	Cases           CasesConfig           `yaml:"cases"`
 	Slack           SlackConfig           `yaml:"slack"`
+	Metrics         MetricsConfig         `yaml:"metrics"`
 }
 
 // String renders Config without credentials: database DSNs, the LLM API key,
@@ -76,8 +79,8 @@ type Config struct {
 // summarized by count. This keeps accidental %v/%+v logging from exposing
 // secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s, Cases:%+v, Slack:%s}",
-		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits, c.Cases, c.Slack)
+	return fmt.Sprintf("Config{Database:%s, Log:%+v, LLM:%s, Agent:%+v, Worker:%+v, Ledger:%+v, Ingest:%+v, Match:%+v, Synth:%+v, API:%s, Policy:%+v, Verifier:%s, AutoApplyLimits:%s, Cases:%+v, Slack:%s, Metrics:%s}",
+		redactedDatabase(c.Database), c.Log, redactedLLM(c.LLM), c.Agent, c.Worker, c.Ledger, c.Ingest, c.Match, c.Synth, c.API, c.Policy, c.Verifier, c.AutoApplyLimits, c.Cases, c.Slack, c.Metrics)
 }
 
 // Format implements fmt.Formatter so every verb, including %#v, uses the
@@ -190,6 +193,9 @@ func (c Config) Validate() error {
 	if err := c.Slack.Validate(); err != nil {
 		return err
 	}
+	if err := c.Metrics.Validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.Policy.File) == "" {
 		return errors.New("config: policy.file is required (set POLICY_FILE or policy.file in CONFIG_FILE)")
 	}
@@ -210,6 +216,7 @@ func defaults() Config {
 		Verifier:        DefaultVerifierConfig(),
 		AutoApplyLimits: DefaultAutoApplyLimitsConfig(),
 		Cases:           DefaultCasesConfig(),
+		Metrics:         DefaultMetricsConfig(),
 	}
 }
 

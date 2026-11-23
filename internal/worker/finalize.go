@@ -22,7 +22,11 @@ import (
 //
 // Every release and attempt is owner-guarded inside cases.Service. A lost lease
 // is logged and no-op; it is never retried with a fresh version.
-func Finalize(ctx context.Context, svc CaseService, workerID string, maxAttempts int, logger *slog.Logger, caseID string, result agent.Result, runErr error) {
+//
+// The optional observers receive one bounded worker failure code when a run
+// fails unexpectedly; classified shutdown/provider paths emit nothing here
+// because the agent store already records their outcome.
+func Finalize(ctx context.Context, svc CaseService, workerID string, maxAttempts int, logger *slog.Logger, caseID string, result agent.Result, runErr error, observers ...Observer) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -49,6 +53,7 @@ func Finalize(ctx context.Context, svc CaseService, workerID string, maxAttempts
 			logger.Info("worker: run canceled during shutdown", logArgs...)
 			release(svc, workerID, logger, caseID)
 		default:
+			observeFirstFailure(observers, ErrorCodeInternal)
 			logger.Error("worker: run failed", append(logArgs, "error", runErr)...)
 			release(svc, workerID, logger, caseID)
 		}
@@ -107,7 +112,7 @@ func recordFailedAttempt(svc CaseService, workerID string, maxAttempts int, logg
 func (w *Worker) process(ctx context.Context, c cases.Case) {
 	result, err := w.runner.Run(ctx, c.ID)
 	w.recordSpend(result.CostUSD)
-	Finalize(ctx, w.cases, w.id, w.config.MaxAttempts, w.logger, c.ID, result, err)
+	Finalize(ctx, w.cases, w.id, w.config.MaxAttempts, w.logger, c.ID, result, err, w.observer)
 }
 
 // escalateExhausted dead-letters a case that reached the attempt cap without a
@@ -125,6 +130,7 @@ func (w *Worker) escalateExhausted(ctx context.Context, c cases.Case) error {
 				"case_id", c.ID, "error", err)
 			return nil
 		}
+		w.observeFailure(ErrorCodeInternal)
 		w.logger.Warn("worker: attempt-cap escalation failed", "case_id", c.ID, "error", err)
 		return err
 	}

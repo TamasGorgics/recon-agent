@@ -47,10 +47,12 @@ func NewService(opts Options) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidOptions, err)
 	}
-	return &Service{pool: opts.Pool, clock: opts.Clock, config: cfg}, nil
+	return &Service{pool: opts.Pool, clock: opts.Clock, config: cfg, observer: opts.Observer}, nil
 }
 
-// Check applies the FIN-53 guard to one candidate.
+// Check applies the FIN-53 guard to one candidate and records its bounded
+// metrics observation. It is exactly check plus observation, so the decision
+// result is unchanged.
 //
 // T1/T2 candidates pass through with Allowed=true and reason not_t0; any other
 // tier, including the empty value, fails closed to T1 with reason invalid_tier.
@@ -68,6 +70,12 @@ func NewService(opts Options) (*Service, error) {
 // excluded from the cumulative sum so a candidate whose row is already
 // persisted is counted once via ValueMinor, not twice.
 func (s *Service) Check(ctx context.Context, candidate Candidate) (Result, error) {
+	result, err := s.check(ctx, candidate)
+	s.observeCheck(candidate.Currency, result, err)
+	return result, err
+}
+
+func (s *Service) check(ctx context.Context, candidate Candidate) (Result, error) {
 	switch candidate.Tier {
 	case policy.TierT0:
 	case policy.TierT1, policy.TierT2:

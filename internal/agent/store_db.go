@@ -22,11 +22,22 @@ type RunDB interface {
 
 // DBStore is the recon_app-pool RunStore implementation.
 type DBStore struct {
-	db RunDB
+	db       RunDB
+	observer RunObserver
 }
 
-// NewDBStore returns a store backed by the app pool.
-func NewDBStore(db RunDB) *DBStore { return &DBStore{db: db} }
+// NewDBStore returns a store backed by the app pool. An optional observer sees
+// one post-commit AgentRun observation per successful FinishRun.
+func NewDBStore(db RunDB, opts ...StoreOption) *DBStore {
+	s := &DBStore{db: db}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(s)
+	}
+	return s
+}
 
 // CreateRun inserts the initial run row. Tokens, cost, and outcome keep their
 // schema defaults until FinishRun.
@@ -86,22 +97,29 @@ func (s *DBStore) RecordLLMCall(ctx context.Context, call LLMCall) error {
 }
 
 // FinishRun writes the single final run update. ended_at is never before
-// started_at by construction in the loop; the schema enforces it.
+// started_at by construction in the loop; the schema enforces it. The optional
+// observer sees one AgentRun only after this statement affects exactly one row;
+// validation and database failures emit a bounded AgentFailed code instead.
 func (s *DBStore) FinishRun(ctx context.Context, finish RunFinish) error {
 	if s == nil || s.db == nil {
+		s.observeFailure(ErrorCodeInternal)
 		return errors.New("agent: run store has no database pool")
 	}
 	if !finish.Outcome.Valid() {
+		s.observeFailure(ErrorCodeInvalidOutput)
 		return fmt.Errorf("agent: invalid outcome %q", finish.Outcome)
 	}
 	if finish.TokensIn < 0 || finish.TokensOut < 0 {
+		s.observeFailure(ErrorCodeInvalidRequest)
 		return errors.New("agent: token counts must be non-negative")
 	}
 	if finish.CostUSD.IsNegative() {
+		s.observeFailure(ErrorCodeInvalidRequest)
 		return errors.New("agent: cost must be non-negative")
 	}
 	flags, err := json.Marshal(normalizedFlags(finish.Flags))
 	if err != nil {
+		s.observeFailure(ErrorCodeInternal)
 		return fmt.Errorf("agent: encode injection flags: %w", err)
 	}
 	tag, err := s.db.Exec(ctx,
@@ -118,12 +136,33 @@ func (s *DBStore) FinishRun(ctx context.Context, finish RunFinish) error {
 		finish.CostUSD.String(), string(finish.Outcome), string(flags),
 		finish.Model)
 	if err != nil {
+		s.observeFailure(ErrorCodeInternal)
 		return fmt.Errorf("agent: finalize agent run: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
+		s.observeFailure(ErrorCodeNotFound)
 		return fmt.Errorf("%w: %s", ErrRunNotFound, finish.RunID)
 	}
+	s.observeRun(finish)
 	return nil
+}
+
+// observeRun forwards one committed finalize. The decimal cost crosses the
+// float64 boundary here and is never used for money logic afterwards.
+func (s *DBStore) observeRun(finish RunFinish) {
+	if s == nil || s.observer == nil {
+		return
+	}
+	cost, _ := finish.CostUSD.Float64()
+	s.observer.AgentRun(string(finish.Outcome), finish.Model, cost)
+}
+
+// observeFailure forwards one bounded failure code; the raw error stays local.
+func (s *DBStore) observeFailure(code string) {
+	if s == nil || s.observer == nil || code == "" {
+		return
+	}
+	s.observer.AgentFailed(code)
 }
 
 // ProposalForRun reads the one proposal row a run recorded. It is called only

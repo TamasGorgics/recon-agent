@@ -31,6 +31,7 @@ type Queryer interface {
 //	(LedgerBalance - LedgerOnly) - (StatementClosing - ExternalOnly)
 type Result struct {
 	ScopeID           string
+	Source            string
 	AsOf              time.Time
 	Currency          string
 	LedgerBalance     money.Money
@@ -71,7 +72,8 @@ type openItems struct {
 	Count  int         `json:"count"`
 }
 
-// Compute returns the independent tie-out for scopeID at asOf.
+// Compute returns the independent tie-out for scopeID at asOf and reports the
+// outcome to an optional observer.
 //
 // All as-of comparisons are inclusive on business date:
 // ledger_txns.value_date <= asOf and external_records.value_date <= asOf. The
@@ -79,7 +81,24 @@ type openItems struct {
 // asOf exactly. Membership in the current active match set decides whether a
 // ledger transaction or external record is still an open item; Compute reads
 // matches/match_legs only for membership and never imports internal/match.
-func Compute(ctx context.Context, q Queryer, scopeID string, asOf time.Time) (Result, error) {
+//
+// The observer argument is additive: existing callers pass none. A failed
+// computation emits only a bounded failure code, never a gauge value.
+func Compute(ctx context.Context, q Queryer, scopeID string, asOf time.Time, observers ...Observer) (Result, error) {
+	observer := firstObserver(observers)
+	result, err := compute(ctx, q, scopeID, asOf)
+	if observer == nil {
+		return result, err
+	}
+	if err != nil {
+		observer.TieoutFailed(tieoutErrorCode(err))
+		return result, err
+	}
+	observer.TieoutComputed(result)
+	return result, nil
+}
+
+func compute(ctx context.Context, q Queryer, scopeID string, asOf time.Time) (Result, error) {
 	if q == nil {
 		return Result{}, fmt.Errorf("%w: Compute requires a queryer", ErrInvalidRequest)
 	}
@@ -141,6 +160,7 @@ func Compute(ctx context.Context, q Queryer, scopeID string, asOf time.Time) (Re
 
 	result := Result{
 		ScopeID:           scope.ID,
+		Source:            scope.Source,
 		AsOf:              asOfUTC,
 		Currency:          scope.Currency,
 		LedgerBalance:     money.FromMinor(ledgerNet, currency),
