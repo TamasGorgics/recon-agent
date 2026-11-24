@@ -322,9 +322,10 @@ seeded `0` with no producer. The tie-out gauge is event-only and has no
 long-lived producer, so its seeded `unknown` series is not a live value; a real
 producer belongs to M5-06/M5-09 if still needed. M5-03 also leaves the API
 `/metrics` public with four unauthenticated DB aggregates per scrape and no
-`MaxRequestsInFlight`; M5-04 owns authentication/rate limiting and DB-pool
-sizing for that path. M5-04 must keep the frozen names/types/labels/buckets and
-treat seeded or keep-last values as not healthy.
+`MaxRequestsInFlight`; M5-04 did **not** add authentication, rate limiting, or
+DB-pool sizing for that path, so the residual stays open (Q-101 A6 / Q-102) for
+a future task. M5-04 kept the frozen names/types/labels/buckets and treats
+seeded or keep-last values as not healthy.
 
 See also: `docs/telemetry.md` for tracing (a separate signal) and Q-101 in
 `docs/open-questions.md` for the accepted residuals.

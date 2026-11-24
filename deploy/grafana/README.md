@@ -20,5 +20,8 @@ make demo-ops
 ```
 
 Do not add literal credentials here; datasource credentials are `${...}`
-placeholders filled from environment variables. The dashboards are dev-only
-and loopback-bound. Prometheus is a self-scrape, not live application metrics.
+placeholders filled from environment variables. The stack is dev-only:
+Grafana and Prometheus are loopback-bound (the pre-existing Postgres publish is
+not), and panel data comes from the synthetic `recon demo ops` seed — demo
+evidence, not a production M2–M4 pipeline run. Prometheus is a self-scrape, not
+live application metrics.

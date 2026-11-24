@@ -10,7 +10,10 @@ The dashboard is **dev-only**. It is provisioned from files in `deploy/`, reads
 Postgres through a dedicated read-only login that can select five `v_ops_*`
 views, and shows a Prometheus self-scrape as one supplementary panel. It is
 not a production monitoring deployment, and it does not add application
-services to compose.
+services to compose. The data in the panels comes from the synthetic
+`recon demo ops` seed: it is **demo evidence, not a production M2–M4 pipeline
+run and not audit-chain proof** (Q-98 / Q-102). The full boundary is under
+[Synthetic demo-data boundary](#synthetic-demo-data-boundary).
 
 ## Bring-up
 
@@ -33,8 +36,8 @@ service is added (M5-04 decision AQ-3). Grafana is published on
 `GRAFANA_PORT` / `PROMETHEUS_PORT` may change the host port only.
 
 On a first-time volume the init script creates the five group roles and the
-local-only login `recon_dev_dashboards_ro`. The M5-04 migration creates the
-five `v_ops_*` views and grants `SELECT` on the views to
+five local-only dev logins, including `recon_dev_dashboards_ro`. The M5-04
+migration creates the five `v_ops_*` views and grants `SELECT` on the views to
 `recon_dashboards_ro`. The provisioned datasource uses environment
 placeholders, so no manual datasource setup is needed.
 
@@ -68,6 +71,13 @@ documented data path for every panel. A second `recon demo ops` without
 `--reset` fails closed with
 `demo ops: ops data already present; rerun with --reset` before adding any row.
 
+Determinism is guaranteed only for the same seed and reset database on the
+**same UTC day** (spec §6.3). The demo reads `SELECT now()` once per run and
+anchors its date buckets to that value, so two runs that straddle 00:00 UTC can
+produce different bucket/date values. That is a low-probability test-flake risk
+(the determinism test compares date-bearing columns), not a data-path change;
+a fixed-clock injection is the future fix.
+
 ## Datasources and provisioning
 
 | Datasource | UID | Type | Endpoint | Credential |
@@ -99,7 +109,7 @@ have stable IDs 1–6 and no template variables.
 
 | ID | Title | Type | Datasource | Query source | Notes |
 |---|---|---|---|---|---|
-| 1 | Match rate by source | timeseries | `recon-postgres` | `v_ops_match_rate` | Match share per UTC day and source; malformed/missing run stats count as zero, a zero denominator renders NULL, not 0. Percent unit. |
+| 1 | Match rate by source | timeseries | `recon-postgres` | `v_ops_match_rate` | Match share per UTC day and source. An absent or non-number `stats->'matched'`/`external_candidates` counts as zero; a zero denominator renders NULL, not 0. A numeric but non-integer value (for example `1.5`) passes the `jsonb_typeof(...)='number'` guard and then fails the `::bigint` cast, so the query errors (fails closed) instead of counting zero. Percent unit. |
 | 2 | Unmatched value by currency | table | `recon-postgres` | `v_ops_unmatched_value` | Exposure proxy: sum of absolute open/in-case break deltas per currency. `exposure_major` is display-only; minor units are the source of truth. No cross-currency total. |
 | 3 | Open breaks by type and aging bucket | table | `recon-postgres` | `v_ops_break_aging` | Break type is `breaks.side`; canonical bucket order `0-1`, `2-3`, `4-7`, `>7`, `unknown`. |
 | 4 | Approval queue | table | `recon-postgres` | `v_ops_approval_queue` | Pending/oldest-pending are query-time snapshots. Latency uses the earliest approved decision; any rejected decision suppresses latency (fail-closed presentation). |
@@ -142,11 +152,17 @@ sequence, function, or `v_agent_*` grant. A direct `SELECT` on `matches`,
 
 The migration's Down unwinds only this database: it revokes the view/schema
 privileges and drops the views. `DROP ROLE` is guarded because the role is
-cluster-wide; when another database in the same cluster still holds a grant,
-the role is retained (with a NOTICE) and this database's privileges are gone.
-Do not use Down as a cluster-wide role cleanup step. Integration tests
-provision an ephemeral dashboard login through `testdb`; it is not part of the
-four-role `db.Roles()` set.
+cluster-wide; it is retained (with a NOTICE) when another database in the same
+cluster still holds a grant **or when the initdb login
+`recon_dev_dashboards_ro` is a member of the role**, which is the normal dev
+cluster: `DROP ROLE` then raises SQLSTATE `2BP01`
+(`dependent_objects_still_exist`). No object privilege remains in this
+database, the role stays `NOLOGIN`, and `Up` re-applies cleanly, so there is no
+grant or security impact; spec §3.1's shorter "drops the role" wording is not
+met in a normal dev cluster. Do not use Down as a cluster-wide role cleanup
+step; removing the membership/role is future migration cleanup for the owner.
+Integration tests provision an ephemeral dashboard login through `testdb`; it
+is not part of the four-role `db.Roles()` set.
 
 ### Aging and classification rules
 
@@ -171,8 +187,9 @@ agent, policy, approval service, executor, or audit chain, makes no network or
 LLM call, and writes rows marked with deterministic demo identifiers and
 `demo-ops` prefixes. The summary prints counts only.
 
-The seed is deterministic for a given seed and database scope selection. It
-covers all five aging buckets, all three classifications (auto, human,
+The seed is deterministic for a given seed and database scope selection on the
+same UTC day (see the midnight-boundary note under [Reset data](#reset-data)).
+It covers all five aging buckets, all three classifications (auto, human,
 escalated), pending/approved/rejected approvals, at least two sources and two
 currencies, and a real balanced ledger fixture. On the documented seed the live
 verifier observed panel row counts **1 / 4 / 7 / 3 / 6 / 1** for panels 1–6;
@@ -199,16 +216,27 @@ the API metrics port on an untrusted network.
 ## Verification
 
 `./scripts/verify-dashboard.sh` is the repeatable live check. It is read-only
-and requires the compose stack plus `make migrate` (and `make demo-ops` for
-non-empty panel data). It checks:
+and requires the compose stack plus `make migrate`. `make demo-ops` supplies
+non-empty panel data, but the script does not require rows. It checks:
 
 1. `docker compose config -q`;
 2. Grafana `/api/health` and Prometheus `/-/ready`;
 3. both provisioned datasource UIDs and their health;
 4. the dashboard `recon-ops` is provisioned in folder `Recon`;
-5. every panel executes through `/api/ds/query` with no unexpanded `$__` macro;
+5. every panel executes through `/api/ds/query`, returns at least one frame,
+   and has no unexpanded `$__` macro (the row count may be zero);
 6. a base-table `SELECT` through the datasource is denied with SQLSTATE
    `42501`.
+
+**Live-test coverage.** The verifier checks query execution, not coverage: it
+prints `rows=` but passes at zero (a fresh volume before `make demo-ops`
+records `rows=0/0/0/0/0/1`). The Go test `TestM504LiveDashboard` named by spec
+§8.1 T7 (`RECON_DASHBOARD_URL`-gated, asserting at least one row/frame value
+for each Postgres panel) is **not present**; the shell verifier is the
+delivered live substitute, and an explicit accept-substitute decision is still
+open. Non-empty data evidence comes from the T4 integration assertions after
+the demo plus the post-demo live run, which recorded rows
+**1 / 4 / 7 / 3 / 6 / 1**.
 
 It reads admin credentials from `RECON_GRAFANA_ADMIN_USER` /
 `RECON_GRAFANA_ADMIN_PASSWORD` and URLs from `RECON_GRAFANA_URL` /
@@ -226,8 +254,14 @@ go test -tags=integration -run 'TestM504' -count=1 ./internal/dashboards ./inter
 
 ## Security defaults
 
-- Grafana is published on `127.0.0.1` only. Prometheus is published on
-  `127.0.0.1` only. Do not widen either binding for the demo.
+- Grafana and Prometheus are published on `127.0.0.1` only. Do not widen
+  either binding for the demo.
+- **Postgres is not loopback-bound.** It keeps its pre-existing publish
+  `${POSTGRES_PORT:-5432}:5432` on all host interfaces (`0.0.0.0:5432`, with
+  `pg_hba.conf` accepting password auth). M5-04 does not change the Postgres
+  port binding or authentication rule; do not describe the whole compose stack
+  as loopback-only. On a LAN-reachable host, treat the dev database as
+  reachable unless you change the binding or add a firewall rule.
 - Grafana anonymous access is off, sign-up is off, reporting/update checks are
   off, plugin preinstall is disabled, and `GF_INSTALL_PLUGINS` is empty.
 - The Grafana admin user/password and dashboard datasource credentials come
@@ -235,7 +269,8 @@ go test -tags=integration -run 'TestM504' -count=1 ./internal/dashboards ./inter
   placeholders, never literal credentials; the dashboard JSON and Prometheus
   config contain no credentials.
 - The compose and init-script defaults are explicitly local-only and
-  non-secret. Never reuse them outside a developer laptop.
+  non-secret. They are not a security boundary (see the Postgres note above);
+  never reuse them outside a developer laptop.
 - The datasource login is read-only and view-only, with a 30s
   `statement_timeout` and a small connection pool.
 - No Docker socket is mounted; the provisioning/dashboard mounts are read-only.
@@ -243,9 +278,10 @@ go test -tags=integration -run 'TestM504' -count=1 ./internal/dashboards ./inter
 ## Visual check: PENDING (human)
 
 Automated evidence proves the stack is healthy, the dashboard is provisioned,
-and every panel query returns a frame. It does **not** prove visual
-readability (titles, units, legends, bucket order, or non-empty charts as
-rendered). The human visual check is **PENDING** (AQ-4): open
+and every panel query returns a frame; the post-demo verifier run also shows
+non-empty rows (`1 / 4 / 7 / 3 / 6 / 1`). It does **not** prove visual
+readability (titles, units, legends, bucket order, or measured colors and
+sizing as rendered). The human visual check is **PENDING** (AQ-4): open
 `http://127.0.0.1:3000`, log in with the local admin credentials, and inspect
 the `Recon` folder → `Recon Ops` dashboard. Do not record it as passed until a
 human confirms it.
@@ -257,4 +293,6 @@ human confirms it.
 - Application services in compose or live application-metrics scraping.
 - Grafana/Prometheus authentication, TLS, retention, or network exposure
   beyond the loopback dev boundary.
+- Changing the pre-existing Postgres host publish binding or dev passwords;
+  that is a separate follow-up, not M5-04 scope.
 - Changes to `docs/spec.md`.

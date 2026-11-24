@@ -1017,17 +1017,23 @@ counts **1 / 4 / 7 / 3 / 6 / 1** and `up{job="prometheus"}=1` for panels 1–6 o
 Panel 4's `$__timeFilter(approved_at)` expanded correctly in the pinned
 Grafana. Images and the datasource user/password are pinned/env placeholders;
 Grafana/Prometheus are loopback-only with anonymous auth, sign-up, and plugin
-preinstall off, and no secret is committed. Existing Postgres volumes need the
-documented idempotent `01-roles.sql` rerun plus `make migrate`; zero-step is
-claimed only for fresh volumes. `./scripts/verify-dashboard.sh`,
+preinstall off, and no secret is committed (the pre-existing Postgres publish
+stays `0.0.0.0:5432` and is not changed by M5-04). Existing Postgres volumes
+need the documented idempotent `01-roles.sql` rerun plus `make migrate`;
+zero-step is claimed only for fresh volumes. `./scripts/verify-dashboard.sh`,
 `make lint test`, `make test-integration`, and `make test-fault` were run
-uncached on the released SHA; evidence and command tails are in the run notes
+uncached on the released SHA. The named Go T7 test
+(`TestM504LiveDashboard`, `RECON_DASHBOARD_URL`-gated) is absent; the shell
+verifier is the live substitute but checks frame/query execution rather than
+non-empty rows, so non-empty panel evidence is the T4 integration assertions
+plus the post-demo live run. Evidence and command tails are in the run notes
 `mwuxqawb-m5-04-ops-dashboard`. **Visual panel check: PENDING (human)** — AQ-4
 accepts API/query evidence as the automated gate; it is not a rendering claim.
 Prometheus is a self-scrape, not live application metrics; no M5-05/M5-06 scope
 and `docs/spec.md` is unchanged. Residuals (synthetic data path, existing-volume
-step, visual check, public `/metrics` auth/rate limiting) are recorded as Q-102;
-the operator guide is `docs/dashboards.md`.
+step, visual check, absent T7 test, public `/metrics` auth/rate limiting, Down
+role retention on a normal dev cluster) are recorded as Q-102; the operator
+guide is `docs/dashboards.md`.
 
 ### M5-05 · Agent quality dashboard · M
 **Spec:** section 13.2 · **Needs:** M5-03, M3-04
