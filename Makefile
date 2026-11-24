@@ -7,7 +7,7 @@ TEST_DATABASE_URL ?= $(DATABASE_URL)
 export DATABASE_URL := $(DATABASE_URL)
 export TEST_DATABASE_URL := $(TEST_DATABASE_URL)
 
-.PHONY: help build lint lint-negative test test-integration test-live test-fault db-up db-down migrate test-db-clean verify fin-coverage must-not demo demo-m1 demo-m2
+.PHONY: help build lint lint-negative test test-integration test-live test-fault db-up db-down migrate test-db-clean verify fin-coverage must-not demo demo-m1 demo-m2 demo-ops
 
 help:
 	@echo "Targets:"
@@ -29,6 +29,7 @@ help:
 	@printf '  %-16s %s\n' 'demo' 'stub until M5-12'
 	@printf '  %-16s %s\n' 'demo-m1' 'M1 end-to-end demo: seed 1, realistic, 14 days'
 	@printf '  %-16s %s\n' 'demo-m2' 'M2 end-to-end gate: replay cassettes, no key required'
+	@printf '  %-16s %s\n' 'demo-ops' 'M5-04 dashboard data: M1 demo + synthetic ops rows (reset)'
 
 build:
 	go build ./...
@@ -91,3 +92,6 @@ demo-m1:
 
 demo-m2:
 	go test -race -tags=integration -run TestMilestone2Gate -v -count=1 ./internal/agent
+
+demo-ops:
+	go run ./cmd/recon demo ops --seed 1 --days 14 --difficulty realistic --reset

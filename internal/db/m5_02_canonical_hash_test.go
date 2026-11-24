@@ -18,6 +18,7 @@ import (
 const (
 	m502MigrationVersion = 20261123120000
 	m502PreviousVersion  = 20261122120000
+	m504MigrationVersion = 20261124120000
 )
 
 // TestM502ToolResultCanonicalHashMigration proves the M5-02 schema delta: the
@@ -37,14 +38,14 @@ func TestM502ToolResultCanonicalHashMigration(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("goose dialect: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m502MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m502MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m504MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m504MigrationVersion)
 	}
 	m502RequireColumn(t, d, "text", "YES")
 
-	// Down only the M5-02 migration, then insert a legacy tool call without
-	// the column.
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	// Down to the M5-02 migration, then insert a legacy tool call without
+	// the column. DownTo also unwinds any newer migration (M5-04).
+	if err := goose.DownToContext(ctx, sqlDB, ".", m502PreviousVersion); err != nil {
 		t.Fatalf("goose down M5-02: %v", err)
 	}
 	if m502ColumnExists(t, d) {
@@ -125,7 +126,7 @@ func TestM502ToolResultCanonicalHashMigration(t *testing.T) {
 	}
 
 	// Down removes the column without disturbing the rows or other columns.
-	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+	if err := goose.DownToContext(ctx, sqlDB, ".", m502PreviousVersion); err != nil {
 		t.Fatalf("second goose down M5-02: %v", err)
 	}
 	if m502ColumnExists(t, d) {

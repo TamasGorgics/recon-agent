@@ -38,8 +38,8 @@ func TestM501ProposalTraceIDMigration(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("goose dialect: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m502MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m502MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m504MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m504MigrationVersion)
 	}
 
 	// Down to (and including) the M5-01 migration, then insert a legacy

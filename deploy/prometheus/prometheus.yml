@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+# No app services run in this compose file (M5-04 decision AQ-3).
+# When the API/worker/outbox are run locally, add scrapes for the API /metrics route,
+# 127.0.0.1:9091 (worker) and 127.0.0.1:9092 (outbox) via host.docker.internal.
+# They are deliberately not enabled by default: a down target is not acceptance evidence.

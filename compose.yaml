@@ -49,6 +49,62 @@ services:
     volumes:
       - recon-phoenix-data:/data
 
+  prometheus:
+    # Self-scrape only (M5-04 decision AQ-3). The pinned tag is asserted by
+    # internal/dashboards tests and docs/ROADMAP.md evidence.
+    image: prom/prometheus:v3.16.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - recon-prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  grafana:
+    # Dev-only Grafana. Anonymous access, sign-up, analytics, and plugin
+    # preinstall are disabled; the admin and dashboard DB passwords come from
+    # local environment variables with explicitly non-secret dev defaults.
+    image: grafana/grafana:13.3.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${RECON_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${RECON_GRAFANA_ADMIN_PASSWORD:-recon_admin_local_only}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_INSTALL_PLUGINS: ""
+      # Read-only dashboard datasource login (spec §4.2). Grafana expands these
+      # into the provisioning YAML; the defaults are local-only and non-secret.
+      RECON_DASHBOARDS_RO_USER: ${RECON_DASHBOARDS_RO_USER:-recon_dev_dashboards_ro}
+      RECON_DASHBOARDS_RO_PASSWORD: ${RECON_DASHBOARDS_RO_PASSWORD:-recon_dev_dashboards_ro_local_only}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - recon-grafana-data:/var/lib/grafana
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
 volumes:
   recon-pgdata:
   recon-phoenix-data:
+  recon-prometheus-data:
+  recon-grafana-data:

@@ -36,6 +36,56 @@ func TestDemoSeedHelp(t *testing.T) {
 	}
 }
 
+// TestDemoOpsHelp pins the M5-04 surface: help describes the synthetic ops
+// layer and the dev-only reset before any config or database access.
+func TestDemoOpsHelp(t *testing.T) {
+	var out bytes.Buffer
+	err := runDemoTo(context.Background(), []string{"ops", "--help"}, &out)
+	if err != nil {
+		t.Fatalf("demo ops --help: %v", err)
+	}
+	if code := exitCode(err); code != 0 {
+		t.Fatalf("demo ops --help exit code = %d, want 0", code)
+	}
+
+	help := out.String()
+	for _, want := range []string{
+		"usage: recon demo ops",
+		"--reset",
+		"drop and recreate the public schema",
+		"dev only",
+		"synthetic",
+		"no network",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help output does not contain %q:\n%s", want, help)
+		}
+	}
+	if strings.Contains(help, "flag: help requested") {
+		t.Errorf("help output leaks the flag package error:\n%s", help)
+	}
+}
+
+// TestDemoOpsHelpDoesNotRequireConfig pins that demo ops help is handled
+// before config loading and before the production reset guard.
+func TestDemoOpsHelpDoesNotRequireConfig(t *testing.T) {
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("RECON_ENV", "production")
+
+	var out bytes.Buffer
+	err := runDemoTo(context.Background(), []string{"ops", "-h"}, &out)
+	if err != nil {
+		t.Fatalf("demo ops -h: %v", err)
+	}
+	if code := exitCode(err); code != 0 {
+		t.Fatalf("demo ops -h exit code = %d, want 0", code)
+	}
+	if !strings.Contains(out.String(), "usage: recon demo ops") {
+		t.Fatalf("help output missing usage block:\n%s", out.String())
+	}
+}
+
 // TestDemoSeedHelpDoesNotRequireConfig pins that help is handled before config
 // loading: it must work with an unset DATABASE_URL and in production.
 func TestDemoSeedHelpDoesNotRequireConfig(t *testing.T) {
@@ -69,7 +119,7 @@ func TestHelpListsCommands(t *testing.T) {
 	}
 
 	help := out.String()
-	for _, want := range []string{"demo seed", "migrate up", "synth generate", "synth load", "testdb clean", "tieout"} {
+	for _, want := range []string{"demo seed", "demo ops", "migrate up", "synth generate", "synth load", "testdb clean", "tieout"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("recon help does not list %q:\n%s", want, help)
 		}

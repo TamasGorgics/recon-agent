@@ -29,6 +29,10 @@ Commands:
                    usage: recon demo seed [--seed N] [--days N]
                           [--difficulty easy|realistic|adversarial] [--reset]
                    --reset drops and recreates the public schema (dev only)
+  demo ops         add deterministic synthetic M5-04 ops data for the dashboard
+                   usage: recon demo ops [--seed N] [--days N]
+                          [--difficulty easy|realistic|adversarial] [--reset]
+                   synthetic demo evidence only; --reset is dev only
   match unmatch    audited admin unmatch of one active match
                    usage: recon match unmatch --id <match-uuid> --reason <text>
                           --actor human:<id> [--json]

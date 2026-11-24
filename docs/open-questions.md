@@ -988,3 +988,168 @@ Residual owners: A1 and A6 → M5-04 (agent cardinality monitoring; metrics auth
 rate limiting, pool sizing); A7 and A8 → future catalog/validator hardening (no
 task yet; record before changing caps or validators); A9 → next source touch of
 `internal/metrics/guard.go`; A2-A5 → documentation-only and closed by this pass.
+
+## M5-04 Ops dashboard (Q-102)
+
+**Q-102 addendum (Wave 5 docs phase; developer-owned; no `docs/spec.md`
+edit).** `docs/spec.md` §13.1 names the ops dashboard and the metric names are
+frozen by Q-101; the delivered dashboard, its data path, and its boundaries are
+recorded here. The specification text itself is unchanged. M5-05 (agent quality
+dashboard) and M5-06 (daily integrity job) remain out of scope. The operator
+reference is `docs/dashboards.md`.
+
+- **Synthetic data path, not a production pipeline (Q-98 / AQ-1).** The
+  deterministic `recon demo ops` command (and `make demo-ops`) is the data path
+  for all five Postgres panels. It runs the M1 demo seed and then inserts
+  synthetic agent runs, proposals, approvals, applied proposals, cases, and
+  break-aging fixtures. It is **synthetic dashboard demo evidence**, not a
+  production M2–M4 pipeline run: it bypasses the agent, policy engine, approval
+  service, executor, and audit chain, makes no network or LLM call, and writes
+  deterministic `demo-ops:`/`demo-ops-synthetic` marker rows. The summary prints
+  counts only. No API/worker/outbox service is added to compose. `recon demo
+  seed` alone leaves the ops panels empty; a second `recon demo ops` without
+  `--reset` fails closed with `demo ops: ops data already present; rerun with
+  --reset` before writing any row. This substitutes for the missing production
+  pipeline and must not be cited as pipeline, tie-out, or integrity evidence.
+- **Read-only role and view-only surface.** `recon_dashboards_ro` is `NOLOGIN`,
+  not a member of any application role, and not superuser/createdb/createrole/
+  replication. It has `default_transaction_read_only=on` and
+  `statement_timeout=30s`; the local login sets both directly because group
+  `rolconfig` is not inherited at connection time. Its surface is exactly five
+  owner-rights views (`v_ops_match_rate`, `v_ops_unmatched_value`,
+  `v_ops_break_aging`, `v_ops_approval_queue`, `v_ops_resolution_mix`) with
+  `SELECT` on the views only. `PUBLIC` is revoked; there is no base-table,
+  sequence, function, or `v_agent_*` grant, and base-table reads through the
+  datasource fail with SQLSTATE `42501`. The migration Down revokes this
+  database's privileges and drops the views; its cluster-wide `DROP ROLE` is
+  guarded and retains the role with a NOTICE while another database in the same
+  cluster still holds a grant. Down is therefore not a cluster cleanup step.
+- **Fresh-volume login and existing-volume reset path.** A fresh Postgres volume
+  creates the local-only `recon_dev_dashboards_ro` login through
+  `compose/initdb/01-roles.sql`; the migration creates the role/views/grants.
+  An existing volume does not rerun initdb, so the documented path is the
+  idempotent `docker compose exec -T postgres psql ... -f
+  /docker-entrypoint-initdb.d/01-roles.sql` rerun followed by `make migrate`,
+  or the destructive `docker compose down -v` alternative. There is no claim of
+  zero manual steps on existing volumes.
+- **Canonical aging rule (AQ-2 / AQ-7).** One row per open/in-case break. The
+  reference date is the **minimum resolvable** ledger/external `value_date`;
+  `breaks.side` is the break type. Buckets are `0-1`, `2-3`, `4-7`, `>7`, and
+  `unknown`; a missing or future-dated minimum is `unknown` (bucket order 5),
+  never `0-1`. `age_days` exposes the raw distance and may be negative for a
+  future date. Panel 3 orders by `bucket_order`, not lexically.
+- **Classification and approval-queue semantics (AQ-6).** One terminal row per
+  case with precedence escalated > human > auto; resolved cases use
+  `resolved_at`, escalated cases use `created_at` because the schema has no
+  escalation timestamp; unqualified cases are excluded. This is a snapshot,
+  not history. Approval latency uses the earliest approved decision; any
+  rejected decision presents `rejected` and suppresses latency (fail-closed).
+  Pending/oldest-pending are query-time snapshots. Panel 4's
+  `$__timeFilter(approved_at)` inside `FILTER (...)` was executed through the
+  real Grafana 13.3.2 datasource and expanded correctly, so the recorded
+  fallback was not needed.
+- **Pinned provisioning and security defaults (AQ-3 / AQ-5).**
+  `grafana/grafana:13.3.2` and `prom/prometheus:v3.16.0` are pinned; the
+  PostgreSQL plugin id is `grafana-postgresql-datasource`. Grafana and
+  Prometheus publish on `127.0.0.1` only; anonymous access and sign-up are off;
+  reporting/update checks are off; plugin preinstall is disabled; provisioning
+  and dashboard mounts are read-only; no Docker socket is mounted. Provisioning
+  YAML uses only `${RECON_DASHBOARDS_RO_USER}` /
+  `${RECON_DASHBOARDS_RO_PASSWORD}` env placeholders (plus the Grafana admin
+  env), and no literal credential or secret is committed. Prometheus is
+  **self-scrape only** and panel 6 (`up{job="prometheus"}`) is explicitly a
+  supplementary availability stat, not live application metrics.
+- **Visual check remains PENDING (AQ-4).** Automated evidence covers Grafana
+  health, both datasources and their health, the provisioned `recon-ops`
+  dashboard in folder `Recon`, every panel query through `/api/ds/query`, and
+  the base-table denial. It does not prove rendered readability (titles, units,
+  legends, bucket order, non-empty charts). **Visual panel check: PENDING
+  (human).** No screenshot is committed and the visual check must not be
+  recorded as passed until a human inspects it.
+- **Metric exposure residual stays open.** M5-04 does not add authentication,
+  rate limiting, or in-flight limits to the public API `/metrics`; Q-101
+  residual A6 remains open, and Grafana/Prometheus auth, TLS, retention, and
+  non-loopback exposure are out of scope.
+- **No M5-05/M5-06 scope and no `docs/spec.md` edit.** M5-04 adds no agent
+  quality views/dashboard, no integrity job or real integrity producer, no
+  alerting, and no application services. `docs/spec.md` is unchanged; this
+  entry, `docs/dashboards.md`, and the docs boundary in `docs/metrics.md` are
+  the delivered documentation.
+
+**Q-102 final adversary addendum (post-review docs phase; behavior frozen; no
+`docs/spec.md` edit).** QA passed and the adversary recorded 0 blockers with
+eight non-blocking findings. This addendum records the documentation-visible
+residuals and their owners; `docs/dashboards.md` was corrected in the same
+pass.
+
+- **Down retains `recon_dashboards_ro` on a normal dev cluster.** The initdb
+  login `recon_dev_dashboards_ro` is a member of `recon_dashboards_ro`, which
+  is enough to make `DROP ROLE` raise SQLSTATE `2BP01`
+  (`dependent_objects_still_exist`). The guarded Down catches it and emits a
+  NOTICE that names only cross-database grants, so the role remains. Spec §3.1
+  says the Down "drops the role"; that is not met in a normal dev cluster. No
+  object privilege remains in this database, the role is `NOLOGIN`, and the
+  project Up/Down applies/re-applies cleanly, so there is no grant or security
+  impact. Owner: future migration cleanup (revoke membership before `DROP
+  ROLE`, and re-grant it on Up if that is the chosen fix) or a spec-wording
+  revision; do not drop the role without preserving the Grafana login, because
+  Up does not recreate the initdb membership.
+- **Synthetic boundary is now in the first paragraph.** `docs/dashboards.md`
+  states in its opening section that panel data comes from the synthetic
+  `recon demo ops` path and is demo evidence, not a production M2–M4 pipeline
+  run or audit-chain proof (Q-98). The detailed boundary section is retained.
+- **Live coverage: the T7 Go test is absent and the verifier does not require
+  rows.** No `TestM504LiveDashboard` or `RECON_DASHBOARD_URL` exists anywhere in
+  the tree. `scripts/verify-dashboard.sh` checks that each panel returns a
+  frame and a successful query, but it passes with `rows=0`; the fresh-volume
+  run before `make demo-ops` recorded `0/0/0/0/0/1` as execution-only evidence.
+  The non-empty data evidence is the T4 integration coverage after the demo
+  plus the post-demo live run, which recorded rows **1 / 4 / 7 / 3 / 6 / 1**.
+  Owner: developer to add the named T7 test, or an explicit owner decision to
+  accept the shell verifier and add a `--require-rows` mode; the docs now
+  describe the delivered scope instead of claiming a Go T7 test.
+- **Only Grafana and Prometheus are loopback-bound; Postgres is not.**
+  `docker inspect` shows `recon-agent-postgres-1` publishing `5432/tcp` on all
+  host interfaces (`0.0.0.0:5432`), while Grafana and Prometheus are
+  `127.0.0.1:3000` / `127.0.0.1:9090`; `pg_hba.conf` accepts remote password
+  auth. The Postgres binding is pre-existing and M5-04 changes neither it nor
+  the Postgres port; AC-5's loopback requirement is scoped to the new
+  Grafana/Prometheus ports. The test report's "loopback ports" wording is
+  overbroad if read as the whole compose stack. Do not repeat "all services
+  loopback". Owner: a separate Postgres-binding/password hardening task if the
+  literal AC-5 wording is intended; `docs/dashboards.md` now names the
+  exception.
+- **`v_ops_match_rate` fails closed on a non-integer numeric stat.**
+  `jsonb_typeof(...)='number'` accepts `1.5`, then `(stats->>'matched')::bigint`
+  aborts with `invalid input syntax for type bigint: "1.5"`; the spec §3.2 SQL
+  has the same cast. An absent or non-number value still counts as zero, and a
+  zero denominator still yields NULL. The effect is a failed query for the
+  affected bucket/source, not data corruption or a fabricated zero. The docs'
+  earlier "malformed counts as zero" phrasing was overbroad and is corrected;
+  owner: future view/spec hardening (integer-shape regex or numeric validation
+  before the cast).
+- **`OPENCODE_API_KEY` rotation is still pending (operational).** The W3 `.env`
+  key was exposed in live OpenCode session history
+  (`~/.local/share/opencode/opencode.db`); the host `.env` is untracked and
+  gitignored but remains mode 644 and has not been rotated. The secret scan
+  found no key content in the repository, run artifacts, dashboard JSON, or
+  provisioning YAML. Required: rotate the key, update `.env`, `chmod 600 .env`,
+  restart any holder of the old value, and optionally purge the affected
+  session rows. This is not a code defect or M5-04 acceptance criterion, but it
+  is the highest-priority operational action before further live probes.
+- **UTC-midnight determinism edge.** `recon demo ops` reads `SELECT now()` once
+  per run and anchors date buckets to that value, so two reset/seed runs that
+  straddle 00:00 UTC can produce different date-bearing values; determinism is
+  guaranteed only for the same seed and reset database on the same UTC day
+  (spec §6.3). Low-probability test flake, no data risk; owner: inject a fixed
+  clock or skip/retry on differing database dates.
+- **Stale source/config comments (not editable from docs).** The migration
+  still carries `TODO(M5-04 W1)`, and `compose.yaml`'s header still says "four
+  NOLOGIN group roles and four local-only development logins" while initdb now
+  creates five/five. The Down/test comments also name only cross-database
+  grants, omitting the membership cause above. Owner: next source touch of the
+  migration, compose file, or dashboard integration test.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-102 | **RESOLVED (M5-04) for the implementation; residuals stay OPEN:** the deterministic `recon demo ops` seed (with the M1 demo) substitutes for the missing production M2–M4 pipeline and is explicitly synthetic, with no app services added to compose (Q-98/AQ-1); the dashboard reads through the read-only `recon_dashboards_ro` role and exactly five `SELECT`-only `v_ops_*` views (no base-table grant; `42501` denial; role settings read-only/30s), with a guarded Down and a fresh-volume login plus documented existing-volume rerun; aging uses the minimum resolvable value date and canonical `0-1 / 2-3 / 4-7 / >7 / unknown` buckets (missing/future → `unknown`); classification is one terminal row per case with escalated > human > auto and `event_at = COALESCE(resolved_at, created_at)`, and approval latency is fail-closed on rejection; Grafana 13.3.2 / Prometheus v3.16.0 are pinned, self-scrape only, loopback-bound, anonymous/sign-up/plugin-preinstall off, with env-only credential placeholders and no committed secrets; panel 4's `$__timeFilter(approved_at)` macro expanded in the pinned Grafana; the visual panel check is PENDING (human, AQ-4) and Prometheus is not live application metrics; no M5-05/M5-06 scope and no `docs/spec.md` edit. | Spec §13.1 / FIN-42 / M5-04 / operators / M5-12 | Keep the synthetic-data boundary and no-app-services decision explicit in docs and demos; keep the view-only read-only role, canonical aging/precedence/queue semantics, pinned images, loopback/anon-off defaults, and env-only credentials; keep the existing-volume rerun path documented rather than claiming zero-step; cite API/query evidence only as provisioning/query proof and leave visual acceptance PENDING until a human checks it; keep Prometheus self-scrape labelled as not live app metrics; leave the public `/metrics` auth/rate-limit/pool residual open (Q-101 A6) and deliver M5-05/M5-06 only in their own tasks; amend `docs/spec.md` only in a future spec revision if owners choose to. |
