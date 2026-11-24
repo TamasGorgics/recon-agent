@@ -988,3 +988,94 @@ Residual owners: A1 and A6 → M5-04 (agent cardinality monitoring; metrics auth
 rate limiting, pool sizing); A7 and A8 → future catalog/validator hardening (no
 task yet; record before changing caps or validators); A9 → next source touch of
 `internal/metrics/guard.go`; A2-A5 → documentation-only and closed by this pass.
+
+## M5-04 Ops dashboard (Q-102)
+
+**Q-102 addendum (Wave 5 docs phase; developer-owned; no `docs/spec.md`
+edit).** `docs/spec.md` §13.1 names the ops dashboard and the metric names are
+frozen by Q-101; the delivered dashboard, its data path, and its boundaries are
+recorded here. The specification text itself is unchanged. M5-05 (agent quality
+dashboard) and M5-06 (daily integrity job) remain out of scope. The operator
+reference is `docs/dashboards.md`.
+
+- **Synthetic data path, not a production pipeline (Q-98 / AQ-1).** The
+  deterministic `recon demo ops` command (and `make demo-ops`) is the data path
+  for all five Postgres panels. It runs the M1 demo seed and then inserts
+  synthetic agent runs, proposals, approvals, applied proposals, cases, and
+  break-aging fixtures. It is **synthetic dashboard demo evidence**, not a
+  production M2–M4 pipeline run: it bypasses the agent, policy engine, approval
+  service, executor, and audit chain, makes no network or LLM call, and writes
+  deterministic `demo-ops:`/`demo-ops-synthetic` marker rows. The summary prints
+  counts only. No API/worker/outbox service is added to compose. `recon demo
+  seed` alone leaves the ops panels empty; a second `recon demo ops` without
+  `--reset` fails closed with `demo ops: ops data already present; rerun with
+  --reset` before writing any row. This substitutes for the missing production
+  pipeline and must not be cited as pipeline, tie-out, or integrity evidence.
+- **Read-only role and view-only surface.** `recon_dashboards_ro` is `NOLOGIN`,
+  not a member of any application role, and not superuser/createdb/createrole/
+  replication. It has `default_transaction_read_only=on` and
+  `statement_timeout=30s`; the local login sets both directly because group
+  `rolconfig` is not inherited at connection time. Its surface is exactly five
+  owner-rights views (`v_ops_match_rate`, `v_ops_unmatched_value`,
+  `v_ops_break_aging`, `v_ops_approval_queue`, `v_ops_resolution_mix`) with
+  `SELECT` on the views only. `PUBLIC` is revoked; there is no base-table,
+  sequence, function, or `v_agent_*` grant, and base-table reads through the
+  datasource fail with SQLSTATE `42501`. The migration Down revokes this
+  database's privileges and drops the views; its cluster-wide `DROP ROLE` is
+  guarded and retains the role with a NOTICE while another database in the same
+  cluster still holds a grant. Down is therefore not a cluster cleanup step.
+- **Fresh-volume login and existing-volume reset path.** A fresh Postgres volume
+  creates the local-only `recon_dev_dashboards_ro` login through
+  `compose/initdb/01-roles.sql`; the migration creates the role/views/grants.
+  An existing volume does not rerun initdb, so the documented path is the
+  idempotent `docker compose exec -T postgres psql ... -f
+  /docker-entrypoint-initdb.d/01-roles.sql` rerun followed by `make migrate`,
+  or the destructive `docker compose down -v` alternative. There is no claim of
+  zero manual steps on existing volumes.
+- **Canonical aging rule (AQ-2 / AQ-7).** One row per open/in-case break. The
+  reference date is the **minimum resolvable** ledger/external `value_date`;
+  `breaks.side` is the break type. Buckets are `0-1`, `2-3`, `4-7`, `>7`, and
+  `unknown`; a missing or future-dated minimum is `unknown` (bucket order 5),
+  never `0-1`. `age_days` exposes the raw distance and may be negative for a
+  future date. Panel 3 orders by `bucket_order`, not lexically.
+- **Classification and approval-queue semantics (AQ-6).** One terminal row per
+  case with precedence escalated > human > auto; resolved cases use
+  `resolved_at`, escalated cases use `created_at` because the schema has no
+  escalation timestamp; unqualified cases are excluded. This is a snapshot,
+  not history. Approval latency uses the earliest approved decision; any
+  rejected decision presents `rejected` and suppresses latency (fail-closed).
+  Pending/oldest-pending are query-time snapshots. Panel 4's
+  `$__timeFilter(approved_at)` inside `FILTER (...)` was executed through the
+  real Grafana 13.3.2 datasource and expanded correctly, so the recorded
+  fallback was not needed.
+- **Pinned provisioning and security defaults (AQ-3 / AQ-5).**
+  `grafana/grafana:13.3.2` and `prom/prometheus:v3.16.0` are pinned; the
+  PostgreSQL plugin id is `grafana-postgresql-datasource`. Grafana and
+  Prometheus publish on `127.0.0.1` only; anonymous access and sign-up are off;
+  reporting/update checks are off; plugin preinstall is disabled; provisioning
+  and dashboard mounts are read-only; no Docker socket is mounted. Provisioning
+  YAML uses only `${RECON_DASHBOARDS_RO_USER}` /
+  `${RECON_DASHBOARDS_RO_PASSWORD}` env placeholders (plus the Grafana admin
+  env), and no literal credential or secret is committed. Prometheus is
+  **self-scrape only** and panel 6 (`up{job="prometheus"}`) is explicitly a
+  supplementary availability stat, not live application metrics.
+- **Visual check remains PENDING (AQ-4).** Automated evidence covers Grafana
+  health, both datasources and their health, the provisioned `recon-ops`
+  dashboard in folder `Recon`, every panel query through `/api/ds/query`, and
+  the base-table denial. It does not prove rendered readability (titles, units,
+  legends, bucket order, non-empty charts). **Visual panel check: PENDING
+  (human).** No screenshot is committed and the visual check must not be
+  recorded as passed until a human inspects it.
+- **Metric exposure residual stays open.** M5-04 does not add authentication,
+  rate limiting, or in-flight limits to the public API `/metrics`; Q-101
+  residual A6 remains open, and Grafana/Prometheus auth, TLS, retention, and
+  non-loopback exposure are out of scope.
+- **No M5-05/M5-06 scope and no `docs/spec.md` edit.** M5-04 adds no agent
+  quality views/dashboard, no integrity job or real integrity producer, no
+  alerting, and no application services. `docs/spec.md` is unchanged; this
+  entry, `docs/dashboards.md`, and the docs boundary in `docs/metrics.md` are
+  the delivered documentation.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-102 | **RESOLVED (M5-04) for the implementation; residuals stay OPEN:** the deterministic `recon demo ops` seed (with the M1 demo) substitutes for the missing production M2–M4 pipeline and is explicitly synthetic, with no app services added to compose (Q-98/AQ-1); the dashboard reads through the read-only `recon_dashboards_ro` role and exactly five `SELECT`-only `v_ops_*` views (no base-table grant; `42501` denial; role settings read-only/30s), with a guarded Down and a fresh-volume login plus documented existing-volume rerun; aging uses the minimum resolvable value date and canonical `0-1 / 2-3 / 4-7 / >7 / unknown` buckets (missing/future → `unknown`); classification is one terminal row per case with escalated > human > auto and `event_at = COALESCE(resolved_at, created_at)`, and approval latency is fail-closed on rejection; Grafana 13.3.2 / Prometheus v3.16.0 are pinned, self-scrape only, loopback-bound, anonymous/sign-up/plugin-preinstall off, with env-only credential placeholders and no committed secrets; panel 4's `$__timeFilter(approved_at)` macro expanded in the pinned Grafana; the visual panel check is PENDING (human, AQ-4) and Prometheus is not live application metrics; no M5-05/M5-06 scope and no `docs/spec.md` edit. | Spec §13.1 / FIN-42 / M5-04 / operators / M5-12 | Keep the synthetic-data boundary and no-app-services decision explicit in docs and demos; keep the view-only read-only role, canonical aging/precedence/queue semantics, pinned images, loopback/anon-off defaults, and env-only credentials; keep the existing-volume rerun path documented rather than claiming zero-step; cite API/query evidence only as provisioning/query proof and leave visual acceptance PENDING until a human checks it; keep Prometheus self-scrape labelled as not live app metrics; leave the public `/metrics` auth/rate-limit/pool residual open (Q-101 A6) and deliver M5-05/M5-06 only in their own tasks; amend `docs/spec.md` only in a future spec revision if owners choose to. |

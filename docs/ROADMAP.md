@@ -178,7 +178,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☐ | M5-01 | OpenTelemetry tracing | M | M2-09, M4-06 |
 | ☑ | M5-02 | Replay | M | M2-09 |
 | ☑ | M5-03 | Prometheus metrics | S | M4-02 |
-| ☐ | M5-04 | Ops dashboard | M | M5-03, M1-15 |
+| ☑ | M5-04 | Ops dashboard | M | M5-03, M1-15 |
 | ☐ | M5-05 | Agent quality dashboard | M | M5-03, M3-04 |
 | ☐ | M5-06 | Daily integrity job | M | M4-08, M1-15, M4-13 |
 | ☐ | M5-07 | Daily reconciliation report | M | M5-06, M4-07 |
@@ -1002,6 +1002,32 @@ precision recorded in the Q-101 addendum, and the tick and evidence stand.
 
 **Done when**
 - `docker compose up` provisions the dashboard with no manual steps; after `recon demo seed` plus the M2 to M4 pipeline, every panel shows data.
+
+**Evidence note (2026-11-24; box ticked).** `docker compose up` provisions the
+pinned Grafana 13.3.2 and Prometheus v3.16.0 services, both provisioned
+datasources, and the `Recon Ops` dashboard (`uid: recon-ops`, six panels) with
+no manual steps on a fresh Postgres volume; `make migrate` creates the
+read-only `recon_dashboards_ro` role and five `SELECT`-only `v_ops_*` views
+(base-table reads are denied with SQLSTATE `42501`). Because the production
+M2–M4 pipeline is not run in compose, the deterministic `recon demo ops` /
+`make demo-ops` seed (Q-98/Q-102; explicitly synthetic demo evidence, no app
+services added) populates all panels; the live verifier observed panel row
+counts **1 / 4 / 7 / 3 / 6 / 1** and `up{job="prometheus"}=1` for panels 1–6 on
+2026-11-24, with all five aging buckets and all three classifications present.
+Panel 4's `$__timeFilter(approved_at)` expanded correctly in the pinned
+Grafana. Images and the datasource user/password are pinned/env placeholders;
+Grafana/Prometheus are loopback-only with anonymous auth, sign-up, and plugin
+preinstall off, and no secret is committed. Existing Postgres volumes need the
+documented idempotent `01-roles.sql` rerun plus `make migrate`; zero-step is
+claimed only for fresh volumes. `./scripts/verify-dashboard.sh`,
+`make lint test`, `make test-integration`, and `make test-fault` were run
+uncached on the released SHA; evidence and command tails are in the run notes
+`mwuxqawb-m5-04-ops-dashboard`. **Visual panel check: PENDING (human)** — AQ-4
+accepts API/query evidence as the automated gate; it is not a rendering claim.
+Prometheus is a self-scrape, not live application metrics; no M5-05/M5-06 scope
+and `docs/spec.md` is unchanged. Residuals (synthetic data path, existing-volume
+step, visual check, public `/metrics` auth/rate limiting) are recorded as Q-102;
+the operator guide is `docs/dashboards.md`.
 
 ### M5-05 · Agent quality dashboard · M
 **Spec:** section 13.2 · **Needs:** M5-03, M3-04

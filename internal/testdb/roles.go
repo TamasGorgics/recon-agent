@@ -22,6 +22,12 @@ const (
 	RoleExecutor = db.RoleExecutor
 	RoleAgentRO  = db.RoleAgentRO
 	RoleAuditRO  = db.RoleAuditRO
+
+	// DashboardsRole is the M5-04 read-only dashboard group role. It is
+	// deliberately outside db.Roles(): the four application roles and their
+	// login-count assertions are unchanged, and a dashboard login is provisioned
+	// lazily only when a test asks for one.
+	DashboardsRole = "recon_dashboards_ro"
 )
 
 // loginRoleNamePrefix scopes ephemeral login names to one test process. The
@@ -80,24 +86,86 @@ func (d *DB) provisionLogins(ctx context.Context) error {
 	defer func() { _ = admin.Close(context.WithoutCancel(ctx)) }()
 
 	for _, role := range RoleNames() {
-		username := nextLoginName(role)
-		password, err := randomToken(24)
+		login, err := d.createLogin(ctx, admin, role)
 		if err != nil {
-			return fmt.Errorf("testdb: generate password for %s: %w", role, err)
+			return err
 		}
-		stmt := fmt.Sprintf(
-			"CREATE ROLE %s LOGIN INHERIT PASSWORD %s IN ROLE %s",
-			quoteIdent(username), quoteLiteral(password), quoteIdent(role))
-		if _, err := admin.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("testdb: create ephemeral login %q for %s: %w", username, role, err)
-		}
+		d.logins[role] = login
+	}
+	return nil
+}
 
-		dsn, err := dsnForLogin(d.adminDSN, d.Name, username, password)
-		if err != nil {
+// DashboardsDSN lazily provisions one ephemeral LOGIN user for the M5-04
+// read-only dashboard group and returns its DSN. The login is created only when
+// a dashboard test needs it, so the four application-role login-count
+// assertions do not change. The login is recorded on the DB and dropped by the
+// normal per-test cleanup.
+//
+// The migration must already have created recon_dashboards_ro (the test
+// template is migrated by EnsureTemplate); otherwise CREATE ROLE ... IN ROLE
+// fails and the caller sees the error rather than a silent maintenance DSN.
+func (d *DB) DashboardsDSN(ctx context.Context) (string, error) {
+	if login, ok := d.logins[DashboardsRole]; ok {
+		return login.dsn, nil
+	}
+	if d.logins == nil {
+		d.logins = make(map[string]loginUser, 1)
+	}
+
+	admin, err := pgx.Connect(ctx, d.adminDSN)
+	if err != nil {
+		return "", fmt.Errorf("testdb: connect admin database: %w", err)
+	}
+	defer func() { _ = admin.Close(context.WithoutCancel(ctx)) }()
+
+	login, err := d.createLogin(ctx, admin, DashboardsRole)
+	if err != nil {
+		return "", err
+	}
+	d.logins[DashboardsRole] = login
+	return login.dsn, nil
+}
+
+// createLogin creates one ephemeral LOGIN user for role. The dashboard login
+// also carries the read-only/timeout settings directly: PostgreSQL role-level
+// settings are not inherited by a member LOGIN at connection time.
+func (d *DB) createLogin(ctx context.Context, admin *pgx.Conn, role string) (loginUser, error) {
+	username := nextLoginName(role)
+	password, err := randomToken(24)
+	if err != nil {
+		return loginUser{}, fmt.Errorf("testdb: generate password for %s: %w", role, err)
+	}
+	stmt := fmt.Sprintf(
+		"CREATE ROLE %s LOGIN INHERIT PASSWORD %s IN ROLE %s",
+		quoteIdent(username), quoteLiteral(password), quoteIdent(role))
+	if _, err := admin.Exec(ctx, stmt); err != nil {
+		return loginUser{}, fmt.Errorf("testdb: create ephemeral login %q for %s: %w", username, role, err)
+	}
+
+	if role == DashboardsRole {
+		if err := d.applyDashboardSettings(ctx, admin, username); err != nil {
 			_ = dropLoginWithConn(ctx, admin, username)
-			return fmt.Errorf("testdb: build DSN for ephemeral login %q: %w", username, err)
+			return loginUser{}, err
 		}
-		d.logins[role] = loginUser{Role: role, Username: username, dsn: dsn}
+	}
+
+	dsn, err := dsnForLogin(d.adminDSN, d.Name, username, password)
+	if err != nil {
+		_ = dropLoginWithConn(ctx, admin, username)
+		return loginUser{}, fmt.Errorf("testdb: build DSN for ephemeral login %q: %w", username, err)
+	}
+	return loginUser{Role: role, Username: username, dsn: dsn}, nil
+}
+
+func (d *DB) applyDashboardSettings(ctx context.Context, admin *pgx.Conn, username string) error {
+	for _, setting := range []string{
+		"SET default_transaction_read_only = on",
+		"SET statement_timeout = '30s'",
+	} {
+		if _, err := admin.Exec(ctx,
+			fmt.Sprintf("ALTER ROLE %s %s", quoteIdent(username), setting)); err != nil {
+			return fmt.Errorf("testdb: apply dashboard role setting %q to %q: %w", setting, username, err)
+		}
 	}
 	return nil
 }

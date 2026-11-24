@@ -1,0 +1,30 @@
+apiVersion: 1
+
+# M5-04 ops dashboard datasource. User and password are interpolated by
+# Grafana's provisioning env expansion; never put a literal credential in this
+# file. The pinned image bundles the PostgreSQL plugin under
+# grafana-postgresql-datasource (the legacy "postgres" id is only an alias).
+datasources:
+  - name: Recon Postgres
+    uid: recon-postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    orgId: 1
+    url: postgres:5432
+    database: recon
+    user: "${RECON_DASHBOARDS_RO_USER}"
+    isDefault: true
+    editable: false
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+      # Grafana 13's PostgreSQL plugin reads jsonData.timezone. Keep
+      # session_timezone too so the spec's field name remains documented at
+      # the provisioning boundary; both resolve to a UTC session.
+      timezone: UTC
+      session_timezone: UTC
+      maxOpenConns: 4
+      maxIdleConns: 2
+    secureJsonData:
+      password: "${RECON_DASHBOARDS_RO_PASSWORD}"

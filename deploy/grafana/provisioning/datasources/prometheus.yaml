@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# M5-04 supplementary datasource. Prometheus only self-scrapes; this is not a
+# claim about live application metrics.
+datasources:
+  - name: Recon Prometheus
+    uid: recon-prometheus
+    type: prometheus
+    access: proxy
+    orgId: 1
+    url: http://prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
