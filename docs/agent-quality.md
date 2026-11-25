@@ -120,20 +120,27 @@ layer on top of the M1 and M5-04 ops layers:
   audit timestamp on a later UTC day than `created_at` to exercise attribution.
 - 4 `case.transition` escalation events with reasons `policy` (×2),
   `low_confidence` (×1), and a missing reason that renders as `unknown`.
-- Every quality row carries a `demo-quality:`/`demo-quality-v1` marker; the
-  apply-failed and escalation audits are written through the internal audit
-  writer so the audit chain stays valid.
+- Every quality row is recorded in the durable `demo_metadata` marker table in
+  the same transaction as the write; where the schema has a text field it also
+  carries a `demo-quality:` prefix or the `demo-quality-v1` dataset version
+  (proposal idempotency keys, agent-run trace IDs, approver API keys, approval
+  channel, eval scenario IDs). The apply-failed and escalation audits are
+  written through the internal audit writer so the audit chain stays valid.
 
 Without `--reset`, any `eval_runs` row or demo-quality marker aborts before
 any write, and the command exits non-zero. The M1, ops, and quality layers are
-all-or-nothing because the whole seed is one transaction that takes `EXCLUSIVE`
-locks on every seed-target table before the presence checks and the marker
-snapshot: a failure at any layer rolls back exactly to the pre-run state, so a
-failed run never leaves a partial superset. There is no compensating reset and
-no unguarded fallback. Concurrent writers are serialized: a writer that commits
-before the locks are acquired is seen by the presence checks and the seed aborts
-fail-closed with no writes, while a writer that starts after the locks blocks
-until the seed commits, so a real row can never be adopted into `demo_metadata`
+all-or-nothing because the whole seed is one `READ COMMITTED` transaction that
+takes `EXCLUSIVE` locks on every seed-target table (24 tables today) before the
+presence checks and the marker snapshot: a failure at any layer rolls back
+exactly to the state at transaction start, so a failed run never leaves a
+partial superset. That rollback does not undo an explicit `--reset`:
+`make demo-quality` resets first, so a failed seed after a reset leaves the
+migration-only database. There is no compensating reset and no unguarded
+fallback. Concurrent writers are serialized: a writer that commits before the
+locks are acquired is visible to the presence checks (any existing `eval_runs`
+row or demo-quality marker aborts with no writes) and to the baseline snapshot,
+so its rows are never adopted; a writer that starts after the locks blocks until
+the seed commits. A real row can therefore never be adopted into `demo_metadata`
 or be deleted by a later `--reset`. An explicit `--reset` remains a separate
 guarded destructive step. A database seeded before the `demo_metadata` marker
 migration still needs a one-time manual/fresh-database wipe; the guard must not

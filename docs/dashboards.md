@@ -73,21 +73,24 @@ explicit approval. Do not claim zero manual steps for existing volumes.
 ### Reset data
 
 `make demo-quality` runs `recon demo quality --seed 1 --days 14 --difficulty
-realistic --reset`. It drops and recreates the public schema, replays
-migrations, seeds the M1 demo, seeds the synthetic ops layer when it is not
-already present, and then seeds the quality layer. The three layers are
-all-or-nothing because the whole seed is one transaction that takes `EXCLUSIVE`
-locks on every seed-target table before the presence checks and the marker
-snapshot: a failure rolls back exactly to the pre-run state, with no
-compensating reset. Concurrent writers are serialized: a writer that commits
-before the locks are acquired is seen by the presence checks and aborts the
-seed, while a writer that starts after the locks blocks until the seed commits,
-so rows committed concurrently are never adopted as demo data and survive. An
-explicit `--reset` is a separate guarded destructive step; it is destructive and
-refuses to run when `RECON_ENV=production`; it is the documented data path for
-both dashboards. A database seeded before the
-`demo_metadata` marker migration needs a one-time manual/fresh-database wipe;
-never bypass the guard.
+realistic --reset`. It drops and recreates both the `public` and `eval_truth`
+schemas, replays migrations, seeds the M1 demo, seeds the synthetic ops layer
+when it is not already present, and then seeds the quality layer. The three
+layers are all-or-nothing because the whole seed is one `READ COMMITTED`
+transaction that takes `EXCLUSIVE` locks on every seed-target table (24 tables
+today) before the presence checks and the marker snapshot: a failure rolls back
+exactly to the state at transaction start, with no compensating reset. That
+rollback does not undo the reset; a failed seed after a reset leaves the
+migration-only database. Concurrent writers are serialized: a writer that
+commits before the locks are acquired is visible to the presence checks (an
+existing `eval_runs` row or demo-quality marker aborts the seed with no writes)
+and to the baseline snapshot, so its rows are never adopted as demo data and
+survive any later guarded reset (which refuses the mixed database); a writer
+that starts after the locks blocks until the seed commits. An explicit `--reset`
+is a separate guarded destructive step; it is destructive and refuses to run
+when `RECON_ENV=production`; it is the documented data path for both dashboards.
+A database seeded before the `demo_metadata` marker migration needs a one-time
+manual/fresh-database wipe; never bypass the guard.
 
 `make demo-ops` (`recon demo ops ... --reset`) is the M1 + ops-only path; it
 leaves the quality panels empty. `recon demo seed` alone repopulates only the
@@ -287,9 +290,11 @@ evidence**, not a production M2–M4 pipeline or eval run. They exist because
 M5-04/M5-05 deliberately do not add the missing M2–M4 API/worker/outbox
 pipeline to compose (Q-98 / AQ-1). They do not run the production agent, policy
 engine, approval service, or executor, and they make no network or LLM call.
-They write rows marked with deterministic demo identifiers (`demo-ops:` /
-`demo-quality:`); the quality seed writes its apply-failed/escalation audit rows
-through the internal append-only audit writer. The summaries print counts only.
+They record every row they create in the durable `demo_metadata` marker table,
+using deterministic IDs and `demo-ops:`/`demo-quality:` text markers where the
+schema has a suitable field; the quality seed writes its apply-failed/escalation
+audit rows through the internal append-only audit writer. The summaries print
+counts only.
 
 `recon demo quality` is a strict superset: M1, then the ops layer when absent,
 then the quality layer. The quality layer writes eval runs/results across two

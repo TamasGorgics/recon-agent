@@ -1263,11 +1263,15 @@ is not used to reinterpret or waive the approved contract.
   `demo_metadata` marker diff) is one `READ COMMITTED` transaction serialized
   by a transaction-scoped advisory lock and `EXCLUSIVE` table locks on every
   seed-target table, so demo commands cannot interleave and no production
-  writer can commit into a seed target while the seed runs. Failures roll back
-  exactly; concurrent real rows are never adopted; there is no compensation
-  reset. Explicit `--reset` stays the existing all-tables `ACCESS EXCLUSIVE`
-  guarded reset. A pre-marker database needs a one-time manual/fresh-database
-  wipe; visual panel confirmation stays PENDING (human).
+  writer can commit into a seed target while the seed runs. Nested service
+  transactions are savepoints inside the seed transaction, so the audit
+  writer's global advisory lock is held until the seed commits and concurrent
+  audit appends wait for the seed; this dev-only serialization trade-off is
+  accepted. Failures roll back exactly; concurrent real rows are never adopted;
+  there is no compensation reset. Explicit `--reset` stays the existing
+  all-tables `ACCESS EXCLUSIVE` guarded reset. A pre-marker database needs a
+  one-time manual/fresh-database wipe; visual panel confirmation stays PENDING
+  (human).
 - **Seed evidence and synthetic boundary.** On the documented seed the quality
   seed writes 13 eval runs / 64 case results / 12 production cases / 10 agent
   runs / 10 proposals / 5 approvals (3 approved, 2 rejected) / 6 applied /
