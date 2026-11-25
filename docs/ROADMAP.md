@@ -179,7 +179,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M5-02 | Replay | M | M2-09 |
 | ☑ | M5-03 | Prometheus metrics | S | M4-02 |
 | ☑ | M5-04 | Ops dashboard | M | M5-03, M1-15 |
-| ☐ | M5-05 | Agent quality dashboard | M | M5-03, M3-04 |
+| ☑ | M5-05 | Agent quality dashboard | M | M5-03, M3-04 |
 | ☐ | M5-06 | Daily integrity job | M | M4-08, M1-15, M4-13 |
 | ☐ | M5-07 | Daily reconciliation report | M | M5-06, M4-07 |
 | ☐ | M5-08 | Case file report | M | M5-01, M4-13, M4-07 |
@@ -1043,6 +1043,41 @@ guide is `docs/dashboards.md`.
 
 **Done when**
 - The views are tested against fixtures; the dashboard renders from seeded eval runs.
+
+**Evidence note (2026-11-25; box ticked).** The new migration
+`20261125120000_m5_05_eval_views.sql` creates seven owner-rights `v_eval_*`
+views and grants `SELECT` to `recon_dashboards_ro` only; with the five M5-04
+`v_ops_*` views the dashboard surface is twelve views, and `PUBLIC`/base-table
+reads remain denied (`42501`). Fixture tests pin accuracy's injection/repeat/
+unfinished/`matcher` exclusion, false-fix's injection inclusion, the strict
+terminal `apply_failed/(applied+apply_failed)` denominator and its
+`applied_at`/latest-audit/`created_at` attribution, rejection-based override
+with no edit inference, audit-derived escalation reasons, and the creation-day
+cohort escalation rate. `deploy/grafana/dashboards/agent-quality.json`
+(`uid: recon-agent-quality`) provisions eight panels into folder `Recon`
+through the existing provider; the deterministic `recon demo quality` /
+`make demo-quality` superset seed (M1 + ops + quality, fail-closed, guarded
+dev-only full reset because `audit_log` is append-only) made every quality panel
+non-empty. The uncached live verifier observed quality panel rows
+**7 / 7 / 5 / 7 / 7 / 7 / 3 / 7** and ops rows **1 / 4 / 7 / 3 / 6 / 1** on the
+released HEAD; both dashboards are provisioned in `Recon`, both datasources are
+healthy, and `./scripts/verify-dashboard.sh` requires non-empty seeded rows on
+both. M5-04's five-view/latest-migration tests and docs were updated to the
+twelve-view inventory without weakening any security assertion. The data is
+synthetic demo evidence, not a production eval/pipeline result; `docs/spec.md`
+is unchanged and Q-103 remains open for the append-only-reset and
+"rejects or edits" spec wording. A post-review safety repair added migration
+`20261125130000_m5_05_demo_metadata.sql` (approved second migration), the
+durable `demo_metadata` marker, an all-tables reset guard that aborts on any
+untagged row in either dropped schema, an atomic lock/guard/drop transaction,
+and all-or-nothing M1+ops+quality seeding in one transaction that takes
+`EXCLUSIVE` locks on every seed-target table before the presence checks and the
+marker snapshot (concurrent writers are serialized; exact rollback, no
+compensation reset, no concurrent-row adoption); those
+behaviours are covered by integration tests. **Visual panel check: PENDING
+(human)** —
+open <http://127.0.0.1:3000/d/recon-agent-quality> and inspect the eight panels;
+automated frames/non-empty rows are not a rendering claim. No M5-06/M6 scope.
 
 ### M5-06 · Daily integrity job · M
 **Spec:** FIN-52; section 4.6 · **Needs:** M4-08, M1-15, M4-13

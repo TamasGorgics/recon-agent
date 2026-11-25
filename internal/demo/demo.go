@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
@@ -154,26 +154,85 @@ type scopeRow struct {
 	Currency string
 }
 
+// Demo seed commands serialize on one transaction-scoped advisory lock, so two
+// concurrent `recon demo ...` invocations cannot interleave their presence
+// checks, seed writes, or marker diffs. lockSeedTables then serializes the seed
+// against production writers on the tables it writes.
+const (
+	demoSeedLockClass int32 = 0x4d3505
+	demoSeedLockObj   int32 = 505
+)
+
+// lockDemoSeed takes the advisory lock shared by Run, RunOps, and RunQuality.
+// It must be the first statement of the outer seed transaction.
+func lockDemoSeed(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`,
+		demoSeedLockClass, demoSeedLockObj); err != nil {
+		return fmt.Errorf("demo: acquire seed lock: %w", err)
+	}
+	return nil
+}
+
+// txBeginner adapts an already-open transaction to db.Beginner. The nested
+// transaction is a pgx savepoint inside the outer seed transaction, so every
+// service's own db.WithTx call joins the one transaction and nothing commits
+// early. The isolation level is ignored: the outer transaction defines it.
+type txBeginner struct{ tx pgx.Tx }
+
+func (b txBeginner) Begin(ctx context.Context) (pgx.Tx, error) {
+	return b.tx.Begin(ctx)
+}
+
+func (b txBeginner) BeginTx(ctx context.Context, _ pgx.TxOptions) (pgx.Tx, error) {
+	return b.tx.Begin(ctx)
+}
+
+// seedInputs is the generated dataset shared by the three seed commands. It is
+// prepared outside the transaction because it touches only a temp directory.
+type seedInputs struct {
+	dir      string
+	truth    synth.GroundTruth
+	manifest synth.Manifest
+}
+
+func prepareSeed(opts Options) (seedInputs, func(), error) {
+	dataset, truth, manifest, err := generate(opts)
+	if err != nil {
+		return seedInputs{}, nil, err
+	}
+	dir, err := os.MkdirTemp("", "recon-demo-*")
+	if err != nil {
+		return seedInputs{}, nil, fmt.Errorf("demo: create dataset directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	if err := dataset.Write(dir); err != nil {
+		cleanup()
+		return seedInputs{}, nil, fmt.Errorf("demo: write dataset: %w", err)
+	}
+	return seedInputs{dir: dir, truth: truth, manifest: manifest}, cleanup, nil
+}
+
 // Run executes the pipeline against opts.DBURL. The database must already be
 // migrated; call Reset first for the dev-only reset workflow.
+//
+// The whole seed is one READ COMMITTED transaction that takes EXCLUSIVE locks
+// on every seed target table before the pre-write marker snapshot. Concurrent
+// writers are serialized: a writer that commits before the locks are acquired is
+// visible to the checks/snapshot, and a writer that starts after the locks
+// blocks until the seed commits, so it can never be adopted as demo data. A
+// failure rolls back every row exactly and never runs a compensating reset, so
+// untagged data committed concurrently is never destroyed.
 func Run(ctx context.Context, opts Options) (Summary, error) {
 	opts = opts.withDefaults()
 	if strings.TrimSpace(opts.DBURL) == "" {
 		return Summary{}, errors.New("demo: database URL is required")
 	}
 
-	dataset, truth, manifest, err := generate(opts)
+	inputs, cleanup, err := prepareSeed(opts)
 	if err != nil {
 		return Summary{}, err
 	}
-	dir, err := os.MkdirTemp("", "recon-demo-*")
-	if err != nil {
-		return Summary{}, fmt.Errorf("demo: create dataset directory: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	if err := dataset.Write(dir); err != nil {
-		return Summary{}, fmt.Errorf("demo: write dataset: %w", err)
-	}
+	defer cleanup()
 
 	pool, err := db.NewPool(ctx, opts.DBURL)
 	if err != nil {
@@ -181,13 +240,47 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	}
 	defer pool.Close()
 
+	var summary Summary
+	if err := db.WithTx(ctx, pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted},
+		func(ctx context.Context, tx pgx.Tx) error {
+			if err := lockDemoSeed(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockSeedTables(ctx, tx); err != nil {
+				return err
+			}
+			var err error
+			summary, err = runSeedTx(ctx, opts, tx, inputs)
+			return err
+		}); err != nil {
+		return Summary{}, err
+	}
+	return summary, nil
+}
+
+// runSeedTx runs the M1 pipeline, its counts, and the demo_metadata marker diff
+// inside the caller's transaction. It never opens or commits a transaction of
+// its own beyond pgx savepoints inside tx.
+func runSeedTx(ctx context.Context, opts Options, tx pgx.Tx, inputs seedInputs) (Summary, error) {
+	beginner := txBeginner{tx: tx}
+
+	// Capture the M1-owned row keys before the pipeline writes, so only rows
+	// created by this run are adopted into demo_metadata. The EXCLUSIVE table
+	// locks are already held, so no other session can commit a row into these
+	// tables until this transaction ends; a concurrent real row can never be
+	// adopted.
+	baseline, err := snapshotDemoRows(ctx, tx)
+	if err != nil {
+		return Summary{}, err
+	}
+
 	loadActor, err := audit.SystemActor("synth")
 	if err != nil {
 		return Summary{}, fmt.Errorf("demo: load actor: %w", err)
 	}
 	if _, err := synth.Load(ctx, synth.LoadOptions{
-		Dir:     dir,
-		DB:      pool,
+		Dir:     inputs.dir,
+		DB:      beginner,
 		Clock:   opts.Clock,
 		Actor:   loadActor,
 		Sources: config.IngestConfig{Sources: opts.Sources},
@@ -196,7 +289,7 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		return Summary{}, fmt.Errorf("demo: load dataset: %w", err)
 	}
 
-	scopes, err := loadScopes(ctx, pool)
+	scopes, err := loadScopes(ctx, tx)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -210,14 +303,14 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		return Summary{}, fmt.Errorf("demo: matcher actor: %w", err)
 	}
 	lifecycleService, err := caselifecycle.NewService(caselifecycle.Options{
-		DB:    pool,
+		DB:    beginner,
 		Clock: opts.Clock,
 	})
 	if err != nil {
 		return Summary{}, fmt.Errorf("demo: case lifecycle service: %w", err)
 	}
 	engine, err := match.New(match.Options{
-		DB:        pool,
+		DB:        beginner,
 		Clock:     opts.Clock,
 		Actor:     matcherActor,
 		Config:    opts.Match,
@@ -230,7 +323,7 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 	if err != nil {
 		return Summary{}, fmt.Errorf("demo: cases actor: %w", err)
 	}
-	caseService, err := cases.NewService(pool, opts.Clock, caseActor)
+	caseService, err := cases.NewService(beginner, opts.Clock, caseActor)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -252,17 +345,17 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		}
 	}
 
-	groups, err := matchscore.LoadActiveMatches(ctx, pool, "")
+	groups, err := matchscore.LoadActiveMatches(ctx, tx, "")
 	if err != nil {
 		return Summary{}, err
 	}
-	scored := matchscore.Score(groups, truth)
+	scored := matchscore.Score(groups, inputs.truth)
 
 	summary := Summary{
-		Seed:           manifest.Seed,
-		Days:           manifest.Days,
-		Difficulty:     manifest.Difficulty,
-		DatasetVersion: manifest.DatasetVersion,
+		Seed:           inputs.manifest.Seed,
+		Days:           inputs.manifest.Days,
+		Difficulty:     inputs.manifest.Difficulty,
+		DatasetVersion: inputs.manifest.DatasetVersion,
 		Scopes:         len(scopes),
 		Matches:        scored.Matches,
 		CorrectMatches: scored.CorrectMatches,
@@ -273,13 +366,21 @@ func Run(ctx context.Context, opts Options) (Summary, error) {
 		PerPass:        orderedPasses(scored.PerPass),
 		Excluded:       scored.Excluded,
 	}
-	if summary.Breaks, summary.BreakTotal, err = loadBreakCounts(ctx, pool); err != nil {
+	if summary.Breaks, summary.BreakTotal, err = loadBreakCounts(ctx, tx); err != nil {
 		return Summary{}, err
 	}
-	if summary.Cases, summary.OpenCases, err = loadCaseCounts(ctx, pool); err != nil {
+	if summary.Cases, summary.OpenCases, err = loadCaseCounts(ctx, tx); err != nil {
 		return Summary{}, err
 	}
-	if summary.TieOut, err = loadTieOut(ctx, pool, scopes); err != nil {
+	if summary.TieOut, err = loadTieOut(ctx, tx, scopes); err != nil {
+		return Summary{}, err
+	}
+
+	batchID, err := newDemoBatchID()
+	if err != nil {
+		return Summary{}, err
+	}
+	if err := markNewDemoRows(ctx, tx, batchID, baseline); err != nil {
 		return Summary{}, err
 	}
 	return summary, nil
@@ -323,8 +424,8 @@ func runWindow(opts Options) (match.Window, error) {
 	}, nil
 }
 
-func loadScopes(ctx context.Context, pool *pgxpool.Pool) ([]scopeRow, error) {
-	rows, err := pool.Query(ctx,
+func loadScopes(ctx context.Context, q demoQuerier) ([]scopeRow, error) {
+	rows, err := q.Query(ctx,
 		`SELECT s.id::text, s.source, s.currency
 		   FROM reconciliation_scopes s
 		  ORDER BY s.source, s.currency`)
@@ -346,8 +447,8 @@ func loadScopes(ctx context.Context, pool *pgxpool.Pool) ([]scopeRow, error) {
 	return scopes, nil
 }
 
-func loadBreakCounts(ctx context.Context, pool *pgxpool.Pool) (map[string]int, int, error) {
-	rows, err := pool.Query(ctx, `SELECT side, count(*)::int FROM breaks GROUP BY side ORDER BY side`)
+func loadBreakCounts(ctx context.Context, q demoQuerier) (map[string]int, int, error) {
+	rows, err := q.Query(ctx, `SELECT side, count(*)::int FROM breaks GROUP BY side ORDER BY side`)
 	if err != nil {
 		return nil, 0, fmt.Errorf("demo: load breaks: %w", err)
 	}
@@ -369,9 +470,9 @@ func loadBreakCounts(ctx context.Context, pool *pgxpool.Pool) (map[string]int, i
 	return counts, total, nil
 }
 
-func loadCaseCounts(ctx context.Context, pool *pgxpool.Pool) (int, int, error) {
+func loadCaseCounts(ctx context.Context, q demoQuerier) (int, int, error) {
 	var total, open int
-	if err := pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT count(*)::int, count(*) FILTER (WHERE status = 'open')::int FROM cases`).
 		Scan(&total, &open); err != nil {
 		return 0, 0, fmt.Errorf("demo: load case counts: %w", err)
@@ -379,11 +480,11 @@ func loadCaseCounts(ctx context.Context, pool *pgxpool.Pool) (int, int, error) {
 	return total, open, nil
 }
 
-func loadTieOut(ctx context.Context, pool *pgxpool.Pool, scopes []scopeRow) ([]TieOutSummary, error) {
+func loadTieOut(ctx context.Context, q demoQuerier, scopes []scopeRow) ([]TieOutSummary, error) {
 	var results []TieOutSummary
 	for _, scope := range scopes {
 		var asOf *time.Time
-		if err := pool.QueryRow(ctx,
+		if err := q.QueryRow(ctx,
 			`SELECT max(as_of_date) FROM statement_balances WHERE scope_id = $1::uuid`,
 			scope.ID).Scan(&asOf); err != nil {
 			return nil, fmt.Errorf("demo: statement date for %s/%s: %w", scope.Source, scope.Currency, err)
@@ -391,7 +492,7 @@ func loadTieOut(ctx context.Context, pool *pgxpool.Pool, scopes []scopeRow) ([]T
 		if asOf == nil {
 			continue
 		}
-		result, err := tieout.Compute(ctx, pool, scope.ID, *asOf)
+		result, err := tieout.Compute(ctx, q, scope.ID, *asOf)
 		if err != nil {
 			return nil, fmt.Errorf("demo: tie-out %s/%s: %w", scope.Source, scope.Currency, err)
 		}
@@ -472,7 +573,22 @@ func (s Summary) Write(out io.Writer) error {
 // schema and the eval-owned non-public schemas, then applies every embedded
 // migration. It is refused when RECON_ENV is production (case-insensitive),
 // before any connection is made.
+//
+// Reset is guarded: before any DDL it takes ACCESS EXCLUSIVE locks on every
+// table the reset destroys and verifies (in the same transaction) that every
+// row is either migration-seeded reference data or recorded in demo_metadata
+// by the M1/ops/quality demo layers. Any untagged row aborts with
+// *UntaggedDataError without writing. This closes the check-then-drop race:
+// a concurrent insert either commits before the lock and fails the guard, or
+// blocks until the schema has been dropped.
 func Reset(ctx context.Context, dsn string) error {
+	return reset(ctx, dsn)
+}
+
+// reset is the one reset implementation. There is deliberately no unguarded
+// variant: every destructive reset must pass the all-tables guard in the same
+// transaction that takes the ACCESS EXCLUSIVE locks.
+func reset(ctx context.Context, dsn string) error {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("RECON_ENV")), "production") {
 		return ErrResetProduction
 	}
@@ -487,17 +603,41 @@ func Reset(ctx context.Context, dsn string) error {
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("demo: connect database: %w", err)
 	}
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("demo: begin reset transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := lockResetTables(ctx, tx); err != nil {
+		return err
+	}
+	if err := checkResetAllowed(ctx, tx); err != nil {
+		return err
+	}
+
 	for _, schema := range evalOwnedSchemas {
-		if _, err := sqlDB.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
+		if _, err := tx.ExecContext(ctx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
 			return fmt.Errorf("demo: drop %s schema: %w", schema, err)
 		}
 	}
-	if _, err := sqlDB.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE`); err != nil {
 		return fmt.Errorf("demo: drop public schema: %w", err)
 	}
-	if _, err := sqlDB.ExecContext(ctx, `CREATE SCHEMA public`); err != nil {
+	if _, err := tx.ExecContext(ctx, `CREATE SCHEMA public`); err != nil {
 		return fmt.Errorf("demo: create public schema: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("demo: commit reset: %w", err)
+	}
+	committed = true
+
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("demo: configure goose: %w", err)
