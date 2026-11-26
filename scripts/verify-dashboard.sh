@@ -1,16 +1,18 @@
 #!/bin/sh
-# Verify the M5-04 Grafana/Prometheus provisioning against a running compose
-# stack. Read-only: it never writes data or changes containers.
+# Verify the Grafana/Prometheus provisioning for both M5-04 (`recon-ops`) and
+# M5-05 (`recon-agent-quality`). Read-only: it never writes data or changes
+# containers.
 #
 # Prerequisites:
 #   docker compose up -d --wait postgres prometheus grafana
 #   make migrate
+#   make demo-quality          # M1 + ops + quality synthetic rows
 # Existing Postgres volumes predate the dashboard login; rerun
 # compose/initdb/01-roles.sql first (see its header) or recreate the volume.
 #
 # No secrets are stored here. Admin credentials come from the same env vars as
-# compose, with the documented local-only defaults. Panel data may be empty
-# until `make demo-ops` (W4); this script checks query execution, not coverage.
+# compose, with the documented local-only defaults. After `make demo-quality`
+# every panel must return rows; an empty panel is a failure, not a skip.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -86,6 +88,13 @@ if status == 200:
 else:
     fail(f"Prometheus /-/ready: http={status}")
 
+# Anonymous dashboard reads must be rejected (Grafana auth is enabled).
+status, _ = request(f"{grafana}/api/dashboards/uid/recon-agent-quality", auth_required=False)
+if status == 401:
+    pass_("anonymous dashboard API denied with HTTP 401")
+else:
+    fail(f"anonymous dashboard API returned HTTP {status}, want 401")
+
 status, datasources = request(f"{grafana}/api/datasources")
 by_uid = {ds.get("uid"): ds for ds in datasources} if isinstance(datasources, list) else {}
 for uid in ("recon-postgres", "recon-prometheus"):
@@ -103,65 +112,93 @@ for uid in ("recon-postgres", "recon-prometheus"):
     else:
         fail(f"datasource health {uid}: http={status} body={health}")
 
-status, dashboard = request(f"{grafana}/api/dashboards/uid/recon-ops")
-if status == 200 and dashboard.get("dashboard", {}).get("uid") == "recon-ops":
-    meta = dashboard.get("meta", {})
-    pass_(f"dashboard recon-ops provisioned={meta.get('provisioned')} folder={meta.get('folderTitle')}")
-    panels = dashboard["dashboard"].get("panels", [])
-else:
-    fail(f"dashboard recon-ops: http={status}")
-    panels = []
-
 
 def query_panel(panel):
-    target = panel["targets"][0]
-    if panel["datasource"]["uid"] == "recon-postgres":
-        body = {
-            "queries": [{
-                "refId": target.get("refId", "A"),
-                "datasource": target["datasource"],
-                "rawSql": target["rawSql"],
-                "format": target.get("format", "table"),
-                "editorMode": target.get("editorMode", "code"),
-                "rawQuery": True,
-                "intervalMs": 60000,
-                "maxDataPoints": 100,
-            }],
-            "from": "now-14d",
-            "to": "now",
-        }
+    targets = panel.get("targets", [])
+    datasource_uid = panel.get("datasource", {}).get("uid")
+    if datasource_uid == "recon-postgres":
+        queries = [{
+            "refId": target.get("refId", "A"),
+            "datasource": target.get("datasource", panel["datasource"]),
+            "rawSql": target["rawSql"],
+            "format": target.get("format", "table"),
+            "editorMode": target.get("editorMode", "code"),
+            "rawQuery": True,
+            "intervalMs": 60000,
+            "maxDataPoints": 100,
+        } for target in targets]
     else:
-        body = {
-            "queries": [{
-                "refId": target.get("refId", "A"),
-                "datasource": target["datasource"],
-                "expr": target["expr"],
-                "instant": True,
-                "range": False,
-            }],
-            "from": "now-14d",
-            "to": "now",
-        }
+        queries = [{
+            "refId": target.get("refId", "A"),
+            "datasource": target.get("datasource", panel["datasource"]),
+            "expr": target["expr"],
+            "instant": True,
+            "range": False,
+        } for target in targets]
+    body = {"queries": queries, "from": "now-14d", "to": "now"}
     return request(f"{grafana}/api/ds/query", body)
 
 
-for panel in sorted(panels, key=lambda item: item.get("id", 0)):
-    status, body = query_panel(panel)
-    result = body.get("results", {}).get("A", {})
-    frames = result.get("frames", [])
-    rows = 0
-    for frame in frames:
-        values = frame.get("data", {}).get("values", [])
-        if values:
-            rows = max(rows, len(values[0]))
-    if status == 200 and result.get("status") == 200 and frames:
-        pass_(f"panel {panel.get('id')} {panel.get('title')!r}: frames={len(frames)} rows={rows}")
-        executed = json.dumps(result)
-        if "$__" in executed:
-            fail(f"panel {panel.get('id')} left an unexpanded macro")
+# UID, title, panel count, and whether the panel inventory includes the
+# escalation-reasons table (which must have at least three reasons).
+dashboard_contracts = [
+    ("recon-ops", "Recon Ops", 6, False),
+    ("recon-agent-quality", "Recon Agent Quality", 8, True),
+]
+
+for uid, title, expected_panels, reasons_table in dashboard_contracts:
+    status, dashboard = request(f"{grafana}/api/dashboards/uid/{uid}")
+    if status != 200 or dashboard.get("dashboard", {}).get("uid") != uid:
+        fail(f"dashboard {uid}: http={status}")
+        continue
+    meta = dashboard.get("meta", {})
+    dash = dashboard["dashboard"]
+    if dash.get("title") != title:
+        fail(f"dashboard {uid} title = {dash.get('title')!r}, want {title!r}")
+    if meta.get("provisioned") is not True:
+        fail(f"dashboard {uid} provisioned = {meta.get('provisioned')!r}, want true")
     else:
-        fail(f"panel {panel.get('id')} {panel.get('title')!r}: http={status} "
-             f"query_status={result.get('status')} error={result.get('error')}")
+        pass_(f"dashboard {uid} provisioned={meta.get('provisioned')} folder={meta.get('folderTitle')}")
+    if meta.get("folderTitle") != "Recon":
+        fail(f"dashboard {uid} folder = {meta.get('folderTitle')!r}, want 'Recon'")
+    if int(dash.get("version", 0)) < 1:
+        fail(f"dashboard {uid} version = {dash.get('version')!r}, want >= 1")
+    panels = sorted(dash.get("panels", []), key=lambda item: item.get("id", 0))
+    if len(panels) != expected_panels:
+        fail(f"dashboard {uid} panels = {len(panels)}, want {expected_panels}")
+
+    reasons_rows = 0
+    for panel in panels:
+        status, body = query_panel(panel)
+        results = body.get("results", {}) if isinstance(body, dict) else {}
+        panel_ok = status == 200
+        rows = 0
+        for target in panel.get("targets", []):
+            ref = target.get("refId", "A")
+            result = results.get(ref, {})
+            frames = result.get("frames", [])
+            target_rows = 0
+            for frame in frames:
+                values = frame.get("data", {}).get("values", [])
+                if values:
+                    target_rows = max(target_rows, len(values[0]))
+            if status != 200 or result.get("status") != 200 or not frames or target_rows == 0:
+                panel_ok = False
+                fail(f"dashboard {uid} panel {panel.get('id')} {panel.get('title')!r} "
+                     f"target {ref}: http={status} query_status={result.get('status')} "
+                     f"frames={len(frames)} rows={target_rows} error={result.get('error')}")
+            else:
+                executed = json.dumps(result)
+                if "$__" in executed:
+                    fail(f"dashboard {uid} panel {panel.get('id')} left an unexpanded macro")
+                rows = max(rows, target_rows)
+        if panel_ok:
+            pass_(f"dashboard {uid} panel {panel.get('id')} {panel.get('title')!r}: rows={rows}")
+        if panel.get("id") == 7:
+            reasons_rows = rows
+
+    if reasons_table and reasons_rows < 3:
+        fail(f"dashboard {uid} escalation-reasons table rows = {reasons_rows}, want >= 3")
 
 status, body = query_panel({
     "id": "denial",
@@ -183,5 +220,5 @@ else:
 if failures:
     print(f"\nverify-dashboard: {len(failures)} failure(s)")
     sys.exit(1)
-print("\nverify-dashboard: OK (visual panel check remains PENDING/human)")
+print("\nverify-dashboard: OK (both dashboards; visual panel check remains PENDING/human)")
 PY

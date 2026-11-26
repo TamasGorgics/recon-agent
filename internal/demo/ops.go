@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/TamasGorgics/recon-agent/internal/db"
 )
@@ -61,17 +60,28 @@ type OpsSummary struct {
 	Classifications map[string]int
 }
 
-// RunOps runs the M1 demo pipeline and then the deterministic M5-04 ops layer.
-// The guard runs before demo.Run: if any ops row already exists, RunOps fails
-// closed with ErrOpsDataPresent and does not touch the M1 pipeline.
+// RunOps runs the M1 demo pipeline and then the deterministic M5-04 ops layer
+// in one READ COMMITTED transaction that takes EXCLUSIVE locks on every seed
+// target table before the presence check. The guard runs under those locks
+// before any write: if any ops row already exists, RunOps fails closed with
+// ErrOpsDataPresent and nothing is written. A writer that commits before the
+// locks is seen by the guard; a writer that starts after the locks blocks until
+// the seed commits and cannot contaminate it.
 //
 // The caller owns --reset (demo.Reset) because it is the existing dev-only
-// destructive path. RunOps itself never drops data.
+// destructive path. RunOps itself never drops data and never compensates with a
+// reset: a failure rolls the one transaction back exactly.
 func RunOps(ctx context.Context, opts Options) (OpsSummary, error) {
 	opts = opts.withDefaults()
 	if strings.TrimSpace(opts.DBURL) == "" {
 		return OpsSummary{}, errors.New("demo ops: database URL is required")
 	}
+
+	inputs, cleanup, err := prepareSeed(opts)
+	if err != nil {
+		return OpsSummary{}, err
+	}
+	defer cleanup()
 
 	pool, err := db.NewPool(ctx, opts.DBURL)
 	if err != nil {
@@ -79,15 +89,33 @@ func RunOps(ctx context.Context, opts Options) (OpsSummary, error) {
 	}
 	defer pool.Close()
 
-	present, err := opsDataPresent(ctx, pool)
-	if err != nil {
-		return OpsSummary{}, fmt.Errorf("demo ops: check existing ops data: %w", err)
+	var summary OpsSummary
+	if err := db.WithTx(ctx, pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted},
+		func(ctx context.Context, tx pgx.Tx) error {
+			if err := lockDemoSeed(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockSeedTables(ctx, tx); err != nil {
+				return err
+			}
+			present, err := opsDataPresent(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("demo ops: check existing ops data: %w", err)
+			}
+			if present {
+				return ErrOpsDataPresent
+			}
+			summary, err = runOpsTx(ctx, opts, tx, inputs)
+			return err
+		}); err != nil {
+		return OpsSummary{}, err
 	}
-	if present {
-		return OpsSummary{}, ErrOpsDataPresent
-	}
+	return summary, nil
+}
 
-	m1, err := Run(ctx, opts)
+// runOpsTx runs M1 and the ops layer inside the caller's transaction.
+func runOpsTx(ctx context.Context, opts Options, tx pgx.Tx, inputs seedInputs) (OpsSummary, error) {
+	m1, err := runSeedTx(ctx, opts, tx, inputs)
 	if err != nil {
 		return OpsSummary{}, err
 	}
@@ -96,12 +124,12 @@ func RunOps(ctx context.Context, opts Options) (OpsSummary, error) {
 	// also the v_ops_break_aging reference date. The read happens after the M1
 	// run so the synthetic fixtures and its break rows share one database day.
 	var now time.Time
-	if err := pool.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return OpsSummary{}, fmt.Errorf("demo ops: read database clock: %w", err)
 	}
 	now = now.UTC().Truncate(time.Microsecond)
 
-	rc, err := loadOpsContext(ctx, pool)
+	rc, err := loadOpsContext(ctx, tx)
 	if err != nil {
 		return OpsSummary{}, err
 	}
@@ -111,7 +139,11 @@ func RunOps(ctx context.Context, opts Options) (OpsSummary, error) {
 		PrimarySource:     rc.primary.Source,
 		SecondarySource:   rc.secondarySource,
 	})
-	if err := insertOpsPlan(ctx, pool, plan, rc); err != nil {
+	batchID, err := newDemoBatchID()
+	if err != nil {
+		return OpsSummary{}, err
+	}
+	if err := insertOpsPlan(ctx, tx, plan, rc, batchID); err != nil {
 		return OpsSummary{}, err
 	}
 	return plan.summary(m1), nil
@@ -173,8 +205,8 @@ type opsContext struct {
 
 // loadOpsContext selects the scopes, match runs, period, and ledger accounts
 // the synthetic ops rows reuse. It never creates base accounting data.
-func loadOpsContext(ctx context.Context, pool *pgxpool.Pool) (opsContext, error) {
-	rows, err := pool.Query(ctx,
+func loadOpsContext(ctx context.Context, q demoQuerier) (opsContext, error) {
+	rows, err := q.Query(ctx,
 		`SELECT s.id::text, s.source, s.currency,
 		        COALESCE((
 		            SELECT mr.id::text
@@ -229,7 +261,7 @@ func loadOpsContext(ctx context.Context, pool *pgxpool.Pool) (opsContext, error)
 		}
 	}
 
-	if err := pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT id::text FROM periods WHERE status = 'open' ORDER BY start_date LIMIT 1`).
 		Scan(&rc.periodID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -238,7 +270,7 @@ func loadOpsContext(ctx context.Context, pool *pgxpool.Pool) (opsContext, error)
 		return opsContext{}, fmt.Errorf("demo ops: load open period: %w", err)
 	}
 
-	rc.debitAccountID, rc.creditAccountID, err = loadOpsAccounts(ctx, pool, rc.primary.Currency)
+	rc.debitAccountID, rc.creditAccountID, err = loadOpsAccounts(ctx, q, rc.primary.Currency)
 	if err != nil {
 		return opsContext{}, err
 	}
@@ -247,7 +279,7 @@ func loadOpsContext(ctx context.Context, pool *pgxpool.Pool) (opsContext, error)
 
 // loadOpsAccounts finds an active debit/credit account pair for the aging
 // fixture's ledger transaction. It prefers the M1 clearing/revenue accounts.
-func loadOpsAccounts(ctx context.Context, pool *pgxpool.Pool, currency string) (string, string, error) {
+func loadOpsAccounts(ctx context.Context, pool demoQuerier, currency string) (string, string, error) {
 	rows, err := pool.Query(ctx,
 		`SELECT id::text, type FROM accounts
 		  WHERE currency = $1 AND status = 'active'
@@ -904,8 +936,8 @@ func opsAgingBucket(anchor time.Time, valueDate *time.Time) (string, int) {
 	}
 }
 
-func opsDataPresent(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
-	return opsDataPresentQuerier(ctx, pool)
+func opsDataPresent(ctx context.Context, q demoQuerier) (bool, error) {
+	return opsDataPresentQuerier(ctx, q)
 }
 
 type opsRowQuerier interface {
@@ -930,170 +962,236 @@ func opsDataPresentQuerier(ctx context.Context, q opsRowQuerier) (bool, error) {
 	return present, nil
 }
 
-func insertOpsPlan(ctx context.Context, pool *pgxpool.Pool, plan opsPlan, rc opsContext) error {
-	return db.WithTx(ctx, pool, pgx.TxOptions{}, func(ctx context.Context, tx pgx.Tx) error {
-		present, err := opsDataPresentQuerier(ctx, tx)
-		if err != nil {
-			return fmt.Errorf("demo ops: re-check existing ops data: %w", err)
-		}
-		if present {
-			return ErrOpsDataPresent
-		}
+func insertOpsPlan(ctx context.Context, tx demoQuerier, plan opsPlan, rc opsContext, batchID string) error {
+	present, err := opsDataPresentQuerier(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("demo ops: re-check existing ops data: %w", err)
+	}
+	if present {
+		return ErrOpsDataPresent
+	}
 
-		for _, approver := range plan.Approvers {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO approvers (id, display_name, role, api_key_id)
+	for _, approver := range plan.Approvers {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO approvers (id, display_name, role, api_key_id)
 				 VALUES ($1::uuid, $2, $3, $4)`,
-				approver.ID, approver.DisplayName, approver.Role, approver.APIKeyID); err != nil {
-				return fmt.Errorf("demo ops: insert approver %s: %w", approver.Key, err)
-			}
+			approver.ID, approver.DisplayName, approver.Role, approver.APIKeyID); err != nil {
+			return fmt.Errorf("demo ops: insert approver %s: %w", approver.Key, err)
 		}
-		for _, c := range plan.Cases {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO cases
+	}
+	for _, c := range plan.Cases {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO cases
 				     (id, priority, value_minor, currency, status, version, attempts,
 				      escalation_reason, created_at, resolved_at, resolution_type)
 				 VALUES ($1::uuid, $2, $3, $4, $5, 0, 0, $6, $7, $8, $9)`,
-				c.ID, c.Priority, c.ValueMinor, c.Currency, c.Status,
-				c.EscalationReason, c.CreatedAt, c.ResolvedAt, c.ResolutionType); err != nil {
-				return fmt.Errorf("demo ops: insert case %s: %w", c.Key, err)
-			}
+			c.ID, c.Priority, c.ValueMinor, c.Currency, c.Status,
+			c.EscalationReason, c.CreatedAt, c.ResolvedAt, c.ResolutionType); err != nil {
+			return fmt.Errorf("demo ops: insert case %s: %w", c.Key, err)
 		}
-		for _, run := range plan.Runs {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO agent_runs
+	}
+	for _, run := range plan.Runs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO agent_runs
 				     (id, case_id, model, prompt_version, started_at, ended_at,
 				      tokens_in, tokens_out, cost_usd, trace_id, outcome)
 				 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::numeric, NULL, 'proposal')`,
-				run.ID, run.CaseID, opsModel, opsPromptVersion, run.StartedAt, run.EndedAt,
-				run.TokensIn, run.TokensOut, run.CostUSD); err != nil {
-				return fmt.Errorf("demo ops: insert agent run %s: %w", run.Key, err)
-			}
+			run.ID, run.CaseID, opsModel, opsPromptVersion, run.StartedAt, run.EndedAt,
+			run.TokensIn, run.TokensOut, run.CostUSD); err != nil {
+			return fmt.Errorf("demo ops: insert agent run %s: %w", run.Key, err)
 		}
-		for _, proposal := range plan.Proposals {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO proposals
+	}
+	for _, proposal := range plan.Proposals {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO proposals
 				     (id, case_id, agent_run_id, type, payload, rationale, evidence,
 				      confidence, risk_tier, status, version, state_hash,
 				      idempotency_key, created_at, expires_at)
 				 VALUES ($1::uuid, $2::uuid, $3::uuid, $4, '{}'::jsonb, $5,
 				         '[]'::jsonb, $6, $7, $8, 0, $9, $10, $11, $12)`,
-				proposal.ID, proposal.CaseID, proposal.RunID, proposal.Type,
-				"Demo ops synthetic proposal for the M5-04 dashboard.",
-				proposal.Confidence, proposal.RiskTier, proposal.Status,
-				opsSignature(plan.Seed, "state:"+proposal.Key),
-				opsKey(plan.Seed, "proposal:"+proposal.Key),
-				proposal.CreatedAt, proposal.ExpiresAt); err != nil {
-				return fmt.Errorf("demo ops: insert proposal %s: %w", proposal.Key, err)
-			}
+			proposal.ID, proposal.CaseID, proposal.RunID, proposal.Type,
+			"Demo ops synthetic proposal for the M5-04 dashboard.",
+			proposal.Confidence, proposal.RiskTier, proposal.Status,
+			opsSignature(plan.Seed, "state:"+proposal.Key),
+			opsKey(plan.Seed, "proposal:"+proposal.Key),
+			proposal.CreatedAt, proposal.ExpiresAt); err != nil {
+			return fmt.Errorf("demo ops: insert proposal %s: %w", proposal.Key, err)
 		}
-		for _, approval := range plan.Approvals {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO approvals
+	}
+	for _, approval := range plan.Approvals {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO approvals
 				     (id, proposal_id, channel, approver_id, decision, decided_at, signature_valid)
 				 VALUES ($1::uuid, $2::uuid, 'demo-seed', $3::uuid, $4, $5, true)`,
-				approval.ID, approval.ProposalID, approval.ApproverID,
-				approval.Decision, approval.DecidedAt); err != nil {
-				return fmt.Errorf("demo ops: insert approval %s: %w", approval.Key, err)
-			}
+			approval.ID, approval.ProposalID, approval.ApproverID,
+			approval.Decision, approval.DecidedAt); err != nil {
+			return fmt.Errorf("demo ops: insert approval %s: %w", approval.Key, err)
 		}
-		for _, applied := range plan.Applied {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO applied_proposals
+	}
+	for _, applied := range plan.Applied {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO applied_proposals
 				     (proposal_id, ledger_txn_id, applied_at, executor_run_id)
 				 VALUES ($1::uuid, NULL, $2, $3)`,
-				applied.ProposalID, applied.AppliedAt, applied.ExecutorRunID); err != nil {
-				return fmt.Errorf("demo ops: insert applied proposal: %w", err)
-			}
+			applied.ProposalID, applied.AppliedAt, applied.ExecutorRunID); err != nil {
+			return fmt.Errorf("demo ops: insert applied proposal: %w", err)
 		}
-		for _, batch := range plan.Batches {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO settlement_batches
+	}
+	for _, batch := range plan.Batches {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO settlement_batches
 				     (id, source, period_start, period_end, declared_total_minor,
 				      currency, file_hash, status, row_count, declared_row_count)
 				 VALUES ($1::uuid, $2, $3::date, $4::date, 0, $5, $6, 'ingested', $7, $7)`,
-				batch.ID, batch.Source, batch.PeriodStart, batch.PeriodEnd,
-				batch.Currency, batch.FileHash, batch.RowCount); err != nil {
-				return fmt.Errorf("demo ops: insert batch %s: %w", batch.Key, err)
-			}
+			batch.ID, batch.Source, batch.PeriodStart, batch.PeriodEnd,
+			batch.Currency, batch.FileHash, batch.RowCount); err != nil {
+			return fmt.Errorf("demo ops: insert batch %s: %w", batch.Key, err)
 		}
-		batchID := make(map[string]string, len(plan.Batches))
-		for _, batch := range plan.Batches {
-			batchID[batch.Key] = batch.ID
-		}
-		for _, record := range plan.ExternalRecords {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO external_records
+	}
+	batchLookup := make(map[string]string, len(plan.Batches))
+	for _, batch := range plan.Batches {
+		batchLookup[batch.Key] = batch.ID
+	}
+	for _, record := range plan.ExternalRecords {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO external_records
 				     (id, source, source_record_id, kind, amount_minor, currency,
 				      fee_minor, occurred_at, settled_at, value_date, batch_id,
 				      raw, raw_hash)
 				 VALUES ($1::uuid, $2, $3, 'charge', $4, $5, 0, $6, NULL,
 				         $7::date, $8::uuid, '{}'::jsonb, $9)`,
-				record.ID, record.Source, record.SourceRecordID, record.AmountMinor,
-				record.Currency, record.OccurredAt, record.ValueDate,
-				batchID[record.BatchKey], opsKey(plan.Seed, "raw:"+record.Key)); err != nil {
-				return fmt.Errorf("demo ops: insert external record %s: %w", record.Key, err)
-			}
+			record.ID, record.Source, record.SourceRecordID, record.AmountMinor,
+			record.Currency, record.OccurredAt, record.ValueDate,
+			batchLookup[record.BatchKey], opsKey(plan.Seed, "raw:"+record.Key)); err != nil {
+			return fmt.Errorf("demo ops: insert external record %s: %w", record.Key, err)
 		}
-		ledgerID := make(map[string]string, len(plan.LedgerTxns))
-		for _, txn := range plan.LedgerTxns {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO ledger_txns
+	}
+	ledgerID := make(map[string]string, len(plan.LedgerTxns))
+	for _, txn := range plan.LedgerTxns {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO ledger_txns
 				     (id, value_date, kind, idempotency_key, request_hash,
 				      description, period_id)
 				 VALUES ($1::uuid, $2::date, 'charge', $3, $4,
 				         'demo ops aging fixture', $5::uuid)`,
-				txn.ID, txn.ValueDate, opsKey(plan.Seed, "ledger:"+txn.Key),
-				opsSignature(plan.Seed, "ledger-request:"+txn.Key), rc.periodID); err != nil {
-				return fmt.Errorf("demo ops: insert ledger txn %s: %w", txn.Key, err)
-			}
-			ledgerID[txn.Key] = txn.ID
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO ledger_entries
+			txn.ID, txn.ValueDate, opsKey(plan.Seed, "ledger:"+txn.Key),
+			opsSignature(plan.Seed, "ledger-request:"+txn.Key), rc.periodID); err != nil {
+			return fmt.Errorf("demo ops: insert ledger txn %s: %w", txn.Key, err)
+		}
+		ledgerID[txn.Key] = txn.ID
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO ledger_entries
 				     (txn_id, account_id, direction, amount_minor, currency)
 				 VALUES ($1::uuid, $2::uuid, 'debit', $3, $4)`,
-				txn.ID, rc.debitAccountID, txn.AmountMinor, txn.Currency); err != nil {
-				return fmt.Errorf("demo ops: insert ledger debit entry: %w", err)
-			}
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO ledger_entries
+			txn.ID, rc.debitAccountID, txn.AmountMinor, txn.Currency); err != nil {
+			return fmt.Errorf("demo ops: insert ledger debit entry: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO ledger_entries
 				     (txn_id, account_id, direction, amount_minor, currency)
 				 VALUES ($1::uuid, $2::uuid, 'credit', $3, $4)`,
-				txn.ID, rc.creditAccountID, txn.AmountMinor, txn.Currency); err != nil {
-				return fmt.Errorf("demo ops: insert ledger credit entry: %w", err)
-			}
+			txn.ID, rc.creditAccountID, txn.AmountMinor, txn.Currency); err != nil {
+			return fmt.Errorf("demo ops: insert ledger credit entry: %w", err)
 		}
-		for _, breakRow := range plan.Breaks {
-			scope := rc.primary
-			if breakRow.ScopeRole == "multi" {
-				scope = rc.multi
-			}
-			ledgerIDs := []string{}
-			if breakRow.LedgerTxnKey != "" {
-				ledgerIDs = append(ledgerIDs, ledgerID[breakRow.LedgerTxnKey])
-			}
-			refs := breakRow.ExternalRefs
-			if refs == nil {
-				refs = []opsRecordRef{}
-			}
-			refsJSON, err := json.Marshal(refs)
-			if err != nil {
-				return fmt.Errorf("demo ops: encode break refs: %w", err)
-			}
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO breaks
+	}
+	for _, breakRow := range plan.Breaks {
+		scope := rc.primary
+		if breakRow.ScopeRole == "multi" {
+			scope = rc.multi
+		}
+		ledgerIDs := []string{}
+		if breakRow.LedgerTxnKey != "" {
+			ledgerIDs = append(ledgerIDs, ledgerID[breakRow.LedgerTxnKey])
+		}
+		refs := breakRow.ExternalRefs
+		if refs == nil {
+			refs = []opsRecordRef{}
+		}
+		refsJSON, err := json.Marshal(refs)
+		if err != nil {
+			return fmt.Errorf("demo ops: encode break refs: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO breaks
 				     (id, signature, scope_id, match_run_id, side, ledger_txn_ids,
 				      external_refs, delta_minor, currency, status, detected_at)
 				 VALUES ($1::uuid, $2, $3::uuid, $4::uuid, $5, $6::text[]::uuid[],
 				         $7::jsonb, $8, $9, 'open', $10)`,
-				breakRow.ID, breakRow.Signature, scope.ID, scope.MatchRunID,
-				breakRow.Side, ledgerIDs, string(refsJSON), breakRow.DeltaMinor,
-				breakRow.Currency, breakRow.DetectedAt); err != nil {
-				return fmt.Errorf("demo ops: insert break %s: %w", breakRow.Key, err)
-			}
+			breakRow.ID, breakRow.Signature, scope.ID, scope.MatchRunID,
+			breakRow.Side, ledgerIDs, string(refsJSON), breakRow.DeltaMinor,
+			breakRow.Currency, breakRow.DetectedAt); err != nil {
+			return fmt.Errorf("demo ops: insert break %s: %w", breakRow.Key, err)
 		}
-		return nil
-	})
+	}
+	return markOpsPlanRows(ctx, tx, plan, batchID)
+}
+
+// markOpsPlanRows records every row written by this ops plan inside the same
+// transaction. A reset can then prove the rows are demo-owned.
+func markOpsPlanRows(ctx context.Context, tx demoQuerier, plan opsPlan, batchID string) error {
+	approverIDs := make([]string, 0, len(plan.Approvers))
+	for _, approver := range plan.Approvers {
+		approverIDs = append(approverIDs, approver.ID)
+	}
+	caseIDs := make([]string, 0, len(plan.Cases))
+	for _, c := range plan.Cases {
+		caseIDs = append(caseIDs, c.ID)
+	}
+	runIDs := make([]string, 0, len(plan.Runs))
+	for _, run := range plan.Runs {
+		runIDs = append(runIDs, run.ID)
+	}
+	proposalIDs := make([]string, 0, len(plan.Proposals))
+	for _, proposal := range plan.Proposals {
+		proposalIDs = append(proposalIDs, proposal.ID)
+	}
+	approvalIDs := make([]string, 0, len(plan.Approvals))
+	for _, approval := range plan.Approvals {
+		approvalIDs = append(approvalIDs, approval.ID)
+	}
+	batchIDs := make([]string, 0, len(plan.Batches))
+	for _, batch := range plan.Batches {
+		batchIDs = append(batchIDs, batch.ID)
+	}
+	recordIDs := make([]string, 0, len(plan.ExternalRecords))
+	for _, record := range plan.ExternalRecords {
+		recordIDs = append(recordIDs, record.ID)
+	}
+	txnIDs := make([]string, 0, len(plan.LedgerTxns))
+	for _, txn := range plan.LedgerTxns {
+		txnIDs = append(txnIDs, txn.ID)
+	}
+	breakIDs := make([]string, 0, len(plan.Breaks))
+	for _, breakRow := range plan.Breaks {
+		breakIDs = append(breakIDs, breakRow.ID)
+	}
+	appliedIDs := make([]string, 0, len(plan.Applied))
+	for _, applied := range plan.Applied {
+		appliedIDs = append(appliedIDs, applied.ProposalID)
+	}
+
+	for _, marker := range []struct {
+		table string
+		keys  []string
+	}{
+		{"approvers", approverIDs},
+		{"cases", caseIDs},
+		{"agent_runs", runIDs},
+		{"proposals", proposalIDs},
+		{"approvals", approvalIDs},
+		{"settlement_batches", batchIDs},
+		{"external_records", recordIDs},
+		{"ledger_txns", txnIDs},
+		{"breaks", breakIDs},
+	} {
+		if err := markDemoKeysTx(ctx, tx, marker.table, demoLayerOps, batchID, marker.keys); err != nil {
+			return err
+		}
+	}
+	if err := markDemoAppliedProposalsTx(ctx, tx, demoLayerOps, batchID, appliedIDs); err != nil {
+		return err
+	}
+	return markDemoLedgerEntriesTx(ctx, tx, demoLayerOps, batchID, txnIDs)
 }
 
 func opsKey(seed int64, key string) string {

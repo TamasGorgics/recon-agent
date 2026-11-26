@@ -33,6 +33,10 @@ Commands:
                    usage: recon demo ops [--seed N] [--days N]
                           [--difficulty easy|realistic|adversarial] [--reset]
                    synthetic demo evidence only; --reset is dev only
+  demo quality     seed M1 + ops + deterministic M5-05 quality data
+                   usage: recon demo quality [--seed N] [--days N]
+                          [--difficulty easy|realistic|adversarial] [--reset]
+                   synthetic demo evidence only; no network/LLM; --reset dev only
   match unmatch    audited admin unmatch of one active match
                    usage: recon match unmatch --id <match-uuid> --reason <text>
                           --actor human:<id> [--json]

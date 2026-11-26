@@ -15,11 +15,11 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/testdb"
 )
 
-// TestDashboardLoginLazyProvisioning proves the M5-04 dashboard login is
+// TestDashboardLoginLazyProvisioning proves the dashboard login is
 // provisioned only on request, is a member of recon_dashboards_ro, carries the
-// read-only/timeout settings, can read the v_ops_* views, and is torn down with
-// the rest of the per-test logins (TestMain asserts no process-scoped role
-// survives m.Run).
+// read-only/timeout settings, can read every v_ops_*/v_eval_* view (the M5-04
+// inventory plus the M5-05 eval views), and is torn down with the rest of the
+// per-test logins (TestMain asserts no process-scoped role survives m.Run).
 func TestDashboardLoginLazyProvisioning(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
@@ -92,6 +92,9 @@ func TestDashboardLoginLazyProvisioning(t *testing.T) {
 	for _, view := range []string{
 		"v_ops_match_rate", "v_ops_unmatched_value", "v_ops_break_aging",
 		"v_ops_approval_queue", "v_ops_resolution_mix",
+		"v_eval_accuracy", "v_eval_false_fix", "v_eval_cost_latency",
+		"v_eval_override_rate", "v_eval_apply_failure_rate",
+		"v_eval_escalations", "v_eval_escalation_rate",
 	} {
 		var count int64
 		if err := conn.QueryRow(ctx, `SELECT count(*) FROM `+view).Scan(&count); err != nil {

@@ -1153,3 +1153,162 @@ pass.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-102 | **RESOLVED (M5-04) for the implementation; residuals stay OPEN:** the deterministic `recon demo ops` seed (with the M1 demo) substitutes for the missing production M2–M4 pipeline and is explicitly synthetic, with no app services added to compose (Q-98/AQ-1); the dashboard reads through the read-only `recon_dashboards_ro` role and exactly five `SELECT`-only `v_ops_*` views (no base-table grant; `42501` denial; role settings read-only/30s), with a guarded Down and a fresh-volume login plus documented existing-volume rerun; aging uses the minimum resolvable value date and canonical `0-1 / 2-3 / 4-7 / >7 / unknown` buckets (missing/future → `unknown`); classification is one terminal row per case with escalated > human > auto and `event_at = COALESCE(resolved_at, created_at)`, and approval latency is fail-closed on rejection; Grafana 13.3.2 / Prometheus v3.16.0 are pinned, self-scrape only, loopback-bound, anonymous/sign-up/plugin-preinstall off, with env-only credential placeholders and no committed secrets; panel 4's `$__timeFilter(approved_at)` macro expanded in the pinned Grafana; the visual panel check is PENDING (human, AQ-4) and Prometheus is not live application metrics; no M5-05/M5-06 scope and no `docs/spec.md` edit. | Spec §13.1 / FIN-42 / M5-04 / operators / M5-12 | Keep the synthetic-data boundary and no-app-services decision explicit in docs and demos; keep the view-only read-only role, canonical aging/precedence/queue semantics, pinned images, loopback/anon-off defaults, and env-only credentials; keep the existing-volume rerun path documented rather than claiming zero-step; cite API/query evidence only as provisioning/query proof and leave visual acceptance PENDING until a human checks it; keep Prometheus self-scrape labelled as not live app metrics; leave the public `/metrics` auth/rate-limit/pool residual open (Q-101 A6) and deliver M5-05/M5-06 only in their own tasks; amend `docs/spec.md` only in a future spec revision if owners choose to. |
+
+## M5-05 Agent quality dashboard (Q-103)
+
+**Q-103 addendum (Wave 4 docs/release phase; developer-owned; no
+`docs/spec.md` edit).** M5-05 is delivered as the seven `v_eval_*` views, the
+`Recon Agent Quality` dashboard, and the deterministic `recon demo quality`
+seed. This entry records the delivered semantics, the closed edges, and the two
+remaining spec/docs conflicts. Q-103 stays **OPEN** as the conflict record; it
+is not used to reinterpret or waive the approved contract.
+
+- **Seven `v_eval_*` views and twelve dashboard-facing views total.**
+  `v_eval_accuracy`, `v_eval_false_fix`, `v_eval_cost_latency`,
+  `v_eval_override_rate`, `v_eval_apply_failure_rate`, `v_eval_escalations`,
+  and `v_eval_escalation_rate` join the five M5-04 `v_ops_*` views. All twelve
+  are owner-rights views; `recon_dashboards_ro` has `SELECT` on the views only,
+  `PUBLIC` is revoked, no base-table/sequence/function/`v_agent_*` grant is
+  added, and base-table reads remain SQLSTATE `42501`. The M5-04 inventory and
+  latest-migration assertions were updated from five/`20261124120000` to
+  twelve/`20261125120000` by name; no read-only, PUBLIC-denial, owner-rights,
+  role-attribute, write-denial, or schema-usage assertion was deleted or
+  relaxed.
+- **Eval/production hybrid sources.** Accuracy, false-fix, and cost/latency
+  read the persisted eval tables. Override and apply-failure read
+  `approvals -> proposals -> agent_runs`, with `'unknown'` model/prompt
+  fallback so a terminal decision or failed apply is never lost. Escalation
+  reasons read `audit_log` `case.transition` history; the cohort rate uses
+  `cases.created_at` for its denominator. No view reads `eval_truth`, and the
+  dashboard reads only the views.
+- **Accuracy excludes injection; false-fix includes it.** Accuracy counts
+  `correct IS TRUE` over every case in completed, non-repeat
+  `suite IN ('agent','e2e')`, `split <> 'injection'` runs; a NULL/false
+  `correct` counts as not correct. False-fix and cost/latency use the same run
+  filters with all splits, including injection. The two rates use separate
+  FILTER denominators and are never combined.
+- **Override is rejection-based.** `v_eval_override_rate` is
+  `rejections / (approved + rejected)` over terminal, non-NULL
+  `approvals.decided_at` decisions. Pending approvals enter neither side. The
+  product has no edit-override event, so the spec §13.2 "rejects or edits"
+  wording cannot be fully represented; no edit rate is inferred from Slack
+  message updates or any other unrelated state.
+- **Apply-failure is strict and time-attributed.**
+  `v_eval_apply_failure_rate` counts only terminal attempts:
+  `applied` proposals with a non-NULL `applied_proposals.applied_at` (timestamp
+  = `applied_at`) plus `apply_failed` proposals (timestamp = latest
+  `proposal.transition` audit with `after.status = 'apply_failed'`, falling
+  back to `proposals.created_at`). Pending/approved/rejected/superseded and
+  applied-without-an-applied-row are excluded from both sides; one row per
+  proposal prevents duplicate attempts. This is the approved strict
+  `failures / (applied + apply_failed)` denominator, not failures over all
+  proposals.
+- **Escalation reasons and same-cohort rate are separate views.**
+  `v_eval_escalations` counts `audit_log` escalation events per UTC event day
+  and reason, with empty/missing reason folded to `unknown`; a case escalating
+  twice counts twice. `v_eval_escalation_rate` is a creation-day cohort rate:
+  distinct cases created on day D that ever escalated divided by all cases
+  created on D, even when the escalation event is on D+1 or later. Recent
+  cohorts are right-censored, the rate is bounded 0..1 and not clamped, a day
+  with cases but no escalations is a measured zero, and a day with no cases
+  emits no row.
+- **Aborted, repeat, and non-agent suites are filtered.** Accuracy, false-fix,
+  and cost/latency exclude `ended_at IS NULL` runs, runs with a
+  `repeat_group`, and suites outside `agent`/`e2e` (notably `matcher`). Repeat
+  runs are reported separately by the eval report; they are not pooled into a
+  dashboard denominator. A run with no qualifying rows produces no synthetic
+  zero row, and a zero denominator is `NULL`.
+- **`recon demo quality` is a strict superset and all-or-nothing.** `recon
+  demo quality` / `make demo-quality` seeds M1, then the M5-04 ops layer when
+  it is absent, then the M5-05 quality layer, all inside one transaction that
+  takes `EXCLUSIVE` locks on every seed-target table before the presence checks
+  and the marker snapshot. Without `--reset` it fails closed if any `eval_runs`
+  row or demo-quality marker exists, before writing. Concurrent writers are
+  serialized: a writer that commits before the locks are acquired is seen by
+  the presence checks and aborts the seed with no writes; a writer that starts
+  after the locks blocks until the seed commits and can never be adopted. A
+  failure at any layer rolls the one transaction back exactly to the pre-run
+  state, so a failure never leaves a partial M1+ops+quality superset; there is
+  no compensating reset and no unguarded reset fallback. A real row is never
+  adopted as demo-owned and is never deleted by a later reset. Explicit
+  `--reset` remains a separate guarded destructive step. With `--reset` it runs the
+  dev-only full schema reset after the all-tables guard has rejected any
+  untagged row; it refuses `RECON_ENV=production`. The reset is a full-schema
+  reset rather than the approved spec's tagged-only delete because `audit_log`
+  is append-only: a tagged delete cannot remove prior escalation history, so
+  repeated reseeds would double the escalation-reasons panel and break
+  determinism. The guard is the safety control for the stronger reset.
+- **All-tables reset guard, durable demo marker, atomic check/drop.** The
+  guard inspects every table in `public` and `eval_truth`, not only the
+  eval/approval tables: it allows reproducible migration reference rows
+  (`currencies`, `periods`, `system_switches`), rows recorded in
+  `demo_metadata`, and `goose_db_version`/marker infrastructure; any untagged
+  row in `cases`, `case_breaks`, `breaks`, `matches`, `match_legs`,
+  `match_runs`, `ledger_txns`, `ledger_entries`, `external_records`,
+  `settlement_batches`, `statement_balances`, `reconciliation_scopes`,
+  `audit_log`, `audit_chain_head`, `outbox`, `approval_messages`,
+  `applied_proposals`, policy/config tables, or `eval_truth` aborts with
+  `*UntaggedDataError` before any DDL. M1 has no per-row marker column, so the
+  approved safety addition `20261125130000_m5_05_demo_metadata.sql` creates
+  `demo_metadata`; the M1 pipeline records the rows it creates and the
+  ops/quality layers record theirs in the write transaction. The guard query
+  runs in the same transaction that takes `ACCESS EXCLUSIVE` locks over all
+  dropped tables and performs the drop, closing the check-then-drop race: a
+  concurrent insert either commits before the lock and aborts the reset or
+  blocks until the schema is gone. This second migration is a safety repair to
+  the M5-05 delivery, not a new product surface. A database seeded before the
+  marker migration has unmarked rows; use a fresh/disposable database or a
+  one-time manual wipe rather than bypassing the guard.
+- **Atomic seed transaction.** The whole seed (M1, ops, quality and the
+  `demo_metadata` marker diff) is one `READ COMMITTED` transaction serialized
+  by a transaction-scoped advisory lock and `EXCLUSIVE` table locks on every
+  seed-target table, so demo commands cannot interleave and no production
+  writer can commit into a seed target while the seed runs. Nested service
+  transactions are savepoints inside the seed transaction, so the audit
+  writer's global advisory lock is held until the seed commits and concurrent
+  audit appends wait for the seed; this dev-only serialization trade-off is
+  accepted. Failures roll back exactly; concurrent real rows are never adopted;
+  there is no compensation reset. Explicit `--reset` stays the existing
+  all-tables `ACCESS EXCLUSIVE` guarded reset. A pre-marker database needs a
+  one-time manual/fresh-database wipe; visual panel confirmation stays PENDING
+  (human).
+- **Seed evidence and synthetic boundary.** On the documented seed the quality
+  seed writes 13 eval runs / 64 case results / 12 production cases / 10 agent
+  runs / 10 proposals / 5 approvals (3 approved, 2 rejected) / 6 applied /
+  2 `apply_failed` / 4 escalation events. After `make demo-quality`, the live
+  quality panels rendered rows **7 / 7 / 5 / 7 / 7 / 7 / 3 / 7** and the ops
+  panels **1 / 4 / 7 / 3 / 6 / 1**. Every panel is synthetic demo evidence,
+  not a production M2–M4 pipeline run, audit-chain proof, or production
+  quality claim; the command prints `SYNTHETIC DEMO DATA — NOT PRODUCTION
+  EVIDENCE`, uses no network or LLM, and is deterministic for a pinned clock /
+  the same seed and UTC day.
+- **Verifier requires non-empty seeded panels.** `./scripts/verify-dashboard.sh`
+  checks both dashboard UIDs (`recon-ops`, `recon-agent-quality`), both
+  datasource health checks, provisioning/folder/version, every target through
+  `/api/ds/query`, at least one frame and non-zero rows per seeded panel, at
+  least three escalation reasons, anonymous dashboard access denied with
+  HTTP 401, and base-table denial with SQLSTATE `42501`. A zero-row panel now
+  fails instead of passing as execution-only evidence.
+- **Grafana stale bind mount is an environment action.** The file provider
+  loads `deploy/grafana/dashboards/*.json` into folder `Recon`; a long-running
+  Grafana container may not see a newly added `agent-quality.json` until
+  provisioning reloads or Grafana is restarted once. Fresh compose startup is
+  the normal path; the restart is not a code or JSON defect.
+- **Visual confirmation is PENDING (human).** Automated evidence proves
+  provisioning, datasource health, query execution, and non-empty frames. It
+  does not prove rendered titles/units/legends/readability. Open
+  <http://127.0.0.1:3000/d/recon-agent-quality>, log in with the local admin
+  credentials, and inspect the eight panels: `Accuracy by model / prompt`,
+  `False-fix rate by model / prompt`, `Human override rate`,
+  `Apply-failure rate`, `Average cost per case`, `Latency p50 / p95`,
+  `Escalation reasons`, `Escalation rate`. No agent may mark this PASS.
+- **No M5-06/M6 scope and no `docs/spec.md` edit.** M5-05 adds no daily
+  integrity job, alerting, application services, new compose service,
+  datasource, role, or base-table grant. M5-01 remains unticked and M5-06 is
+  untouched. `docs/spec.md` is unchanged; this entry, `docs/agent-quality.md`,
+  `docs/dashboards.md`, and `deploy/grafana/README.md` are the delivered
+  documentation.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-103 | **OPEN — spec/docs conflicts recorded; implementation delivered with documented boundaries:** M5-05 delivers seven `v_eval_*` owner-rights views (twelve dashboard-facing views total), with eval/production hybrid sources; accuracy excludes injection while false-fix includes it; override is rejections/terminal decisions with no edit event; apply-failure is the strict terminal `apply_failed/(applied+apply_failed)` denominator with `applied_at`/latest-audit/`created_at` time attribution; escalation reasons come from `audit_log` and escalation rate is a creation-day cohort rate; aborted/repeat/`matcher` runs are excluded; `recon demo quality` is a fail-closed all-or-nothing superset seeded in one transaction that takes `EXCLUSIVE` locks on every seed-target table before the presence checks and snapshot (concurrent writers are serialized; failures roll back exactly, concurrent rows are never adopted, no compensating reset) whose `--reset` is a separate guarded dev-only full schema reset because `audit_log` is append-only, which deviates from spec §5.4's tagged-only delete wording; the guard checks every dropped table/schema, allows only migration reference rows plus `demo_metadata`/demo-owned rows, and runs under `ACCESS EXCLUSIVE` locks in the drop transaction (second approved safety migration `20261125130000_m5_05_demo_metadata.sql`); M5-04's five-view/latest-migration tests and docs were deliberately updated to the twelve-view inventory without weakening any security assertion; the verifier now requires non-empty panels on both dashboards; visual confirmation is PENDING (human); a stale Grafana bind mount may require one restart; the seed is explicitly synthetic; no M5-06/M6 scope and no `docs/spec.md` edit. Two conflicts remain unresolved: the append-only reset boundary versus the spec's tagged-delete wording, and §13.2's "rejects or edits" override definition versus the absence of any edit event. | Spec §5.4/§13.2 / M5-05 / future spec revision | Keep the delivered guarded full-reset boundary and rejection-based override metric documented, and amend `docs/spec.md` in a future owner-approved revision either to describe the append-only reset constraint or to add a real edit-override event. Do not resolve Q-103 by code or by editing the spec in this task. |

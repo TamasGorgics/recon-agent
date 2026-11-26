@@ -23,6 +23,12 @@ import (
 )
 
 const (
+	// m505EvalViewsVersion is the M5-05 eval-views migration. The
+	// demo-metadata marker migration was added after it to repair the reset
+	// guard, so "latest" is tracked separately.
+	m505EvalViewsVersion = 20261125120000
+	m505MigrationVersion = 20261125130000
+	m505PreviousVersion  = 20261124120000
 	m504MigrationVersion = 20261124120000
 	m504PreviousVersion  = 20261123120000
 
@@ -30,12 +36,23 @@ const (
 	sqlStateReadOnlyTransaction   = "25006"
 )
 
+// dashboardViews is the full M5-05 dashboard-facing inventory: the five M5-04
+// v_ops_* views plus the seven v_eval_* views defined in spec §3.2–§3.8.
+// (The spec prose says "six" eval views, but it enumerates seven distinct
+// definitions and panels 7 and 8 require both escalation views.)
 var dashboardViews = []string{
 	"v_ops_match_rate",
 	"v_ops_unmatched_value",
 	"v_ops_break_aging",
 	"v_ops_approval_queue",
 	"v_ops_resolution_mix",
+	"v_eval_accuracy",
+	"v_eval_false_fix",
+	"v_eval_cost_latency",
+	"v_eval_override_rate",
+	"v_eval_apply_failure_rate",
+	"v_eval_escalations",
+	"v_eval_escalation_rate",
 }
 
 // TestMain prepares the migrated template and fails if this process leaks an
@@ -181,10 +198,11 @@ func openDashboardConn(t *testing.T, d *testdb.DB) *pgx.Conn {
 	return conn
 }
 
-// TestM504RoleAndViews is T3: the migration exists at the latest version, the
-// role is NOLOGIN and view-only, the five v_ops_* views are SELECTable through
-// the dashboard login, every base table and v_agent_* view is denied with
-// 42501, writes are denied, and the session is read-only.
+// TestM504RoleAndViews is T3: the migrations exist at the latest version, the
+// role is NOLOGIN and view-only, all twelve dashboard views (five v_ops_* and
+// seven v_eval_*) are SELECTable through the dashboard login, every base table
+// and v_agent_* view is denied with 42501, writes are denied, and the session
+// is read-only.
 func TestM504RoleAndViews(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.New(t)
@@ -194,17 +212,19 @@ func TestM504RoleAndViews(t *testing.T) {
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != m504MigrationVersion {
-		t.Fatalf("migration version = %d, want %d", version, m504MigrationVersion)
+	if version != m505MigrationVersion {
+		t.Fatalf("migration version = %d, want %d", version, m505MigrationVersion)
 	}
-	var applied bool
-	if err := d.Pool.QueryRow(ctx,
-		`SELECT is_applied FROM goose_db_version WHERE version_id = $1`, m504MigrationVersion).
-		Scan(&applied); err != nil {
-		t.Fatalf("read M5-04 goose row: %v", err)
-	}
-	if !applied {
-		t.Fatal("M5-04 goose row is not applied")
+	for _, migration := range []int64{m504MigrationVersion, m505EvalViewsVersion, m505MigrationVersion} {
+		var applied bool
+		if err := d.Pool.QueryRow(ctx,
+			`SELECT is_applied FROM goose_db_version WHERE version_id = $1`, migration).
+			Scan(&applied); err != nil {
+			t.Fatalf("read goose row %d: %v", migration, err)
+		}
+		if !applied {
+			t.Errorf("goose row %d is not applied", migration)
+		}
 	}
 
 	var canLogin, superuser, createDB, createRole, replication bool
@@ -248,15 +268,15 @@ func TestM504RoleAndViews(t *testing.T) {
 		t.Fatalf("%s has %d parent role(s), want 0", testdb.DashboardsRole, parentRoles)
 	}
 
-	// Exactly the five v_ops_* views are granted, all SELECT, and nothing is
-	// granted to PUBLIC.
+	// Exactly the twelve dashboard views are granted, all SELECT, and nothing
+	// is granted to PUBLIC.
 	grants := roleTableGrants(t, d)
 	wantGrants := make(map[string]string, len(dashboardViews))
 	for _, view := range dashboardViews {
 		wantGrants[view] = "SELECT"
 	}
 	if len(grants) != len(wantGrants) {
-		t.Fatalf("role table grants = %v, want exactly the five v_ops_* views", grants)
+		t.Fatalf("role table grants = %v, want exactly the five v_ops_* and seven v_eval_* views", grants)
 	}
 	for view, privilege := range wantGrants {
 		if got, ok := grants[view]; !ok || got != privilege {
@@ -329,6 +349,7 @@ func TestM504RoleAndViews(t *testing.T) {
 	deniedTables := []string{
 		"matches", "breaks", "cases", "proposals", "approvals",
 		"applied_proposals", "ledger_txns", "external_records", "v_agent_cases",
+		"eval_runs", "eval_case_results", "agent_runs", "audit_log",
 	}
 	for _, table := range deniedTables {
 		var selectAllowed, insertAllowed, updateAllowed, deleteAllowed bool
@@ -497,8 +518,9 @@ func roleTableGrants(t *testing.T, d *testdb.DB) map[string]string {
 
 // TestM504MigrationDown applies the real goose Down on an isolated clone. The
 // role is cluster-wide, so the down migration revokes this database's
-// privileges, drops the views, and drops the role only when no other database
-// still holds a grant (the test template and the dev database normally do).
+// privileges, drops the five v_ops_* views, and drops the role only when no
+// other database still holds a grant (the test template and the dev database
+// normally do). M5-05 is unwound first so this still exercises M5-04's Down.
 // The test proves the safe retained-role branch and that Up restores everything.
 func TestM504MigrationDown(t *testing.T) {
 	ctx := context.Background()
@@ -513,8 +535,17 @@ func TestM504MigrationDown(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("configure goose: %v", err)
 	}
+	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m505MigrationVersion)
+	}
+
+	// Later migrations must be unwound first so this test exercises M5-04's
+	// own Down rather than M5-05's.
+	if err := goose.DownToContext(ctx, sqlDB, ".", m504MigrationVersion); err != nil {
+		t.Fatalf("unwind migrations newer than M5-04: %v", err)
+	}
 	if version := gooseVersion(t, sqlDB); version != m504MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m504MigrationVersion)
+		t.Fatalf("version after unwinding M5-05 = %d, want %d", version, m504MigrationVersion)
 	}
 
 	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
@@ -563,8 +594,8 @@ func TestM504MigrationDown(t *testing.T) {
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("goose up M5-04 after down: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m504MigrationVersion {
-		t.Fatalf("version after re-up = %d, want %d", version, m504MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
+		t.Fatalf("version after re-up = %d, want %d", version, m505MigrationVersion)
 	}
 	for _, view := range dashboardViews {
 		var exists bool
@@ -577,7 +608,7 @@ func TestM504MigrationDown(t *testing.T) {
 		}
 	}
 	if got := roleTableGrants(t, d); len(got) != len(dashboardViews) {
-		t.Fatalf("grants after re-up = %v, want the five v_ops_* views", got)
+		t.Fatalf("grants after re-up = %v, want the five v_ops_* and seven v_eval_* views", got)
 	}
 	if !roleHasDirectSchemaUsage(t, d) {
 		t.Error("dashboard role lost its direct schema USAGE grant after re-up")
@@ -587,8 +618,109 @@ func TestM504MigrationDown(t *testing.T) {
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("idempotent goose up: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m504MigrationVersion {
-		t.Fatalf("version after idempotent up = %d, want %d", version, m504MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
+		t.Fatalf("version after idempotent up = %d, want %d", version, m505MigrationVersion)
+	}
+}
+
+// TestM505MigrationDown unwinds only M5-05 on an isolated clone: the seven
+// v_eval_* views and their grants disappear, while the M5-04 role, schema
+// usage, and five v_ops_* views/grants remain. Up restores the full inventory.
+func TestM505MigrationDown(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.New(t)
+
+	sqlDB, err := sql.Open("pgx", d.DSN)
+	if err != nil {
+		t.Fatalf("open goose database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatalf("configure goose: %v", err)
+	}
+	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m505MigrationVersion)
+	}
+
+	// Unwind the later demo-metadata migration first so the next Down exercises
+	// M5-05 itself.
+	if err := goose.DownToContext(ctx, sqlDB, ".", m505EvalViewsVersion); err != nil {
+		t.Fatalf("unwind migrations newer than M5-05: %v", err)
+	}
+	if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
+		t.Fatalf("goose down M5-05: %v", err)
+	}
+	if version := gooseVersion(t, sqlDB); version != m505PreviousVersion {
+		t.Fatalf("version after down = %d, want %d", version, m505PreviousVersion)
+	}
+
+	for _, view := range dashboardViews {
+		var exists bool
+		if err := d.Pool.QueryRow(ctx,
+			`SELECT to_regclass('public.' || $1) IS NOT NULL`, view).Scan(&exists); err != nil {
+			t.Fatalf("resolve view %s after M5-05 down: %v", view, err)
+		}
+		if strings.HasPrefix(view, "v_eval_") {
+			if exists {
+				t.Errorf("eval view %s still exists after M5-05 down", view)
+			}
+			continue
+		}
+		if !exists {
+			t.Errorf("M5-04 view %s was dropped by M5-05 down", view)
+		}
+	}
+	grants := roleTableGrants(t, d)
+	if len(grants) != len(dashboardViews)-7 {
+		t.Fatalf("grants after M5-05 down = %v, want the five v_ops_* views", grants)
+	}
+	for view, privilege := range grants {
+		if strings.HasPrefix(view, "v_eval_") || privilege != "SELECT" {
+			t.Errorf("grant after M5-05 down = %s/%s, want only five v_ops_* SELECT grants", view, privilege)
+		}
+	}
+	var roleExists, canLogin bool
+	var config []string
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`,
+		testdb.DashboardsRole).Scan(&roleExists); err != nil {
+		t.Fatalf("check dashboard role after M5-05 down: %v", err)
+	}
+	if !roleExists {
+		t.Fatal("M5-05 down dropped recon_dashboards_ro, want it retained")
+	}
+	if err := d.Pool.QueryRow(ctx,
+		`SELECT rolcanlogin, rolconfig FROM pg_roles WHERE rolname = $1`,
+		testdb.DashboardsRole).Scan(&canLogin, &config); err != nil {
+		t.Fatalf("read retained role after M5-05 down: %v", err)
+	}
+	if canLogin {
+		t.Error("retained dashboard role is LOGIN, want NOLOGIN")
+	}
+	requireRoleConfig(t, config)
+	if !roleHasDirectSchemaUsage(t, d) {
+		t.Error("M5-05 down removed the M5-04 schema USAGE grant")
+	}
+
+	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
+		t.Fatalf("goose up M5-05 after down: %v", err)
+	}
+	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
+		t.Fatalf("version after re-up = %d, want %d", version, m505MigrationVersion)
+	}
+	for _, view := range dashboardViews {
+		var exists bool
+		if err := d.Pool.QueryRow(ctx,
+			`SELECT to_regclass('public.' || $1) IS NOT NULL`, view).Scan(&exists); err != nil {
+			t.Fatalf("resolve view %s after re-up: %v", view, err)
+		}
+		if !exists {
+			t.Errorf("view %s is missing after M5-05 re-up", view)
+		}
+	}
+	if got := roleTableGrants(t, d); len(got) != len(dashboardViews) {
+		t.Fatalf("grants after M5-05 re-up = %v, want all %d dashboard views", got, len(dashboardViews))
 	}
 }
 
