@@ -1312,3 +1312,107 @@ is not used to reinterpret or waive the approved contract.
 | ID | Finding | Target | Proposed change |
 |---|---|---|---|
 | Q-103 | **OPEN — spec/docs conflicts recorded; implementation delivered with documented boundaries:** M5-05 delivers seven `v_eval_*` owner-rights views (twelve dashboard-facing views total), with eval/production hybrid sources; accuracy excludes injection while false-fix includes it; override is rejections/terminal decisions with no edit event; apply-failure is the strict terminal `apply_failed/(applied+apply_failed)` denominator with `applied_at`/latest-audit/`created_at` time attribution; escalation reasons come from `audit_log` and escalation rate is a creation-day cohort rate; aborted/repeat/`matcher` runs are excluded; `recon demo quality` is a fail-closed all-or-nothing superset seeded in one transaction that takes `EXCLUSIVE` locks on every seed-target table before the presence checks and snapshot (concurrent writers are serialized; failures roll back exactly, concurrent rows are never adopted, no compensating reset) whose `--reset` is a separate guarded dev-only full schema reset because `audit_log` is append-only, which deviates from spec §5.4's tagged-only delete wording; the guard checks every dropped table/schema, allows only migration reference rows plus `demo_metadata`/demo-owned rows, and runs under `ACCESS EXCLUSIVE` locks in the drop transaction (second approved safety migration `20261125130000_m5_05_demo_metadata.sql`); M5-04's five-view/latest-migration tests and docs were deliberately updated to the twelve-view inventory without weakening any security assertion; the verifier now requires non-empty panels on both dashboards; visual confirmation is PENDING (human); a stale Grafana bind mount may require one restart; the seed is explicitly synthetic; no M5-06/M6 scope and no `docs/spec.md` edit. Two conflicts remain unresolved: the append-only reset boundary versus the spec's tagged-delete wording, and §13.2's "rejects or edits" override definition versus the absence of any edit event. | Spec §5.4/§13.2 / M5-05 / future spec revision | Keep the delivered guarded full-reset boundary and rejection-based override metric documented, and amend `docs/spec.md` in a future owner-approved revision either to describe the append-only reset constraint or to add a real edit-override event. Do not resolve Q-103 by code or by editing the spec in this task. |
+
+## M5-06 Daily integrity job (Q-104)
+
+**Q-104 addendum (Wave 4 docs/release phase; developer-owned; no
+`docs/spec.md` edit).** M5-06 delivers FIN-52 with the frozen defaults from
+`spec.md` §13/§14 (AQ-1..AQ-13). The items below are recorded as residuals or
+cross-task contracts, not as defects to fix in M5-06. The spec is unchanged;
+this entry and `docs/integrity.md` are the delivered documentation.
+
+- **Reset guard and outbox interaction (AQ-3/AQ-3b).** The M5-05 all-tables
+  demo reset guard has one named exception for `public.integrity_runs` because
+  those rows are operational evidence, not untagged user data; no other table
+  is exempted and there is no wildcard. A reset **drops `integrity_runs`
+  history** and it cannot be recovered. A failed demo integrity run also writes
+  an untagged `integrity.failed` row in `outbox`, which the guard still
+  refuses; M5-06 deliberately did not weaken the outbox guard (default (a)),
+  so a demo operator must drain/handle that alert row before a reset. Adding a
+  narrow row-level outbox exception is a possible scoped follow-up (b), not an
+  M5-06 change. The reset and the worker scheduler hold different advisory
+  locks: demo reset and the scheduler must be serialized.
+- **Tie-out as-of and coverage (AQ-1).** Each scope is evaluated at its latest
+  `statement_balances.as_of_date <= run_date`; a scope with no statement is
+  `skipped`, not failed, and `psp_a` is therefore normally skipped because it
+  has no statements. `bank_x` opening balances remain unexplained and fail
+  tie-out; no source allowlist or special case was added. A report with every
+  scope skipped is a `passed` check with `checked=0`/`skipped>0` — a vacuous
+  pass, not coverage evidence. M5-07/M5-09 must inspect `checked`/`skipped` and
+  statement coverage rather than run `status` alone.
+- **Value equation semantics (AQ-5).** Signed minor units, active match
+  headers **and** active legs, matched value attributed through the match's
+  scope, no `abs()`, no currency netting, and **no tolerance exemption**. The
+  reference-tolerance demo difference (and any fee/tolerance representation
+  delta) fails until it is booked or corrected; the spec must add an explicit
+  term if a legitimate representation ever differs. There is no per-match
+  check: the check is per `source + currency`.
+- **Outbox handler and deploy order (AQ-2).** `integrity.failed` is registered
+  in the existing Slack handler map and `cmd/outbox` topic list (now four
+  topics); delivery is at-least-once with duplicate messages accepted (no
+  Slack idempotency key, no `notified_at` column). `cmd/outbox` must be
+  deployed **before** the scheduler produces, because an unregistered topic
+  dead-letters immediately and is not retried; a message produced before the
+  handler exists is not a delivered alert (the outbox row remains). If a future
+  review rejects the handler, the honest alternative is a documented
+  durable-but-undelivered residual, not a claim that FIN-52 alerts are
+  delivered.
+- **Scheduler (AQ-8).** Fixed 02:00 UTC (`DefaultRunAtUTC = 2h`), long-running
+  worker only, catch-up once for the current UTC date only, same-day
+  suppression from persisted scheduled rows, failed scheduled rows count as
+  the day's attempt, manual runs do not satisfy schedule idempotency, no leader
+  election (transaction-scoped advisory lock `7305060001` is single-flight),
+  and no config key to change the time or disable the job. An all-worker
+  outage misses a day; catch-up never backfills prior days, so M5-07/M5-09
+  must surface missing rows. `worker --once` starts no scheduler.
+- **Append-only history and latest selection (AQ-7).** `integrity_runs` has no
+  unique `run_date`, no `running` status, and no lease table; rows are
+  append-only completed attempts retained indefinitely. The latest attempt for
+  a date is `ORDER BY started_at DESC, id DESC LIMIT 1`; a later manual pass
+  may coexist with an earlier scheduled failure. M5-09 period close must
+  require a passed run appropriate to the period (not merely "no failed run")
+  and inspect tie-out coverage; M5-06 does not define that policy.
+- **Metric mapping (AQ-9).** `recon_integrity_job_status{job="integrity"}` is
+  `0` seeded/unknown, `1` last completed pass, `2` last completed fail; set only
+  by the worker after commit, never at start, never reset to `0` to erase a
+  prior result, and not updated on lock/cancel/persist/config/panic paths. A
+  restart reseeds `0` until the next completed run, so `0` means unknown, not
+  pass. A crash after commit but before the gauge update leaves the row
+  authoritative and the gauge stale until the next run/restart; the metric was
+  not moved before commit to close that window.
+- **Demo red vs repair (AQ-4).** The deterministic demo fails value
+  conservation (tolerance/rounding matches leave small signed minor-unit
+  differences per source and currency; the live release run observed `psp_a`
+  EUR `-2`, SEK `-3`, USD `+2`) and tie-out (`bank_x` opening balances in
+  EUR/JPY/SEK/USD). M5-06 documents the red demo and uses a purpose-built
+  clean fixture for acceptance; it does not repair demo data or special-case
+  sources. A green demo is a separate fixture/data task.
+- **Trust boundary (AQ-10 / R14).** There is no `running` row and no audit
+  entry/signature/MAC for the run. `recon_app` holds `INSERT` on
+  `integrity_runs`, so the app role can insert a fake passed row directly by
+  SQL, and the owner/superuser can mutate append-only rows. The results are
+  operational evidence, not tamper-evident; an append-only trigger, separate
+  role, or run signature is future hardening.
+- **Timeout/cancel absence (AQ-10 / R6).** The 5-minute `DefaultRunTimeout` is
+  a package constant (no config key). A hard timeout, cancellation, crash, lock
+  loser, or persistence failure before commit leaves **no** row and no alert;
+  a missing daily row is not a pass. M5-07/M5-09 must detect absence
+  explicitly. The scheduler treats cancellation as shutdown and retries
+  operational errors with bounded backoff.
+- **Migration/spec delta (AQ-11).** `integrity_runs` was already listed as a
+  roadmap §3.1 table delta (not in `docs/spec.md` §3.1); the additive migration
+  is `20261126120000_m5_06_integrity_runs.sql`, with `recon_app SELECT/INSERT`
+  only and `PUBLIC`/`UPDATE`/`DELETE` revoked. No `docs/spec.md` edit was made.
+  A later merge that races the timestamp must rebase, not renumber silently.
+- **Outbox label, reporting grant, audit cost, retention (R13/R18).** The
+  frozen outbox metric topic label set does not include `integrity.failed`, so
+  its lag/dead-letter series fold to `unknown`; no label-contract change was
+  made. M5-07 must add its own read-only `integrity_runs` grant/path instead of
+  broadening `recon_app`'s write grants. The audit chain is verified in full on
+  every run, a cost that grows with the chain; incremental checkpoints must not
+  hide older tampering and are future work. Rows are retained indefinitely;
+  there is no retention/cleanup job in M5-06.
+
+| ID | Finding | Target | Proposed change |
+|---|---|---|---|
+| Q-104 | **OPEN — residuals recorded; implementation delivered with documented boundaries:** FIN-52 is delivered as five frozen checks in one REPEATABLE READ read-write snapshot with a savepoint per check, an append-only `integrity_runs` row, a conditional `integrity.failed` outbox alert, the `recon integrity run [--date] [--json]` CLI as `recon_app`, a joined 02:00 UTC worker scheduler with catch-up for the current day only and advisory-lock single-flight (no leader election/config), a post-commit `0/1/2` gauge produced only by the worker, and a named reset-guard exception for `integrity_runs`; the demo is red by default (small value-conservation deltas from tolerance/rounding matches and `bank_x` opening balances), the clean fixture is the acceptance evidence, and `--date` scopes only the tie-out as-of, never a historical replay. Residuals: reset drops run history and a failed run's untagged `integrity.failed` outbox row still blocks a demo reset (AQ-3b, no outbox exception); latest-`<=` tie-out skips are not coverage and all-skipped is a vacuous pass; signed value equation has no tolerance exemption or per-match check; `cmd/outbox` must ship before the scheduler and at-least-once duplicates are accepted; a failed scheduled run is the day's attempt and an all-worker outage misses a day; append-only/latest selection leaves M5-09 to require a passed run and coverage; the commit-before-metric window and restart-to-0/unknown are accepted; no `running` row, no run audit/signature, app role can insert a fake pass, and owner can mutate rows (grants are the boundary); timeout/cancel/crash leaves no row and M5-07/M5-09 must detect missing runs; the migration is additive and `docs/spec.md` is untouched; the outbox topic label folds to `unknown`, M5-07 owes its own reporting grant, full-chain audit cost and indefinite retention remain open. No M5-07/M6 scope and no `docs/spec.md` edit. | Spec §13.1 / M5-06 / M5-07 · M5-09 consumers / operators | Keep the frozen check order, savepoint/transaction, report shape/caps, append-only schema, CLI exits/role, scheduler/catch-up/no-leader rules, post-commit metric, and deploy order; treat pass as "no inconsistency detected" and require coverage-aware consumers; keep the OSS reset/outbox boundary and the trust boundary explicit; add any retention, reporting grant, audit-incremental, or demo-green behavior only in its own scoped task; amend `docs/spec.md` only in a future owner-approved revision. |

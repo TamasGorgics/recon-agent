@@ -358,6 +358,100 @@ func TestM505DemoQualitySeedFailureRestoresM1PreRun(t *testing.T) {
 	}
 }
 
+// TestM505ResetGuardAllowsIntegrityRuns proves the named operational-evidence
+// exception: a valid integrity_runs row does not block the guard or reset, and
+// the reset drops the run history. No wildcard or demoRowKeySQL key is used.
+// covers: FIN-52
+func TestM505ResetGuardAllowsIntegrityRuns(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	mustExec(t, d, `INSERT INTO integrity_runs
+	    (run_date, started_at, finished_at, status, check_count,
+	     failure_count, checks, triggered_by)
+	    VALUES (current_date, now(), now(), 'passed', 5, 0,
+	            '[{},{},{},{},{}]'::jsonb, 'manual')`)
+
+	if err := demo.CheckQualityResetAllowed(ctx, d.DSN); err != nil {
+		t.Fatalf("guard blocked a valid integrity_runs row: %v", err)
+	}
+	if err := demo.Reset(ctx, d.DSN); err != nil {
+		t.Fatalf("reset with a valid integrity_runs row: %v", err)
+	}
+
+	var rows int64
+	if err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM integrity_runs`).Scan(&rows); err != nil {
+		t.Fatalf("count integrity_runs after reset: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("integrity_runs rows after reset = %d, want the history dropped", rows)
+	}
+	if got := dbVersion(t, d); got != latestMigrationVersion(t) {
+		t.Fatalf("goose version after reset = %d, want latest %d", got, latestMigrationVersion(t))
+	}
+}
+
+// TestM505ResetGuardRejectsUnknownPublicTableRows proves the exception is
+// narrow: a new public table with a row still aborts with the typed error and
+// no DDL runs.
+func TestM505ResetGuardRejectsUnknownPublicTableRows(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	mustExec(t, d, `CREATE TABLE guard_unknown_public (id INT PRIMARY KEY)`)
+	mustExec(t, d, `INSERT INTO guard_unknown_public (id) VALUES (1)`)
+	beforeVersion := dbVersion(t, d)
+
+	for _, reset := range []func() error{
+		func() error { return demo.CheckQualityResetAllowed(ctx, d.DSN) },
+		func() error { return demo.Reset(ctx, d.DSN) },
+	} {
+		err := reset()
+		if !errors.Is(err, demo.ErrQualityUntaggedData) {
+			t.Fatalf("guard error = %v, want ErrQualityUntaggedData", err)
+		}
+		var typed *demo.UntaggedDataError
+		if !errors.As(err, &typed) || typed.Table != "guard_unknown_public" || typed.Rows != 1 {
+			t.Fatalf("guard error = %#v, want *UntaggedDataError for guard_unknown_public", err)
+		}
+	}
+	var rows int64
+	if err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM guard_unknown_public`).Scan(&rows); err != nil {
+		t.Fatalf("unknown table did not survive the refused reset: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("unknown table rows after refused reset = %d, want 1", rows)
+	}
+	if got := dbVersion(t, d); got != beforeVersion {
+		t.Fatalf("goose version after refused reset = %d, want %d", got, beforeVersion)
+	}
+}
+
+// TestM505ResetGuardStillRejectsIntegrityFailedOutboxRow pins AQ-3b: the
+// integrity_runs exception does not extend to outbox, so a failed demo run's
+// alert row still blocks reset until it is handled.
+func TestM505ResetGuardStillRejectsIntegrityFailedOutboxRow(t *testing.T) {
+	d := testdb.New(t)
+	ctx := context.Background()
+	mustExec(t, d, `INSERT INTO integrity_runs
+	    (run_date, started_at, finished_at, status, check_count,
+	     failure_count, checks, triggered_by)
+	    VALUES (current_date, now(), now(), 'failed', 5, 1,
+	            '[{},{},{},{},{}]'::jsonb, 'manual')`)
+	mustExec(t, d, `INSERT INTO outbox
+	    (aggregate_type, aggregate_id, topic, payload, idempotency_key,
+	     created_at, next_attempt_at)
+	    VALUES ('integrity_run', 'guard-test', 'integrity.failed',
+	            '{}'::jsonb, 'integrity.failed:guard-test', now(), now())`)
+
+	err := demo.CheckQualityResetAllowed(ctx, d.DSN)
+	if !errors.Is(err, demo.ErrQualityUntaggedData) {
+		t.Fatalf("guard error = %v, want the outbox row to still block reset", err)
+	}
+	var typed *demo.UntaggedDataError
+	if !errors.As(err, &typed) || typed.Table != "outbox" {
+		t.Fatalf("guard error = %#v, want *UntaggedDataError for outbox", err)
+	}
+}
+
 func mustExec(t *testing.T, d *testdb.DB, query string) {
 	t.Helper()
 	if _, err := d.Pool.Exec(context.Background(), query); err != nil {

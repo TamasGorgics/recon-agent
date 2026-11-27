@@ -4,6 +4,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/agent"
 	"github.com/TamasGorgics/recon-agent/internal/approval"
 	"github.com/TamasGorgics/recon-agent/internal/cases"
+	"github.com/TamasGorgics/recon-agent/internal/integrity"
 	"github.com/TamasGorgics/recon-agent/internal/limits"
 	"github.com/TamasGorgics/recon-agent/internal/match"
 	"github.com/TamasGorgics/recon-agent/internal/tieout"
@@ -16,13 +17,14 @@ import (
 // cycles. Every adapter is nil-safe so callers can construct one even when the
 // registry is disabled.
 var (
-	_ match.Observer    = (*MatchObserver)(nil)
-	_ cases.Observer    = (*CasesObserver)(nil)
-	_ agent.RunObserver = (*AgentObserver)(nil)
-	_ worker.Observer   = (*WorkerObserver)(nil)
-	_ approval.Observer = (*ApprovalObserver)(nil)
-	_ limits.Observer   = (*LimitsObserver)(nil)
-	_ tieout.Observer   = (*TieoutObserver)(nil)
+	_ match.Observer     = (*MatchObserver)(nil)
+	_ cases.Observer     = (*CasesObserver)(nil)
+	_ agent.RunObserver  = (*AgentObserver)(nil)
+	_ worker.Observer    = (*WorkerObserver)(nil)
+	_ approval.Observer  = (*ApprovalObserver)(nil)
+	_ limits.Observer    = (*LimitsObserver)(nil)
+	_ tieout.Observer    = (*TieoutObserver)(nil)
+	_ integrity.Observer = (*IntegrityObserver)(nil)
 )
 
 // MatchObserver adapts the matcher's post-commit observer to the registry.
@@ -168,6 +170,31 @@ func (o *LimitsObserver) CheckFailed(code string) {
 		return
 	}
 	o.metrics.ObserveError("limits", code)
+}
+
+// IntegrityObserver adapts the integrity job's post-commit observer to the
+// single frozen integrity gauge. It never sets 0: the seeded 0 means
+// unknown/not run, and the adapter is only called after a completed run.
+type IntegrityObserver struct {
+	metrics *Metrics
+}
+
+// NewIntegrityObserver returns an adapter for one process registry.
+func NewIntegrityObserver(m *Metrics) *IntegrityObserver {
+	return &IntegrityObserver{metrics: m}
+}
+
+// IntegrityRunCompleted sets the integrity job gauge to 1 for a passed run and
+// 2 for a failed run. It is called exactly once per committed run.
+func (o *IntegrityObserver) IntegrityRunCompleted(passed bool) {
+	if o == nil || o.metrics == nil {
+		return
+	}
+	if passed {
+		o.metrics.SetIntegrityJobStatus(JobIntegrity, 1)
+		return
+	}
+	o.metrics.SetIntegrityJobStatus(JobIntegrity, 2)
 }
 
 // TieoutObserver adapts a tie-out computation to the registry.

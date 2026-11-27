@@ -180,7 +180,7 @@ Generated from the task headings. Pick the first unchecked row whose Needs are a
 | ☑ | M5-03 | Prometheus metrics | S | M4-02 |
 | ☑ | M5-04 | Ops dashboard | M | M5-03, M1-15 |
 | ☑ | M5-05 | Agent quality dashboard | M | M5-03, M3-04 |
-| ☐ | M5-06 | Daily integrity job | M | M4-08, M1-15, M4-13 |
+| ☑ | M5-06 | Daily integrity job | M | M4-08, M1-15, M4-13 |
 | ☐ | M5-07 | Daily reconciliation report | M | M5-06, M4-07 |
 | ☐ | M5-08 | Case file report | M | M5-01, M4-13, M4-07 |
 | ☐ | M5-09 | Period close | L | M5-06, M4-06 |
@@ -1089,6 +1089,39 @@ automated frames/non-empty rows are not a rendering claim. No M5-06/M6 scope.
 **Done when**
 - One test per check seeds the matching inconsistency and sees it detected; clean data passes.
 - Tests carry `// covers: FIN-52`.
+
+**Evidence (2026-11-27).** FIN-52 is delivered on `m5/06-integrity-job` as
+five independent checks in one `REPEATABLE READ` read-write transaction with a
+savepoint per check (`ledger_balance`, `value_conservation`,
+`applied_proposal_trail` mapped from the unchanged `internal/invariants`
+contract, full-chain `audit_chain`, and per-scope `tieout`), persisted
+append-only in `integrity_runs` (migration `20261126120000`). One dedicated
+detection test per check seeds the matching inconsistency and asserts the
+check name and problem code; a purpose-built clean fixture (not `demo seed`)
+passes all five and a failed run is `(Result, nil)` with exactly one
+`integrity.failed` outbox row. The CLI `recon integrity run [--date] [--json]`
+runs as `recon_app` with exit 0/1/2, and `--date` scopes only the tie-out
+as-of. The joined worker scheduler runs at 02:00 UTC with catch-up once for the
+current day, same-day suppression, bounded backoff, advisory-lock single-flight
+(no leader election), and unchanged `--once`. The worker produces
+`recon_integrity_job_status{job="integrity"}` 1/2 after commit (seed/restart
+`0` = unknown); the outbox registers an `integrity.failed` Slack handler
+(topic list 3→4) and must deploy before the scheduler; the reset guard has one
+named `integrity_runs` exception and still refuses an untagged failed-run
+outbox row (AQ-3b). Cold `go clean -testcache && make verify` passed
+uncached on the squashed release HEAD (see impl-notes for the SHA and tails),
+along with build/lint/unit/integration/fault, two deterministic `make demo-m1`
+runs, key-free `make demo-m2`, `make test-db-clean`, and
+`docker compose config -q`. The demo remains **red by default** (small
+value-conservation deltas from tolerance/rounding matches and `bank_x` opening
+balances); that is documented, not
+claimed green, and the clean fixture is the acceptance evidence. Q-104 records
+the reset-drop/outbox, tie-out coverage, value tolerance, deploy-order,
+scheduler, append-only/latest, metric, demo-red, trust-boundary,
+timeout/cancel, migration, topic-label, reporting-grant, audit-cost, and
+retention residuals. **Remaining review step:** the QA/adversary gate on this
+HEAD; the roadmap box is ticked with the implementation and gate evidence, not
+as a claim that the independent review has already passed.
 
 ### M5-07 · Daily reconciliation report · M
 **Spec:** section 14 · **Needs:** M5-06, M4-07

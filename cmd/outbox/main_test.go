@@ -129,6 +129,7 @@ func TestRunHelpNeedsNoConfiguration(t *testing.T) {
 		"approval.request",
 		"approval.update",
 		"approval.cancel",
+		"integrity.failed",
 		"No agent DSN or LLM key is required",
 	} {
 		if !strings.Contains(text, want) {
@@ -218,7 +219,8 @@ func TestRunStartupErrorRedactsDSNAndToken(t *testing.T) {
 	}
 }
 
-func TestBuildWorkerWiresThreeTopicsAndDefaults(t *testing.T) {
+// covers: FIN-52
+func TestBuildWorkerWiresFourTopicsAndDefaults(t *testing.T) {
 	clearCmdEnv(t)
 	setOutboxEnv(t)
 
@@ -269,6 +271,7 @@ func TestBuildWorkerWiresThreeTopicsAndDefaults(t *testing.T) {
 		"approval.cancel",
 		approval.TopicApprovalRequest,
 		approval.TopicApprovalUpdate,
+		"integrity.failed",
 	}
 	gotTopics := runtime.topics()
 	if !slices.Equal(gotTopics, wantTopics) {
@@ -388,6 +391,7 @@ func TestRunOnceEmptyOutboxNeedsNoAgentConfig(t *testing.T) {
 		approval.TopicApprovalRequest,
 		approval.TopicApprovalUpdate,
 		"approval.cancel",
+		"integrity.failed",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("run log is missing %q:\n%s", want, text)

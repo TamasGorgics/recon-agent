@@ -18,6 +18,7 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/clock"
 	"github.com/TamasGorgics/recon-agent/internal/config"
 	"github.com/TamasGorgics/recon-agent/internal/db"
+	"github.com/TamasGorgics/recon-agent/internal/integrity"
 	"github.com/TamasGorgics/recon-agent/internal/llm"
 	"github.com/TamasGorgics/recon-agent/internal/metrics"
 	"github.com/TamasGorgics/recon-agent/internal/telemetry"
@@ -30,6 +31,10 @@ Runs the M2 case worker until SIGINT/SIGTERM. The worker polls the case queue,
 leases with FOR UPDATE SKIP LOCKED, runs the agent loop under the configured
 concurrency, daily USD budget, and attempt cap, and releases leases on
 shutdown.
+
+In long-running mode it also runs the M5-06 daily integrity job at 02:00 UTC
+with catch-up and advisory-lock single-flight. --once is case-only and starts
+no integrity scheduler.
 
 Flags:
   --once   process at most one available case and exit
@@ -111,6 +116,8 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 	runObserver := metrics.NewAgentObserver(processMetrics)
 	caseObserver := metrics.NewCasesObserver(processMetrics, "worker")
 	workerObserver := metrics.NewWorkerObserver(processMetrics)
+	integrityObserver := metrics.NewIntegrityObserver(processMetrics)
+	tieoutObserver := metrics.NewTieoutObserver(processMetrics)
 
 	timeSource := clock.Real{}
 	client, err := llm.NewClient(cfg.LLM, llm.Options{Clock: timeSource, Logger: logger})
@@ -198,28 +205,139 @@ func runWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, tele
 	}
 
 	if once {
-		err := pollWorker.ProcessOnce(ctx)
-		switch {
-		case err == nil:
-			return nil
-		case errors.Is(err, cases.ErrNoCase):
-			logger.Info("worker: no case available")
-			return nil
-		case errors.Is(err, worker.ErrAgentDisabled):
-			logger.Info("worker: agent_enabled is off; not leasing")
-			return nil
-		case errors.Is(err, worker.ErrDailyBudgetReached):
-			logger.Info("worker: daily budget reached; not leasing")
-			return nil
-		default:
-			return err
-		}
+		return runWorkerMode(ctx, true, pollWorker, pollWorker, nil, logger)
 	}
-	if err := pollWorker.Run(ctx); err != nil {
+
+	scheduler, err := integrity.NewScheduler(integrity.SchedulerOptions{
+		Runner: integrity.RunnerFunc(func(ctx context.Context) (integrity.Result, error) {
+			return integrity.Run(ctx, app.Pool, integrity.Options{
+				TriggeredBy:    integrity.TriggerSchedule,
+				Clock:          timeSource,
+				Observer:       integrityObserver,
+				TieoutObserver: tieoutObserver,
+			})
+		}),
+		LatestScheduledRunDate: func(ctx context.Context) (integrity.Date, bool, error) {
+			return integrity.LatestScheduledRunDate(ctx, app.Pool)
+		},
+		Clock:   timeSource,
+		Sleeper: integrity.TimerSleeper{},
+		Logger:  logger,
+	})
+	if err != nil {
+		return fmt.Errorf("build integrity scheduler: %w", err)
+	}
+
+	if err := runWorkerMode(ctx, false, pollWorker, pollWorker, scheduler, logger); err != nil {
 		return err
 	}
 	logger.Info("worker stopped", "worker_id", pollWorker.ID())
 	return nil
+}
+
+// pollLoop is the long-running case poll surface used by runJoined.
+type pollLoop interface {
+	Run(ctx context.Context) error
+}
+
+// onceProcessor is the single-case surface used by --once.
+type onceProcessor interface {
+	ProcessOnce(ctx context.Context) error
+}
+
+// schedulerLoop is the integrity scheduler surface used by runJoined.
+type schedulerLoop interface {
+	Run(ctx context.Context) error
+}
+
+// runWorkerMode is the single mode switch. --once processes at most one case
+// and never starts the integrity scheduler; long-running mode joins the poll
+// loop and the scheduler for the whole process lifetime.
+func runWorkerMode(
+	ctx context.Context,
+	once bool,
+	poll pollLoop,
+	onceJob onceProcessor,
+	scheduler schedulerLoop,
+	logger *slog.Logger,
+) error {
+	if once {
+		return runCaseOnce(ctx, onceJob, logger)
+	}
+	if scheduler == nil {
+		return errors.New("worker: integrity scheduler is required in long-running mode")
+	}
+	return runJoined(ctx, poll, scheduler, logger)
+}
+
+// runCaseOnce preserves the existing --once outcome mapping: a missing case,
+// disabled agent, or exhausted daily budget is a clean exit, not an error.
+func runCaseOnce(ctx context.Context, job onceProcessor, logger *slog.Logger) error {
+	err := job.ProcessOnce(ctx)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, cases.ErrNoCase):
+		logger.Info("worker: no case available")
+		return nil
+	case errors.Is(err, worker.ErrAgentDisabled):
+		logger.Info("worker: agent_enabled is off; not leasing")
+		return nil
+	case errors.Is(err, worker.ErrDailyBudgetReached):
+		logger.Info("worker: daily budget reached; not leasing")
+		return nil
+	default:
+		return err
+	}
+}
+
+// runJoined starts the poll loop and the integrity scheduler, cancels the
+// other when either returns, and waits for both before returning. The caller's
+// deferred app.Close therefore runs only after the scheduler has stopped. A
+// non-cancellation scheduler error wins because it cancels the poll loop and
+// must surface from runWorker; shutdown cancellation is not an error.
+func runJoined(ctx context.Context, poll pollLoop, scheduler schedulerLoop, logger *slog.Logger) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pollDone := make(chan error, 1)
+	schedulerDone := make(chan error, 1)
+	go func() { pollDone <- poll.Run(runCtx) }()
+	go func() { schedulerDone <- scheduler.Run(runCtx) }()
+
+	var pollErr, schedulerErr error
+	select {
+	case pollErr = <-pollDone:
+		cancel()
+		schedulerErr = <-schedulerDone
+	case schedulerErr = <-schedulerDone:
+		cancel()
+		pollErr = <-pollDone
+	}
+
+	pollErr = normalizeLoopShutdown(ctx, pollErr)
+	schedulerErr = normalizeLoopShutdown(ctx, schedulerErr)
+	if schedulerErr != nil {
+		if pollErr != nil && logger != nil {
+			logger.Warn("worker: poll loop stopped after scheduler error", "error", pollErr)
+		}
+		return schedulerErr
+	}
+	if pollErr != nil {
+		return pollErr
+	}
+	return nil
+}
+
+// normalizeLoopShutdown treats cancellation from either loop as a clean stop.
+func normalizeLoopShutdown(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	if ctx.Err() != nil && errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return err
 }
 
 // startWorkerMetrics starts the worker's loopback /metrics listener for the
