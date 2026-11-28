@@ -6,7 +6,18 @@ package demo
 // rows only when each row is provably demo-owned:
 //
 //   - migration-seeded reference rows in currencies, periods, system_switches;
-//   - rows recorded in demo_metadata by the M1/ops/quality seed layers.
+//   - rows recorded in demo_metadata by the M1/ops/quality seed layers;
+//   - named operational-evidence tables produced by running the product
+//     against the demo database. Today the only such table is
+//     public.integrity_runs: an integrity CLI/scheduler run has no demo
+//     metadata, so any rows there are allowed. demo.Reset drops that run
+//     history; the exception is deliberately narrow (no wildcard, no
+//     demoRowKeySQL entry) and does not cover outbox alert rows, which still
+//     block reset (AQ-3b).
+//
+// Reset takes its own advisory lock, separate from the integrity run's
+// transaction-scoped lock, so a demo environment must serialize a reset and a
+// running worker scheduler by operator convention rather than by lock.
 //
 // Everything else aborts reset with *UntaggedDataError (errors.Is
 // ErrQualityUntaggedData) before any DDL runs. The guard executes inside the
@@ -155,6 +166,13 @@ func checkResetAllowed(ctx context.Context, q resetQueryer) error {
 				if err := checkSystemSwitches(ctx, q); err != nil {
 					return err
 				}
+				continue
+			case "integrity_runs":
+				// Operational evidence from running recon integrity against
+				// the demo database. demo.Reset drops this history. This is
+				// the only operational-evidence exception: an outbox
+				// integrity.failed row still blocks reset (AQ-3b), and no
+				// other table is weakened.
 				continue
 			}
 		}

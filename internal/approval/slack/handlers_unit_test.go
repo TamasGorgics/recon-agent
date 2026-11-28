@@ -245,13 +245,14 @@ func TestParseApprovalCancelPayload(t *testing.T) {
 func TestHandlerMapKeys(t *testing.T) {
 	t.Parallel()
 	handlers := (&Handlers{}).Map()
-	if len(handlers) != 3 {
-		t.Fatalf("handler count = %d, want 3", len(handlers))
+	if len(handlers) != 4 {
+		t.Fatalf("handler count = %d, want 4", len(handlers))
 	}
 	for _, topic := range []string{
 		approval.TopicApprovalRequest,
 		approval.TopicApprovalUpdate,
 		caselifecycle.TopicApprovalCancel,
+		topicIntegrityFail,
 	} {
 		if _, ok := handlers[topic]; !ok {
 			t.Fatalf("topic %q is not registered", topic)

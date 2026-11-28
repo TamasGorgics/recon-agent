@@ -37,6 +37,10 @@ Commands:
                    usage: recon demo quality [--seed N] [--days N]
                           [--difficulty easy|realistic|adversarial] [--reset]
                    synthetic demo evidence only; no network/LLM; --reset dev only
+  integrity run    run the five FIN-52 integrity checks and persist one row
+                   usage: recon integrity run [--date YYYY-MM-DD] [--json]
+                   --date scopes the tie-out as-of only, not a historical replay
+                   exit: 0 passed, 1 completed failed run, 2 usage/config/lock/DB
   match unmatch    audited admin unmatch of one active match
                    usage: recon match unmatch --id <match-uuid> --reason <text>
                           --actor human:<id> [--json]
@@ -89,6 +93,8 @@ func runTo(ctx context.Context, args []string, out io.Writer) error {
 		return runAgent(ctx, args[1:])
 	case "audit":
 		return runAudit(ctx, args[1:])
+	case "integrity":
+		return runIntegrity(ctx, args[1:])
 	case "match":
 		return runMatch(ctx, args[1:])
 	case "migrate":

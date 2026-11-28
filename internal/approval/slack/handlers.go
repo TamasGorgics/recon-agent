@@ -17,11 +17,14 @@ import (
 	"github.com/TamasGorgics/recon-agent/internal/outbox"
 )
 
-// Outbox topic keys. The cancel constant intentionally mirrors
+// Outbox topic keys. The approval cancel constant intentionally mirrors
 // cases/lifecycle.TopicApprovalCancel (asserted by a test) so this adapter
-// does not import the case lifecycle package for one string.
+// does not import the case lifecycle package for one string. The integrity
+// topic mirrors internal/integrity's unexported alert topic; the payload shape
+// is frozen by the M5-06 spec.
 const (
 	topicApprovalCancel = "approval.cancel"
+	topicIntegrityFail  = "integrity.failed"
 )
 
 // ErrInvalidPayload is returned for an outbox payload this adapter cannot
@@ -131,13 +134,17 @@ func NewHandlers(opts HandlersOptions) (*Handlers, error) {
 	}, nil
 }
 
-// Map returns the three outbox handlers keyed by topic. cmd/outbox registers
-// the result directly in outbox.WorkerOptions.Handlers.
+// Map returns the four outbox handlers keyed by topic: the three approval
+// topics plus integrity.failed. cmd/outbox registers the result directly in
+// outbox.WorkerOptions.Handlers. Deploy cmd/outbox with this map before the
+// worker scheduler starts producing integrity.failed rows; an unregistered
+// topic dead-letters immediately.
 func (h *Handlers) Map() map[string]outbox.Handler {
 	return map[string]outbox.Handler{
 		approval.TopicApprovalRequest: outbox.HandlerFunc(h.HandleRequest),
 		approval.TopicApprovalUpdate:  outbox.HandlerFunc(h.HandleUpdate),
 		topicApprovalCancel:           outbox.HandlerFunc(h.HandleCancel),
+		topicIntegrityFail:            outbox.HandlerFunc(h.HandleIntegrityFailed),
 	}
 }
 
@@ -182,6 +189,22 @@ type ApprovalCancelPayload struct {
 	ProposalID string `json:"proposal_id"`
 	CaseID     string `json:"case_id"`
 	Reason     string `json:"reason"`
+}
+
+// IntegrityFailedPayload is the integrity.failed outbox payload produced by
+// internal/integrity on a completed failed run. It is a bounded summary
+// pointer: run identity, status, failed check names, and per-check problem
+// counts only. It never carries problem details, entity ids, amounts, or raw
+// external content.
+type IntegrityFailedPayload struct {
+	RunID         string         `json:"run_id"`
+	RunDate       string         `json:"run_date"`
+	Status        string         `json:"status"`
+	CheckCount    int            `json:"check_count"`
+	FailureCount  int            `json:"failure_count"`
+	FailedChecks  []string       `json:"failed_checks"`
+	ProblemCounts map[string]int `json:"problem_counts"`
+	TriggeredBy   string         `json:"triggered_by"`
 }
 
 // HandleRequest delivers one approval.request row.
@@ -384,6 +407,60 @@ func (h *Handlers) HandleUpdate(ctx context.Context, msg outbox.Message) error {
 	h.logger.Info("approval/slack: updated decided message",
 		"proposal_id", payload.ProposalID, "decision", string(payload.Decision))
 	return nil
+}
+
+// HandleIntegrityFailed delivers one integrity.failed row as a single Slack
+// message: run id/date/status, failed check names and problem counts, and a
+// pointer to the CLI/daily report. It has no Block Kit actions or buttons and
+// performs no database work. Delivery is at-least-once; run_id is included in
+// the text and used as client_msg_id for best-effort duplicate suppression.
+func (h *Handlers) HandleIntegrityFailed(ctx context.Context, msg outbox.Message) error {
+	payload, err := parseIntegrityFailedPayload(msg.Payload)
+	if err != nil {
+		return err
+	}
+	text := integrityFailureText(payload)
+	if _, err := h.client.PostMessage(ctx, h.channelID, OutgoingMessage{
+		Text:        text,
+		ClientMsgID: payload.RunID,
+	}); err != nil {
+		return fmt.Errorf("approval/slack: post integrity failure alert for %s: %w",
+			payload.RunID, err)
+	}
+	h.logger.Info("approval/slack: posted integrity failure alert",
+		"run_id", payload.RunID,
+		"run_date", payload.RunDate,
+		"failure_count", payload.FailureCount)
+	return nil
+}
+
+// integrityFailureText renders one bounded plain-text alert. At most 20 failed
+// check lines are printed so a corrupt payload cannot exceed Slack's text
+// limit; names are sanitized and capped.
+func integrityFailureText(payload IntegrityFailedPayload) string {
+	const maxChecks = 20
+	var text strings.Builder
+	text.WriteString(":rotating_light: Integrity run failed\n")
+	fmt.Fprintf(&text, "run_id: %s\n", payload.RunID)
+	fmt.Fprintf(&text, "run_date: %s\n", payload.RunDate)
+	fmt.Fprintf(&text, "status: %s\n", payload.Status)
+	fmt.Fprintf(&text, "triggered_by: %s\n", payload.TriggeredBy)
+	fmt.Fprintf(&text, "checks: %d, failed: %d\n", payload.CheckCount, payload.FailureCount)
+	text.WriteString("failed checks:\n")
+	shown := payload.FailedChecks
+	if len(shown) > maxChecks {
+		shown = shown[:maxChecks]
+	}
+	for _, name := range shown {
+		fmt.Fprintf(&text, "- %s (problems: %d)\n",
+			capEscaped(sanitize(name), 64), payload.ProblemCounts[name])
+	}
+	if len(payload.FailedChecks) > len(shown) {
+		fmt.Fprintf(&text, "- ... and %d more\n", len(payload.FailedChecks)-len(shown))
+	}
+	fmt.Fprintf(&text, "Rerun: recon integrity run --date %s --json\n", payload.RunDate)
+	fmt.Fprintf(&text, "Daily report: integrity_runs row %s", payload.RunID)
+	return text.String()
 }
 
 // HandleCancel delivers one approval.cancel row. Absent and already-cancelled
@@ -802,6 +879,64 @@ func parseApprovalCancelPayload(raw json.RawMessage) (ApprovalCancelPayload, err
 		return ApprovalCancelPayload{}, fmt.Errorf(
 			"%w: case id %q is not a canonical lowercase UUID",
 			ErrInvalidPayload, payload.CaseID)
+	}
+	return payload, nil
+}
+
+// parseIntegrityFailedPayload validates the bounded integrity.failed contract.
+// It rejects a payload whose summary counts disagree, so a partial/foreign
+// message is retried/dead-lettered rather than rendered as a misleading alert.
+func parseIntegrityFailedPayload(raw json.RawMessage) (IntegrityFailedPayload, error) {
+	var payload IntegrityFailedPayload
+	if err := decodeStrictPayload(raw, &payload); err != nil {
+		return IntegrityFailedPayload{}, err
+	}
+	if !canonicalUUIDPattern.MatchString(payload.RunID) {
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: run id %q is not a canonical lowercase UUID",
+			ErrInvalidPayload, payload.RunID)
+	}
+	if _, err := time.ParseInLocation("2006-01-02", payload.RunDate, time.UTC); err != nil {
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: run_date %q is not YYYY-MM-DD", ErrInvalidPayload, payload.RunDate)
+	}
+	if payload.Status != "failed" {
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: status %q is not failed", ErrInvalidPayload, payload.Status)
+	}
+	switch payload.TriggeredBy {
+	case "manual", "schedule":
+	default:
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: triggered_by %q is not manual or schedule",
+			ErrInvalidPayload, payload.TriggeredBy)
+	}
+	if payload.CheckCount <= 0 || payload.CheckCount > 64 {
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: check_count %d is out of range", ErrInvalidPayload, payload.CheckCount)
+	}
+	if payload.FailureCount <= 0 || payload.FailureCount > payload.CheckCount ||
+		payload.FailureCount != len(payload.FailedChecks) {
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: failure_count %d and failed_checks %d disagree with check_count %d",
+			ErrInvalidPayload, payload.FailureCount, len(payload.FailedChecks), payload.CheckCount)
+	}
+	if len(payload.ProblemCounts) != len(payload.FailedChecks) {
+		return IntegrityFailedPayload{}, fmt.Errorf(
+			"%w: problem_counts must cover exactly the failed checks", ErrInvalidPayload)
+	}
+	for _, name := range payload.FailedChecks {
+		if name == "" || strings.TrimSpace(name) != name || len(name) > 64 ||
+			strings.ContainsAny(name, "\r\n") {
+			return IntegrityFailedPayload{}, fmt.Errorf(
+				"%w: failed check name %q is empty, padded, or too long",
+				ErrInvalidPayload, name)
+		}
+		count, ok := payload.ProblemCounts[name]
+		if !ok || count <= 0 {
+			return IntegrityFailedPayload{}, fmt.Errorf(
+				"%w: problem_counts[%q] must be positive", ErrInvalidPayload, name)
+		}
 	}
 	return payload, nil
 }

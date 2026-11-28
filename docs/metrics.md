@@ -102,7 +102,7 @@ the operator-level summary.
 | `recon_outbox_dead_letters_total` | counter | `topic` | messages | outbox dead-letter seam after commit |
 | `recon_auto_apply_cap_usage_ratio` | gauge | `currency` | ratio 0–1 | limits `Check` result |
 | `recon_tieout_unexplained_minor` | gauge | `currency`,`source` | minor units | tie-out observer (event-only; see Q-101) |
-| `recon_integrity_job_status` | gauge | `job` (`integrity`) | status | none yet; seeded `0`, M5-06 owns values |
+| `recon_integrity_job_status` | gauge | `job` (`integrity`) | status | worker only, after a completed run commits: `0` seeded/unknown, `1` passed, `2` failed (M5-06) |
 
 ### Histogram buckets
 
@@ -138,7 +138,29 @@ all of them:
 Seeded `unknown` series are public output and deliberately make an absent
 producer visible. Seeded histograms have zero observations; they are not fake
 samples. Do not read a seeded zero as a healthy measurement (especially
-tie-out and integrity).
+tie-out, and integrity before the first completed run of a process).
+
+### Integrity status producer (M5-06)
+
+`recon_integrity_job_status{job="integrity"}` is produced only by the
+long-running worker, through `metrics.NewIntegrityObserver` after
+`internal/integrity.Run` has committed a completed run:
+
+| Value | Meaning |
+|---:|---|
+| `0` | Seeded/unknown; no completed run has been observed by this process. Never set at run start. |
+| `1` | The last completed run passed. |
+| `2` | The last completed run failed (any finding or check error). |
+
+The adapter sets `1` on pass and `2` on fail and introduces no other value,
+family, or label. The gauge is never updated on a lock conflict, shutdown or
+cancellation, begin/query/insert/commit failure, config/connection error, or
+panic: those are not completed results, so the previous value remains. It is
+never reset to `0` to erase a prior result. A worker restart reseeds the
+in-process registry to `0` until the next completed run (normally the daily
+catch-up); `0` means unknown, not pass. The one-shot CLI does not create a
+registry or produce this gauge. See [`docs/integrity.md`](integrity.md) for the
+job and its 0/1/2 mapping.
 
 ## Labels, cardinality, and forbidden values
 
@@ -317,12 +339,13 @@ datasources, dashboard JSON, alerting, `deploy/` assets, or a
 13.3.2 / Prometheus v3.16.0 assets; the operator guide is
 `docs/dashboards.md`, and Q-102 records the self-scrape-only and synthetic-data
 boundaries. M5-05 (agent quality) remains out of scope. The daily integrity job
-and its real values are M5-06; until then `recon_integrity_job_status` is a
-seeded `0` with no producer. The tie-out gauge is event-only and has no
-long-lived producer, so its seeded `unknown` series is not a live value; a real
-producer belongs to M5-06/M5-09 if still needed. M5-03 also leaves the API
-`/metrics` public with four unauthenticated DB aggregates per scrape and no
-`MaxRequestsInFlight`; M5-04 did **not** add authentication, rate limiting, or
+is M5-06: the worker now produces `recon_integrity_job_status` with the
+post-commit `0`/`1`/`2` contract above, while a restart still reseeds `0`
+until the next completed run. The tie-out gauge remains event-only; the worker
+passes `metrics.NewTieoutObserver` for integrity runs, and the CLI passes no
+observer (Q-101). M5-03 also leaves the API `/metrics` public with four
+unauthenticated DB aggregates per scrape and no `MaxRequestsInFlight`; M5-04
+did **not** add authentication, rate limiting, or
 DB-pool sizing for that path, so the residual stays open (Q-101 A6 / Q-102) for
 a future task. M5-04 kept the frozen names/types/labels/buckets and treats
 seeded or keep-last values as not healthy.

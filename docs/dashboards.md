@@ -117,6 +117,17 @@ tables and then drops the schemas, so a concurrent insert either commits before
 the lock and aborts the reset or blocks until the schema is gone; it cannot be
 silently destroyed between check and drop.
 
+**Integrity run history.** The reset also destroys `integrity_runs`: run
+results are not preserved across a demo reset and cannot be recovered. The
+guard has one named exception for `integrity_runs` because those rows are
+operational evidence produced by running the job against the demo database, not
+untagged user data; no other table is exempted. `outbox` is **not** exempted,
+so a failed demo integrity run leaves an untagged `integrity.failed` outbox row
+that still blocks a reset until the outbox handles/drains it (AQ-3b / Q-104).
+The reset and the worker scheduler use different advisory locks: stop the
+worker before a demo reset (or otherwise serialize the two); never run them
+concurrently.
+
 M1 demo rows have no per-row marker column, so migration
 `20261125130000_m5_05_demo_metadata.sql` adds `demo_metadata`; the M1 pipeline
 records the rows it creates after a successful run, and the ops/quality layers
@@ -416,7 +427,9 @@ record either check as passed until a human confirms it.
 
 ## Out of scope
 
-- M5-06 daily integrity job and its real status metric; no alerting.
+- The M5-06 daily integrity job and its real status metric were delivered
+  separately (see [`docs/integrity.md`](integrity.md)); this dashboard task adds
+  no alerting for them.
 - M6 retention, redaction, PAN scan, or production quality claims.
 - Application services in compose or live application-metrics scraping.
 - Grafana/Prometheus authentication, TLS, retention, or network exposure

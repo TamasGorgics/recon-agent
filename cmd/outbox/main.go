@@ -1,8 +1,8 @@
 // Command outbox runs the Slack approval outbox worker. It opens only the
-// recon_app pool, registers the three approval topics, and delivers due
-// messages through the Slack Web API until SIGINT/SIGTERM. It deliberately
-// has no agent or LLM dependency so outbox deployments do not need model
-// credentials.
+// recon_app pool, registers the three approval topics plus integrity.failed,
+// and delivers due messages through the Slack Web API until SIGINT/SIGTERM. It
+// deliberately has no agent or LLM dependency so outbox deployments do not need
+// model credentials.
 package main
 
 import (
@@ -31,8 +31,11 @@ import (
 const usage = `usage: outbox [--once]
 
 Runs the Slack approval outbox worker until SIGINT/SIGTERM. The worker claims
-due outbox rows for approval.request, approval.update, and approval.cancel and
-delivers them through the Slack Web API.
+due outbox rows for approval.request, approval.update, approval.cancel, and
+integrity.failed and delivers them through the Slack Web API.
+
+Deploy this binary with the integrity.failed handler before the worker
+scheduler starts producing daily integrity runs.
 
 Flags:
   --once   process at most one due batch and exit
@@ -220,7 +223,7 @@ type workerRuntime struct {
 	options  outbox.WorkerOptions
 }
 
-// buildWorker constructs the Slack client, the three outbox handlers, and the
+// buildWorker constructs the Slack client, the four outbox handlers, and the
 // worker. It validates the outbox runtime configuration again so a caller
 // cannot construct a worker with an incomplete configuration. It performs no
 // network or database call.

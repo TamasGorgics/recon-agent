@@ -28,6 +28,7 @@ const (
 	// guard, so "latest" is tracked separately.
 	m505EvalViewsVersion = 20261125120000
 	m505MigrationVersion = 20261125130000
+	m506MigrationVersion = 20261126120000
 	m505PreviousVersion  = 20261124120000
 	m504MigrationVersion = 20261124120000
 	m504PreviousVersion  = 20261123120000
@@ -212,8 +213,8 @@ func TestM504RoleAndViews(t *testing.T) {
 		`SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != m505MigrationVersion {
-		t.Fatalf("migration version = %d, want %d", version, m505MigrationVersion)
+	if version != m506MigrationVersion {
+		t.Fatalf("migration version = %d, want %d", version, m506MigrationVersion)
 	}
 	for _, migration := range []int64{m504MigrationVersion, m505EvalViewsVersion, m505MigrationVersion} {
 		var applied bool
@@ -535,8 +536,8 @@ func TestM504MigrationDown(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("configure goose: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m505MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m506MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m506MigrationVersion)
 	}
 
 	// Later migrations must be unwound first so this test exercises M5-04's
@@ -594,8 +595,8 @@ func TestM504MigrationDown(t *testing.T) {
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("goose up M5-04 after down: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
-		t.Fatalf("version after re-up = %d, want %d", version, m505MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m506MigrationVersion {
+		t.Fatalf("version after re-up = %d, want %d", version, m506MigrationVersion)
 	}
 	for _, view := range dashboardViews {
 		var exists bool
@@ -618,8 +619,8 @@ func TestM504MigrationDown(t *testing.T) {
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("idempotent goose up: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
-		t.Fatalf("version after idempotent up = %d, want %d", version, m505MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m506MigrationVersion {
+		t.Fatalf("version after idempotent up = %d, want %d", version, m506MigrationVersion)
 	}
 }
 
@@ -639,8 +640,8 @@ func TestM505MigrationDown(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("configure goose: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m505MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m506MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m506MigrationVersion)
 	}
 
 	// Unwind the later demo-metadata migration first so the next Down exercises
@@ -706,8 +707,8 @@ func TestM505MigrationDown(t *testing.T) {
 	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
 		t.Fatalf("goose up M5-05 after down: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
-		t.Fatalf("version after re-up = %d, want %d", version, m505MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m506MigrationVersion {
+		t.Fatalf("version after re-up = %d, want %d", version, m506MigrationVersion)
 	}
 	for _, view := range dashboardViews {
 		var exists bool

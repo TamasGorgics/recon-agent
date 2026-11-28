@@ -162,7 +162,19 @@ seed layers, and the `goose_db_version`/marker infrastructure. That covers
 The guard query runs in the same transaction that takes `ACCESS EXCLUSIVE`
 locks on all dropped tables and performs the drop, so a concurrent insert
 either commits before the lock and aborts the reset or blocks until the schema
-is gone; nothing can be destroyed between check and drop. M1 rows have no
+is gone; nothing can be destroyed between check and drop.
+
+The reset also destroys `integrity_runs`: daily integrity-run results are not
+preserved across a demo reset and cannot be recovered. The guard has one named
+exception for `integrity_runs` because those rows are operational evidence from
+running the job against the demo database, not untagged user data; no other
+table is exempted. `outbox` is **not** exempted, so a failed demo integrity run
+leaves an untagged `integrity.failed` outbox row that can still block a reset
+until the outbox handles/drains it (AQ-3b / Q-104). The reset and the worker
+scheduler use different advisory locks: stop the worker before a demo reset (or
+otherwise serialize the two); never run them concurrently.
+
+M1 rows have no
 per-row marker column, so migration `20261125130000_m5_05_demo_metadata.sql`
 adds the `demo_metadata` table; the M1 pipeline records the rows it creates,
 and the ops/quality layers record theirs in the same transaction as the writes.
@@ -259,7 +271,9 @@ Do not record it as passed until a human confirms it.
 
 ## Out of scope
 
-- M5-06 daily integrity job and its real status metric; no alerting.
+- The M5-06 daily integrity job and its real status metric were delivered
+  separately (see [`docs/integrity.md`](integrity.md)); this dashboard task adds
+  no alerting for them.
 - M6 retention, redaction, PAN scan, or production quality claims.
 - New compose services, Grafana/Prometheus containers, datasources, or roles.
 - Grafana/Prometheus authentication, TLS, retention, or non-loopback exposure

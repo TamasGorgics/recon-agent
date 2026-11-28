@@ -18,7 +18,7 @@ import (
 const (
 	m502MigrationVersion = 20261123120000
 	m502PreviousVersion  = 20261122120000
-	m505MigrationVersion = 20261125130000
+	m506MigrationVersion = 20261126120000
 )
 
 // TestM502ToolResultCanonicalHashMigration proves the M5-02 schema delta: the
@@ -38,8 +38,8 @@ func TestM502ToolResultCanonicalHashMigration(t *testing.T) {
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatalf("goose dialect: %v", err)
 	}
-	if version := gooseVersion(t, sqlDB); version != m505MigrationVersion {
-		t.Fatalf("goose version = %d, want %d", version, m505MigrationVersion)
+	if version := gooseVersion(t, sqlDB); version != m506MigrationVersion {
+		t.Fatalf("goose version = %d, want %d", version, m506MigrationVersion)
 	}
 	m502RequireColumn(t, d, "text", "YES")
 
