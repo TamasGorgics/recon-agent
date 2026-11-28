@@ -344,8 +344,8 @@ post-commit `0`/`1`/`2` contract above, while a restart still reseeds `0`
 until the next completed run. The tie-out gauge remains event-only; the worker
 passes `metrics.NewTieoutObserver` for integrity runs, and the CLI passes no
 observer (Q-101). M5-03 also leaves the API `/metrics` public with four
-`/metrics` public with four unauthenticated DB aggregates per scrape and no
-`MaxRequestsInFlight`; M5-04 did **not** add authentication, rate limiting, or
+unauthenticated DB aggregates per scrape and no `MaxRequestsInFlight`; M5-04
+did **not** add authentication, rate limiting, or
 DB-pool sizing for that path, so the residual stays open (Q-101 A6 / Q-102) for
 a future task. M5-04 kept the frozen names/types/labels/buckets and treats
 seeded or keep-last values as not healthy.

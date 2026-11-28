@@ -1102,26 +1102,33 @@ passes all five and a failed run is `(Result, nil)` with exactly one
 `integrity.failed` outbox row. The CLI `recon integrity run [--date] [--json]`
 runs as `recon_app` with exit 0/1/2, and `--date` scopes only the tie-out
 as-of. The joined worker scheduler runs at 02:00 UTC with catch-up once for the
-current day, same-day suppression, bounded backoff, advisory-lock single-flight
-(no leader election), and unchanged `--once`. The worker produces
+current day, same-day suppression, advisory-lock single-flight (no leader
+election), and unchanged `--once`; operational errors retry the runner after
+30s/1m/5m/15m until a row exists, the UTC date changes, or shutdown, while a
+completed failed run still counts as the day's attempt (F1 fix, `424859e`). The
+worker produces
 `recon_integrity_job_status{job="integrity"}` 1/2 after commit (seed/restart
 `0` = unknown); the outbox registers an `integrity.failed` Slack handler
 (topic list 3→4) and must deploy before the scheduler; the reset guard has one
 named `integrity_runs` exception and still refuses an untagged failed-run
-outbox row (AQ-3b). Cold `go clean -testcache && make verify` passed
-uncached on the squashed release HEAD (see impl-notes for the SHA and tails),
-along with build/lint/unit/integration/fault, two deterministic `make demo-m1`
-runs, key-free `make demo-m2`, `make test-db-clean`, and
-`docker compose config -q`. The demo remains **red by default** (small
+outbox row (AQ-3b). Cold `go clean -testcache && make verify` passed uncached
+at `424859e` (`gate-fix-f1/cold.log`: `verify: OK`, `FINAL_EXIT:0`),
+superseding the pre-F1 `c45c174` gate; the F1 delta is the scheduler retry plus
+four tests. `gate-fix-f1/cold.log` ran `db-up migrate build lint test
+test-integration`; alongside it, the fault suite, two deterministic `make
+demo-m1` runs, key-free `make demo-m2`, `make test-db-clean`, and `docker
+compose config -q` passed. The demo remains **red by default** (small
 value-conservation deltas from tolerance/rounding matches and `bank_x` opening
 balances); that is documented, not
 claimed green, and the clean fixture is the acceptance evidence. Q-104 records
 the reset-drop/outbox, tie-out coverage, value tolerance, deploy-order,
 scheduler, append-only/latest, metric, demo-red, trust-boundary,
 timeout/cancel, migration, topic-label, reporting-grant, audit-cost, and
-retention residuals. **Remaining review step:** the QA/adversary gate on this
-HEAD; the roadmap box is ticked with the implementation and gate evidence, not
-as a claim that the independent review has already passed.
+retention residuals. **Review gate (2026-11-28):** independent QA returned PASS
+and the adversary returned 0 blockers at `424859e` after the F1 scheduler-retry
+fix. The roadmap box is ticked on the implementation, cold-gate, and review
+evidence at that HEAD; a later docs-only commit does not change the reviewed
+code.
 
 ### M5-07 · Daily reconciliation report · M
 **Spec:** section 14 · **Needs:** M5-06, M4-07

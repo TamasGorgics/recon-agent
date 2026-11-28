@@ -271,7 +271,9 @@ Do not record it as passed until a human confirms it.
 
 ## Out of scope
 
-- M5-06 daily integrity job and its real status metric; no alerting.
+- The M5-06 daily integrity job and its real status metric were delivered
+  separately (see [`docs/integrity.md`](integrity.md)); this dashboard task adds
+  no alerting for them.
 - M6 retention, redaction, PAN scan, or production quality claims.
 - New compose services, Grafana/Prometheus containers, datasources, or roles.
 - Grafana/Prometheus authentication, TLS, retention, or non-loopback exposure

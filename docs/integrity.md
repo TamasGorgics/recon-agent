@@ -1,9 +1,11 @@
 # Daily integrity job (FIN-52)
 
 The daily integrity job is an independent, read-only control over the data the
-reconciliation pipeline produced. It runs five checks over one database
-snapshot, persists exactly one completed result row, and returns a stable
-machine-readable report. It does not call the matcher or executor services,
+reconciliation pipeline produced. It runs five checks over one
+`REPEATABLE READ` read-write transaction — a single database snapshot —
+persists exactly one completed result row in that transaction, and returns a
+stable machine-readable report. It does not call the matcher or executor
+services,
 does not import `internal/match`, and never repairs data. The checks are
 evidence that no inconsistency was detected — not proof that the database
 contains the expected data or that every scope has statement coverage.
@@ -214,12 +216,13 @@ loop; `worker --once` stays case-only and starts no scheduler.
 - There is **no leader election**. Every worker may run the scheduler; an
   in-memory attempted-date guard and the database row cover local and
   cross-restart duplicates, and the run's transaction-scoped advisory lock
-  (key `7305060001`) makes exactly one run execute. A lock loser sleeps briefly
-  and re-queries; it writes no row and changes no gauge.
+  (key `7305060001`) makes exactly one run execute. A lock loser sleeps 30
+  seconds and re-queries; it writes no row and changes no gauge.
 - An operational error before a row exists is logged with a bounded message
-  and retried with bounded backoff (about 30s, 1m, 5m, then 15m) until a row
-  exists, the UTC date changes, or shutdown. A persisted passed or failed row
-  ends the day's attempts.
+  and retried with bounded backoff (30s, 1m, 5m, then 15m) until a row exists,
+  the UTC date changes, or shutdown. A completed run that persisted a passed or
+  failed row ends the day's attempts; it is not retried automatically until the
+  next UTC date, and the manual CLI is the explicit rerun path.
 - The scheduler is joined before the worker's database pool closes. `--once`,
   shutdown, and cancellation do not write an integrity row.
 
@@ -253,9 +256,10 @@ array, problem details, entity ids, amounts, or raw external content. The
 idempotency key is `integrity.failed:<run_id>`, so a retry cannot duplicate the
 enqueue.
 
-`cmd/outbox` registers an `integrity.failed` Slack handler that posts one
-plain-text message (run id, date, status, failed checks/counts, and a pointer
-to `recon integrity run --date <date> --json`). Delivery is at-least-once;
+`cmd/outbox` registers four topics — the three approval topics plus
+`integrity.failed` — and the new `integrity.failed` handler posts one plain-text
+message (run id, date, status, failed checks/counts, and a pointer to
+`recon integrity run --date <date> --json`). Delivery is at-least-once;
 Slack has no idempotency key, so duplicate messages are accepted. There is no
 `notified_at` column.
 
@@ -340,6 +344,12 @@ change.
   later tasks.
 - **Date semantics.** `--date` scopes only the tie-out as-of; it is not a
   historical replay. M5-07/M5-09 must not present it as one.
+- **Aggregate value, not per-match correctness.** `value_conservation` is
+  computed per `source + currency`, not per match. An equal-and-opposite
+  cross-scope pair can therefore cancel and pass (Q-104 N1), and
+  `match_legs.currency` is not compared with the scope currency — the leg
+  amount is attributed to the scope key (Q-104 N2). A pass is evidence about
+  aggregate value, not match-level correctness.
 
 Q-104 in [`docs/open-questions.md`](open-questions.md) records every residual
 above, including the reset/outbox interaction, tie-out as-of and skip rules,
